@@ -1,0 +1,1 @@
+ALTER TABLE public.custodia ALTER COLUMN resgate_total TYPE date USING NULL;
