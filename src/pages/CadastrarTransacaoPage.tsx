@@ -93,6 +93,11 @@ const MODALIDADE_OPTIONS = ["Prefixado", "Pós Fixado"];
 
 const INDEXADOR_OPTIONS = ["CDI", "CDI+"];
 
+// Categorias com fluxo de cadastro já implementado na boleta. As demais ficam
+// visíveis no dropdown mas caem num placeholder até ganharem seu próprio fluxo.
+// (Poupança é um produto dentro de Renda Fixa, não uma categoria à parte.)
+const CATEGORIAS_IMPLEMENTADAS = ["Renda Fixa"];
+
 // ── Currency formatting helpers ──
 function formatCurrency(value: string): string {
   const digits = value.replace(/\D/g, "");
@@ -238,8 +243,12 @@ export default function CadastrarTransacaoPage() {
   const isResgate = tipoMovimentacao === "Resgate";
   const isAplicacao = tipoMovimentacao === "Aplicação";
   const selectedCustodia = custodiaItems.find((c) => c.id === selectedCustodiaId);
+  // Etapa 1 do destravamento: a categoria escolhida já tem fluxo próprio na boleta?
+  const categoriaImplementada = !categoriaSelecionada || CATEGORIAS_IMPLEMENTADAS.includes(categoriaSelecionada.nome);
 
-  // Load categorias on mount — only Renda Fixa (Poupança is now a product within RF)
+  // Load categorias on mount — todas as categorias ativas. O fluxo de cada uma é
+  // despachado abaixo; categorias sem fluxo próprio caem num placeholder (etapa 1
+  // do destravamento multi-categoria). Só auto-seleciona se houver uma única.
   useEffect(() => {
     supabase
       .from("categorias")
@@ -248,10 +257,9 @@ export default function CadastrarTransacaoPage() {
       .order("nome")
       .then(({ data }) => {
         if (data) {
-          const allowed = data.filter((c: Categoria) => c.nome === "Renda Fixa");
-          setCategorias(allowed);
-          if (allowed.length === 1 && !editId) {
-            setCategoriaId(allowed[0].id);
+          setCategorias(data);
+          if (data.length === 1 && !editId) {
+            setCategoriaId(data[0].id);
           }
         }
       });
@@ -928,6 +936,17 @@ export default function CadastrarTransacaoPage() {
             </Field>
           )}
         </div>
+
+        {/* Categoria selecionada cujo fluxo ainda não foi implementado (etapa 1 do destravamento) */}
+        {!!categoriaId && !categoriaImplementada && (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              O fluxo de cadastro para <strong>{categoriaSelecionada?.nome}</strong> ainda não está
+              disponível. Por enquanto, apenas <strong>Renda Fixa</strong> pode ser cadastrada pela boleta.
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* ── Aplicação Flow ── */}
         {(isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate)) && isRendaFixa && !isPoupanca && (
