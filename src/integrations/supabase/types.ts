@@ -358,21 +358,34 @@ export type Database = {
       instituicoes: {
         Row: {
           ativa: boolean
+          cnpj: string | null
           created_at: string
           id: string
           nome: string
+          nome_busca: string
+          origem: string
+          segmento: string | null
+          user_id: string | null
         }
         Insert: {
           ativa?: boolean
+          cnpj?: string | null
           created_at?: string
           id?: string
           nome: string
+          origem?: string
+          segmento?: string | null
+          user_id?: string | null
         }
         Update: {
           ativa?: boolean
+          cnpj?: string | null
           created_at?: string
           id?: string
           nome?: string
+          origem?: string
+          segmento?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }

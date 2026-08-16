@@ -4,13 +4,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
-import SearchableSelect from "@/components/SearchableSelect";
-import EmissorSelect from "@/components/EmissorSelect";
+import EntidadeSelect from "@/components/EntidadeSelect";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Reuse types and helpers from CadastrarTransacaoPage
 interface Produto { id: string; nome: string; }
-interface Instituicao { id: string; nome: string; }
 interface Categoria { id: string; nome: string; }
 
 const PAGAMENTO_OPTIONS = ["Mensal", "Bimestral", "Trimestral", "Quatrimestral", "Semestral", "No Vencimento"];
@@ -69,7 +67,6 @@ export default function WelcomeOnboardingPage() {
 
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
-  const [instituicoes, setInstituicoes] = useState<Instituicao[]>([]);
   const [categoriaId, setCategoriaId] = useState("");
   const [categoriaNome, setCategoriaNome] = useState("");
 
@@ -79,6 +76,7 @@ export default function WelcomeOnboardingPage() {
   const [valor, setValor] = useState("");
   const [precoUnitario, setPrecoUnitario] = useState("1.000,00");
   const [instituicaoId, setInstituicaoId] = useState("");
+  const [instituicaoNome, setInstituicaoNome] = useState("");
   const [emissorId, setEmissorId] = useState("");
   const [emissorNome, setEmissorNome] = useState("");
   const [modalidade, setModalidade] = useState("");
@@ -99,7 +97,6 @@ export default function WelcomeOnboardingPage() {
         setCategorias(filtered);
       }
     });
-    supabase.from("instituicoes").select("id, nome").eq("ativa", true).order("nome").then(({ data }) => { if (data) setInstituicoes(data); });
   }, []);
 
   useEffect(() => {
@@ -153,8 +150,7 @@ export default function WelcomeOnboardingPage() {
       let valorExtrato: string;
 
       if (isPoupanca) {
-        const instNome = instituicoes.find((i) => i.id === instituicaoId)?.nome || "";
-        nomeAtivo = `Poupança ${instNome}`;
+        nomeAtivo = `Poupança ${instituicaoNome}`.trim();
         puNum = 1;
         taxaNum = null;
         quantidade = valorNum;
@@ -329,9 +325,10 @@ export default function WelcomeOnboardingPage() {
                     </Field>
 
                     <Field label="Banco" required>
-                      <SearchableSelect value={instituicaoId} onChange={(v) => { setInstituicaoId(v); clearError("instituicaoId"); }}
-                        placeholder="Pesquisar banco..." hasError={validationErrors.has("instituicaoId")}
-                        options={instituicoes.map((i) => ({ value: i.id, label: i.nome }))} />
+                      <EntidadeSelect tipo="instituicao" value={instituicaoId}
+                        onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); clearError("instituicaoId"); }}
+                        tituloCadastro="Cadastrar Novo Banco" labelCadastro="Nome do Banco"
+                        placeholder="Pesquisar banco..." hasError={validationErrors.has("instituicaoId")} />
                     </Field>
                   </>
                 ) : (
@@ -375,12 +372,15 @@ export default function WelcomeOnboardingPage() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <Field label="Corretora" required>
-                        <SearchableSelect value={instituicaoId} onChange={(v) => { setInstituicaoId(v); clearError("instituicaoId"); }}
-                          placeholder="Pesquisar corretora..." hasError={validationErrors.has("instituicaoId")}
-                          options={instituicoes.map((i) => ({ value: i.id, label: i.nome }))} />
+                        <EntidadeSelect tipo="instituicao" value={instituicaoId}
+                          onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); clearError("instituicaoId"); }}
+                          tituloCadastro="Cadastrar Nova Corretora" labelCadastro="Nome da Corretora"
+                          placeholder="Pesquisar corretora..." hasError={validationErrors.has("instituicaoId")} />
                       </Field>
                       <Field label="Emissor" required>
-                        <EmissorSelect value={emissorId} onChange={(id, nome) => { setEmissorId(id); setEmissorNome(nome); clearError("emissorId"); }}
+                        <EntidadeSelect tipo="emissor" value={emissorId}
+                          onChange={(id, nome) => { setEmissorId(id); setEmissorNome(nome); clearError("emissorId"); }}
+                          tituloCadastro="Cadastrar Novo Emissor" labelCadastro="Nome do Emissor"
                           placeholder="Pesquisar emissor..." hasError={validationErrors.has("emissorId")} />
                       </Field>
                     </div>

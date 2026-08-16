@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { PlusCircle, Search, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import CadastrarEmissorModal from "./CadastrarEmissorModal";
+import CadastrarEntidadeModal, { type TipoEntidade } from "./CadastrarEntidadeModal";
 
-interface Emissor {
+interface Entidade {
   id: string;
   nome: string;
 }
 
-interface EmissorSelectProps {
+interface EntidadeSelectProps {
+  /** "emissor" le invest.emissores; "instituicao" le invest.instituicoes. */
+  tipo: TipoEntidade;
   value: string;
-  /** Recebe o id e o nome, porque a boleta monta o nome do ativo com o emissor. */
+  /** Recebe o id e o nome, porque a boleta monta o nome do ativo com eles. */
   onChange: (id: string, nome: string) => void;
+  /** Titulo do modal e texto do botao de cadastro, ex.: "Cadastrar Novo Emissor". */
+  tituloCadastro: string;
+  /** Rotulo do campo do modal, ex.: "Nome do Emissor". */
+  labelCadastro: string;
   placeholder?: string;
   disabled?: boolean;
   hasError?: boolean;
@@ -19,7 +25,7 @@ interface EmissorSelectProps {
 
 const LIMITE = 30;
 
-/** Espelha a coluna gerada invest.emissores.nome_busca (lower + sem acento). */
+/** Espelha as colunas geradas nome_busca do banco (lower + sem acento). */
 function normalizar(texto: string): string {
   return texto
     .toLowerCase()
@@ -32,29 +38,38 @@ function sanitizar(termo: string): string {
   return termo.replace(/[,()%*\\"]/g, " ").trim();
 }
 
+function baseQuery(tipo: TipoEntidade) {
+  return tipo === "emissor"
+    ? supabase.from("emissores").select("id, nome").eq("ativo", true)
+    : supabase.from("instituicoes").select("id, nome").eq("ativa", true);
+}
+
 /**
- * Campo de pesquisa de emissor sobre invest.emissores (~1,6 mil nomes do Banco
- * Central + os que o proprio usuario cadastrou). A busca e server-side: carregar
- * a tabela inteira a cada abertura da boleta seria desperdicio.
- * Quando a pesquisa nao acha nada, oferece "Cadastrar Novo Emissor".
+ * Campo de pesquisa sobre as tabelas de dimensao do Blueberg (~1,6 mil nomes da
+ * lista de instituicoes autorizadas do Banco Central + o que o proprio usuario
+ * cadastrou). A busca e server-side: carregar a tabela inteira a cada abertura da
+ * boleta seria desperdicio. Quando nao acha nada, oferece o cadastro.
  */
-export default function EmissorSelect({
+export default function EntidadeSelect({
+  tipo,
   value,
   onChange,
-  placeholder = "Pesquisar emissor...",
+  tituloCadastro,
+  labelCadastro,
+  placeholder = "Pesquisar...",
   disabled,
   hasError,
-}: EmissorSelectProps) {
+}: EntidadeSelectProps) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
-  const [options, setOptions] = useState<Emissor[]>([]);
+  const [options, setOptions] = useState<Entidade[]>([]);
   const [buscando, setBuscando] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Resolve o rotulo do emissor ja selecionado (ex.: boleta carregada de uma
-  // custodia existente), que pode nao estar no resultado corrente da busca.
+  // Resolve o rotulo do id ja selecionado (ex.: boleta carregada de uma custodia
+  // existente), que pode nao estar no resultado corrente da busca.
   useEffect(() => {
     if (!value) {
       setSelectedLabel("");
@@ -66,9 +81,7 @@ export default function EmissorSelect({
       return;
     }
     let cancelado = false;
-    supabase
-      .from("emissores")
-      .select("id, nome")
+    baseQuery(tipo)
       .eq("id", value)
       .maybeSingle()
       .then(({ data }) => {
@@ -78,7 +91,7 @@ export default function EmissorSelect({
       cancelado = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  }, [value, tipo]);
 
   // Busca com debounce enquanto o dropdown esta aberto.
   useEffect(() => {
@@ -86,18 +99,16 @@ export default function EmissorSelect({
     let cancelado = false;
     setBuscando(true);
     const timer = setTimeout(async () => {
-      const tokens = sanitizar(normalizar(search))
-        .split(/\s+/)
-        .filter(Boolean);
+      const tokens = sanitizar(normalizar(search)).split(/\s+/).filter(Boolean);
 
-      let query = supabase.from("emissores").select("id, nome").eq("ativo", true);
+      let query = baseQuery(tipo);
       for (const token of tokens) {
         query = query.ilike("nome_busca", `%${token}%`);
       }
 
       const { data, error } = await query.order("nome").limit(LIMITE);
       if (cancelado) return;
-      if (error) console.error("Erro ao buscar emissores", error);
+      if (error) console.error("Erro ao buscar", error);
       setOptions(data ?? []);
       setBuscando(false);
     }, 250);
@@ -106,7 +117,7 @@ export default function EmissorSelect({
       cancelado = true;
       clearTimeout(timer);
     };
-  }, [search, open]);
+  }, [search, open, tipo]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -118,9 +129,9 @@ export default function EmissorSelect({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const handleSelect = (emissor: Emissor) => {
-    onChange(emissor.id, emissor.nome);
-    setSelectedLabel(emissor.nome);
+  const handleSelect = (entidade: Entidade) => {
+    onChange(entidade.id, entidade.nome);
+    setSelectedLabel(entidade.nome);
     setSearch("");
     setOpen(false);
   };
@@ -183,7 +194,7 @@ export default function EmissorSelect({
 
           {!buscando && options.length === 0 && (
             <div className="px-3 py-2">
-              <p className="text-sm text-muted-foreground mb-2">Nenhum emissor encontrado</p>
+              <p className="text-sm text-muted-foreground mb-2">Nenhum resultado encontrado</p>
               <button
                 type="button"
                 onClick={() => {
@@ -193,18 +204,21 @@ export default function EmissorSelect({
                 className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
               >
                 <PlusCircle className="h-3.5 w-3.5" />
-                Cadastrar Novo Emissor
+                {tituloCadastro}
               </button>
             </div>
           )}
         </div>
       )}
 
-      <CadastrarEmissorModal
+      <CadastrarEntidadeModal
+        tipo={tipo}
         open={modalOpen}
         onOpenChange={setModalOpen}
         nomeInicial={search}
-        onCriado={(emissor) => handleSelect(emissor)}
+        titulo={tituloCadastro}
+        labelCampo={labelCadastro}
+        onCriado={(entidade) => handleSelect(entidade)}
       />
     </div>
   );

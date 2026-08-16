@@ -12,30 +12,40 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-export interface EmissorCriado {
+export type TipoEntidade = "emissor" | "instituicao";
+
+export interface EntidadeCriada {
   id: string;
   nome: string;
 }
 
-interface CadastrarEmissorModalProps {
+interface CadastrarEntidadeModalProps {
+  tipo: TipoEntidade;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Termo pesquisado na boleta, usado para pre-preencher o campo. */
   nomeInicial?: string;
-  onCriado: (emissor: EmissorCriado) => void;
+  /** Titulo do modal, ex.: "Cadastrar Novo Emissor". */
+  titulo: string;
+  /** Rotulo do campo, ex.: "Nome do Emissor". */
+  labelCampo: string;
+  onCriado: (entidade: EntidadeCriada) => void;
 }
 
 /**
- * Cadastro de emissor que a lista do Banco Central nao cobre.
- * O emissor nasce com user_id = dono da sessao (origem 'usuario'), entao a RLS
- * de invest.emissores so o entrega pra ele - nunca pros outros usuarios.
+ * Cadastro do que a lista do Banco Central nao cobre (emissor ou instituicao).
+ * Nasce com user_id = dono da sessao e origem 'usuario', entao a RLS de
+ * invest.emissores / invest.instituicoes so o entrega pra ele.
  */
-export default function CadastrarEmissorModal({
+export default function CadastrarEntidadeModal({
+  tipo,
   open,
   onOpenChange,
   nomeInicial = "",
+  titulo,
+  labelCampo,
   onCriado,
-}: CadastrarEmissorModalProps) {
+}: CadastrarEntidadeModalProps) {
   const { user } = useAuth();
   const [nome, setNome] = useState(nomeInicial);
   const [salvando, setSalvando] = useState(false);
@@ -47,7 +57,7 @@ export default function CadastrarEmissorModal({
   const handleSalvar = async () => {
     const limpo = nome.trim();
     if (limpo.length < 2) {
-      toast.error("Informe o nome do emissor.");
+      toast.error(`Informe o nome ${tipo === "emissor" ? "do emissor" : "da instituição"}.`);
       return;
     }
     if (!user) {
@@ -56,24 +66,31 @@ export default function CadastrarEmissorModal({
     }
 
     setSalvando(true);
-    const { data, error } = await supabase
-      .from("emissores")
-      .insert({ nome: limpo, user_id: user.id, origem: "usuario", ativo: true })
-      .select("id, nome")
-      .single();
+    const { data, error } =
+      tipo === "emissor"
+        ? await supabase
+            .from("emissores")
+            .insert({ nome: limpo, user_id: user.id, origem: "usuario", ativo: true })
+            .select("id, nome")
+            .single()
+        : await supabase
+            .from("instituicoes")
+            .insert({ nome: limpo, user_id: user.id, origem: "usuario", ativa: true })
+            .select("id, nome")
+            .single();
     setSalvando(false);
 
     if (error) {
       if (error.code === "23505") {
-        toast.error("Você já cadastrou esse emissor.");
+        toast.error(`Você já cadastrou ${tipo === "emissor" ? "esse emissor" : "essa instituição"}.`);
       } else {
-        console.error("Erro ao cadastrar emissor", error);
-        toast.error("Não foi possível cadastrar o emissor.");
+        console.error("Erro ao cadastrar", error);
+        toast.error("Não foi possível concluir o cadastro.");
       }
       return;
     }
 
-    toast.success("Emissor cadastrado.");
+    toast.success("Cadastro concluído.");
     onCriado({ id: data.id, nome: data.nome });
     onOpenChange(false);
   };
@@ -82,11 +99,11 @@ export default function CadastrarEmissorModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-base">Cadastrar Novo Emissor</DialogTitle>
+          <DialogTitle className="text-base">{titulo}</DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col gap-1">
-          <label className="text-sm font-medium text-foreground">Nome do Emissor *</label>
+          <label className="text-sm font-medium text-foreground">{labelCampo} *</label>
           <Input
             autoFocus
             value={nome}
@@ -97,7 +114,7 @@ export default function CadastrarEmissorModal({
                 handleSalvar();
               }
             }}
-            placeholder="Nome do emissor"
+            placeholder={labelCampo}
           />
           <p className="text-xs text-muted-foreground">
             Fica disponível só na sua conta, em todas as próximas operações.

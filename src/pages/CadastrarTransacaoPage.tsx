@@ -15,8 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import SearchableSelect from "@/components/SearchableSelect";
-import EmissorSelect from "@/components/EmissorSelect";
+import EntidadeSelect from "@/components/EntidadeSelect";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -24,10 +23,6 @@ interface Categoria {
   nome: string;
 }
 interface Produto {
-  id: string;
-  nome: string;
-}
-interface Instituicao {
   id: string;
   nome: string;
 }
@@ -198,7 +193,6 @@ export default function CadastrarTransacaoPage() {
 
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
-  const [instituicoes, setInstituicoes] = useState<Instituicao[]>([]);
 
   // Resgate-specific state
   const [custodiaItems, setCustodiaItems] = useState<CustodiaItem[]>([]);
@@ -219,6 +213,7 @@ export default function CadastrarTransacaoPage() {
   const [valor, setValor] = useState("");
   const [precoUnitario, setPrecoUnitario] = useState("1.000,00");
   const [instituicaoId, setInstituicaoId] = useState("");
+  const [instituicaoNome, setInstituicaoNome] = useState("");
   const [emissorId, setEmissorId] = useState("");
   const [emissorNome, setEmissorNome] = useState("");
   const [modalidade, setModalidade] = useState("");
@@ -285,18 +280,8 @@ export default function CadastrarTransacaoPage() {
       });
   }, [categoriaId]);
 
-  // Load instituicoes once. Emissores nao entram aqui: a tabela tem ~1,6 mil
-  // nomes (lista do Banco Central) e quem busca e o EmissorSelect, server-side.
-  useEffect(() => {
-    supabase
-      .from("instituicoes")
-      .select("id, nome")
-      .eq("ativa", true)
-      .order("nome")
-      .then(({ data }) => {
-        if (data) setInstituicoes(data);
-      });
-  }, []);
+  // Emissores e instituicoes nao sao carregados aqui: as duas tabelas tem ~1,6 mil
+  // nomes (lista do Banco Central) e quem busca e o EntidadeSelect, server-side.
 
   // Load custodia items when Resgate is selected
   useEffect(() => {
@@ -320,6 +305,15 @@ export default function CadastrarTransacaoPage() {
     if (!selectedCustodia) return;
     setProdutoId(selectedCustodia.produto_id);
     setInstituicaoId(selectedCustodia.instituicao_id || "");
+    setInstituicaoNome("");
+    if (selectedCustodia.instituicao_id) {
+      supabase
+        .from("instituicoes")
+        .select("nome")
+        .eq("id", selectedCustodia.instituicao_id)
+        .maybeSingle()
+        .then(({ data }) => setInstituicaoNome(data?.nome ?? ""));
+    }
     setEmissorId(selectedCustodia.emissor_id || "");
     setEmissorNome("");
     if (selectedCustodia.emissor_id) {
@@ -553,6 +547,15 @@ export default function CadastrarTransacaoPage() {
       setValor(mov.valor ? formatCurrency(Math.round(mov.valor * 100).toString()) : "");
       setPrecoUnitario(mov.preco_unitario ? formatCurrency(Math.round(mov.preco_unitario * 100).toString()) : "1.000,00");
       setInstituicaoId(mov.instituicao_id || "");
+      setInstituicaoNome("");
+      if (mov.instituicao_id) {
+        const { data: instituicao } = await supabase
+          .from("instituicoes")
+          .select("nome")
+          .eq("id", mov.instituicao_id)
+          .maybeSingle();
+        setInstituicaoNome(instituicao?.nome ?? "");
+      }
       setEmissorId(mov.emissor_id || "");
       setEmissorNome("");
       if (mov.emissor_id) {
@@ -586,6 +589,7 @@ export default function CadastrarTransacaoPage() {
     setValor("");
     setPrecoUnitario("1.000,00");
     setInstituicaoId("");
+    setInstituicaoNome("");
     setEmissorId("");
     setEmissorNome("");
     setModalidade("");
@@ -735,7 +739,6 @@ export default function CadastrarTransacaoPage() {
 
     try {
       const produtoNome = produtos.find((p) => p.id === produtoId)?.nome || "";
-      const instituicaoNome = instituicoes.find((i) => i.id === instituicaoId)?.nome || "";
 
       let nomeAtivo: string | null;
       if (isPoupanca) {
@@ -874,7 +877,6 @@ export default function CadastrarTransacaoPage() {
   };
 
   // Helper for displaying names from IDs (for Resgate readonly fields)
-  const getInstituicaoNome = (id: string) => instituicoes.find((i) => i.id === id)?.nome || "—";
 
   const fmtBrlDisplay = (v: number | null) =>
     v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -1047,22 +1049,24 @@ export default function CadastrarTransacaoPage() {
                 {/* Row 2: Instituição, Emissor */}
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Corretora" required>
-                    <SearchableSelect
+                    <EntidadeSelect
+                      tipo="instituicao"
                       value={instituicaoId}
-                      onChange={(v) => { setInstituicaoId(v); setValidationErrors((prev) => { const n = new Set(prev); n.delete("instituicaoId"); return n; }); }}
+                      onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); setValidationErrors((prev) => { const n = new Set(prev); n.delete("instituicaoId"); return n; }); }}
+                      tituloCadastro="Cadastrar Nova Corretora"
+                      labelCadastro="Nome da Corretora"
                       placeholder="Pesquisar corretora..."
                       hasError={validationErrors.has("instituicaoId")}
-                      options={instituicoes.map((i) => ({
-                        value: i.id,
-                        label: i.nome,
-                      }))}
                     />
                   </Field>
 
                   <Field label="Emissor" required>
-                    <EmissorSelect
+                    <EntidadeSelect
+                      tipo="emissor"
                       value={emissorId}
                       onChange={(id, nome) => { setEmissorId(id); setEmissorNome(nome); setValidationErrors((prev) => { const n = new Set(prev); n.delete("emissorId"); return n; }); }}
+                      tituloCadastro="Cadastrar Novo Emissor"
+                      labelCadastro="Nome do Emissor"
                       placeholder="Pesquisar emissor..."
                       hasError={validationErrors.has("emissorId")}
                     />
@@ -1193,15 +1197,14 @@ export default function CadastrarTransacaoPage() {
                 {/* Row 2: Banco */}
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Banco" required>
-                    <SearchableSelect
+                    <EntidadeSelect
+                      tipo="instituicao"
                       value={instituicaoId}
-                      onChange={(v) => { setInstituicaoId(v); setValidationErrors((prev) => { const n = new Set(prev); n.delete("instituicaoId"); return n; }); }}
+                      onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); setValidationErrors((prev) => { const n = new Set(prev); n.delete("instituicaoId"); return n; }); }}
+                      tituloCadastro="Cadastrar Novo Banco"
+                      labelCadastro="Nome do Banco"
                       placeholder="Pesquisar banco..."
                       hasError={validationErrors.has("instituicaoId")}
-                      options={instituicoes.map((i) => ({
-                        value: i.id,
-                        label: i.nome,
-                      }))}
                     />
                   </Field>
                 </div>
@@ -1360,7 +1363,7 @@ export default function CadastrarTransacaoPage() {
                       <Field label="Corretora">
                         <input
                           type="text"
-                          value={getInstituicaoNome(instituicaoId)}
+                          value={instituicaoNome || "—"}
                           disabled
                           className="input-field opacity-60"
                         />
