@@ -796,14 +796,17 @@ export default function CadastrarTransacaoPage() {
           if (existing && existing.length > 0) {
             codigoCustodia = existing[0].codigo_custodia!;
           } else {
-            const { data: maxRow } = await supabase
+            // Próximo código NUMÉRICO limpo (100, 101, 102...). Ignora códigos
+            // legados não-numéricos (ex.: "TST-CMB-NN") e evita a concatenação de
+            // string do text column ("100" + 1 → "1001"). Fix 2026-08-15.
+            const { data: codigos } = await supabase
               .from("movimentacoes")
               .select("codigo_custodia")
-              .not("codigo_custodia", "is", null)
-              .order("codigo_custodia", { ascending: false })
-              .limit(1);
-
-            const maxCodigo = maxRow && maxRow.length > 0 ? (maxRow[0].codigo_custodia ?? 99) : 99;
+              .not("codigo_custodia", "is", null);
+            const maxCodigo = (codigos || []).reduce((mx, r: any) => {
+              const n = Number(r.codigo_custodia);
+              return Number.isFinite(n) && n > mx ? n : mx;
+            }, 99);
             codigoCustodia = maxCodigo + 1;
             tipoFinal = "Aplicação Inicial";
           }
