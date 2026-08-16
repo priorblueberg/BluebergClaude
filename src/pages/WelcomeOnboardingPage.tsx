@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
 import EntidadeSelect from "@/components/EntidadeSelect";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Reuse types and helpers from CadastrarTransacaoPage
@@ -64,6 +65,10 @@ function buildNomeAtivo(produtoNome: string, emissorNome: string, modalidade: st
 
 export default function WelcomeOnboardingPage() {
   const { user, profileName, refreshCustodia } = useAuth();
+  const isAdmin = useIsAdmin();
+
+  // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
+  const pagamentoOptions = isAdmin ? PAGAMENTO_OPTIONS : ["No Vencimento"];
 
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -93,11 +98,14 @@ export default function WelcomeOnboardingPage() {
   useEffect(() => {
     supabase.from("categorias").select("id, nome").eq("ativa", true).order("nome").then(({ data }) => {
       if (data) {
-        const filtered = data.filter((c: any) => c.nome === "Renda Fixa" || c.nome === "Poupança");
+        // TEMPORARIO: usuario comum so opera Renda Fixa; admin mantem a Poupanca.
+        const filtered = data.filter((c: any) =>
+          c.nome === "Renda Fixa" || (isAdmin && c.nome === "Poupança")
+        );
         setCategorias(filtered);
       }
     });
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     if (!categoriaId) return;
@@ -183,7 +191,7 @@ export default function WelcomeOnboardingPage() {
         emissor_id: isPoupanca ? null : emissorId,
         modalidade: modalidadeToSave,
         taxa: taxaNum,
-        pagamento: isPoupanca ? "Mensal" : pagamento,
+        pagamento: isPoupanca ? "Mensal" : (isAdmin ? pagamento : "No Vencimento"),
         vencimento: isPoupanca ? null : vencimento,
         nome_ativo: nomeAtivo,
         codigo_custodia: codigoCustodia,
@@ -405,7 +413,7 @@ export default function WelcomeOnboardingPage() {
                       </Field>
                       <Field label="Pagamento de Juros" required>
                         <NativeSelect value={pagamento} onChange={(v) => { setPagamento(v); clearError("pagamento"); }}
-                          placeholder="Selecione" options={PAGAMENTO_OPTIONS.map((p) => ({ value: p, label: p }))} hasError={validationErrors.has("pagamento")} />
+                          placeholder="Selecione" options={pagamentoOptions.map((p) => ({ value: p, label: p }))} hasError={validationErrors.has("pagamento")} />
                       </Field>
                     </div>
                   </>

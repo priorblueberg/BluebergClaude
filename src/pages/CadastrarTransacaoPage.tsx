@@ -3,6 +3,7 @@ import { format, parse, isValid } from "date-fns";
 import { ArrowLeft, PlusCircle, AlertTriangle, HelpCircle, CalendarIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
@@ -186,10 +187,14 @@ function buildNomeAtivo(
 
 export default function CadastrarTransacaoPage() {
   const { user } = useAuth();
+  const isAdmin = useIsAdmin();
   const { dataReferenciaISO, applyDataReferencia } = useDataReferencia();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editId = searchParams.get("edit");
+
+  // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
+  const pagamentoOptions = isAdmin ? PAGAMENTO_OPTIONS : ["No Vencimento"];
 
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -249,13 +254,17 @@ export default function CadastrarTransacaoPage() {
       .order("nome")
       .then(({ data }) => {
         if (data) {
-          setCategorias(data);
-          if (data.length === 1 && !editId) {
-            setCategoriaId(data[0].id);
+          // TEMPORARIO: usuario comum so opera Renda Fixa enquanto as demais
+          // categorias nao estao liberadas. Admin ve tudo. Remover o filtro
+          // quando o resto for liberado.
+          const visiveis = isAdmin ? data : data.filter((c) => c.nome === "Renda Fixa");
+          setCategorias(visiveis);
+          if (visiveis.length === 1 && !editId) {
+            setCategoriaId(visiveis[0].id);
           }
         }
       });
-  }, []);
+  }, [isAdmin, editId]);
 
   // Load produtos when categoria changes (for Aplicação flow)
   useEffect(() => {
@@ -753,6 +762,9 @@ export default function CadastrarTransacaoPage() {
       const puNum = isPoupanca ? 0 : parseCurrencyToNumber(precoUnitario);
       const taxaNum = isPoupanca ? 0 : parseFloat(taxa.replace(",", ".") || "0");
       const quantidade = !isPoupanca && puNum > 0 ? valorNum / puNum : null;
+      // TEMPORARIO: trava a periodicidade do usuario comum tambem na gravacao,
+      // nao so na lista do campo.
+      const pagamentoToSave = isAdmin ? pagamento : "No Vencimento";
 
       // Mapeamento: "Pós Fixado" + "CDI+" → "Mista" + "CDI"
       let modalidadeToSave = isPoupanca ? "Poupança" : modalidade;
@@ -777,7 +789,7 @@ export default function CadastrarTransacaoPage() {
           emissor_id: emissorId,
           modalidade: modalidadeToSave,
           taxa: taxaNum,
-          pagamento,
+          pagamento: pagamentoToSave,
           vencimento,
           nome_ativo: nomeAtivo,
           indexador: indexadorToSave,
@@ -839,7 +851,7 @@ export default function CadastrarTransacaoPage() {
           emissor_id: isPoupanca ? null : emissorId || null,
           modalidade: modalidadeToSave,
           taxa: isPoupanca ? null : taxaNum,
-          pagamento: isPoupanca ? "Mensal" : pagamento,
+          pagamento: isPoupanca ? "Mensal" : pagamentoToSave,
           vencimento: isPoupanca ? null : vencimento || null,
           nome_ativo: nomeAtivo,
           codigo_custodia: nomeAtivo ? codigoCustodia : null,
@@ -1127,7 +1139,7 @@ export default function CadastrarTransacaoPage() {
                       value={pagamento}
                       onChange={(v) => { setPagamento(v); setValidationErrors((prev) => { const n = new Set(prev); n.delete("pagamento"); return n; }); }}
                       placeholder="Selecione"
-                      options={PAGAMENTO_OPTIONS.map((p) => ({
+                      options={pagamentoOptions.map((p) => ({
                         value: p,
                         label: p,
                       }))}
