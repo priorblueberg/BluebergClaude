@@ -16,6 +16,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import SearchableSelect from "@/components/SearchableSelect";
+import EmissorSelect from "@/components/EmissorSelect";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -27,10 +28,6 @@ interface Produto {
   nome: string;
 }
 interface Instituicao {
-  id: string;
-  nome: string;
-}
-interface Emissor {
   id: string;
   nome: string;
 }
@@ -202,7 +199,6 @@ export default function CadastrarTransacaoPage() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [instituicoes, setInstituicoes] = useState<Instituicao[]>([]);
-  const [emissores, setEmissores] = useState<Emissor[]>([]);
 
   // Resgate-specific state
   const [custodiaItems, setCustodiaItems] = useState<CustodiaItem[]>([]);
@@ -224,6 +220,7 @@ export default function CadastrarTransacaoPage() {
   const [precoUnitario, setPrecoUnitario] = useState("1.000,00");
   const [instituicaoId, setInstituicaoId] = useState("");
   const [emissorId, setEmissorId] = useState("");
+  const [emissorNome, setEmissorNome] = useState("");
   const [modalidade, setModalidade] = useState("");
   const [indexador, setIndexador] = useState("");
   const [taxa, setTaxa] = useState("");
@@ -288,7 +285,8 @@ export default function CadastrarTransacaoPage() {
       });
   }, [categoriaId]);
 
-  // Load instituicoes and emissores once
+  // Load instituicoes once. Emissores nao entram aqui: a tabela tem ~1,6 mil
+  // nomes (lista do Banco Central) e quem busca e o EmissorSelect, server-side.
   useEffect(() => {
     supabase
       .from("instituicoes")
@@ -297,14 +295,6 @@ export default function CadastrarTransacaoPage() {
       .order("nome")
       .then(({ data }) => {
         if (data) setInstituicoes(data);
-      });
-    supabase
-      .from("emissores")
-      .select("id, nome")
-      .eq("ativo", true)
-      .order("nome")
-      .then(({ data }) => {
-        if (data) setEmissores(data);
       });
   }, []);
 
@@ -331,6 +321,15 @@ export default function CadastrarTransacaoPage() {
     setProdutoId(selectedCustodia.produto_id);
     setInstituicaoId(selectedCustodia.instituicao_id || "");
     setEmissorId(selectedCustodia.emissor_id || "");
+    setEmissorNome("");
+    if (selectedCustodia.emissor_id) {
+      supabase
+        .from("emissores")
+        .select("nome")
+        .eq("id", selectedCustodia.emissor_id)
+        .maybeSingle()
+        .then(({ data }) => setEmissorNome(data?.nome ?? ""));
+    }
     setModalidade(selectedCustodia.modalidade || "");
     setIndexador(selectedCustodia.indexador || "");
     setTaxa(selectedCustodia.taxa ? String(selectedCustodia.taxa) : "");
@@ -555,6 +554,15 @@ export default function CadastrarTransacaoPage() {
       setPrecoUnitario(mov.preco_unitario ? formatCurrency(Math.round(mov.preco_unitario * 100).toString()) : "1.000,00");
       setInstituicaoId(mov.instituicao_id || "");
       setEmissorId(mov.emissor_id || "");
+      setEmissorNome("");
+      if (mov.emissor_id) {
+        const { data: emissor } = await supabase
+          .from("emissores")
+          .select("nome")
+          .eq("id", mov.emissor_id)
+          .maybeSingle();
+        setEmissorNome(emissor?.nome ?? "");
+      }
       setModalidade(mov.modalidade || "");
       setIndexador(mov.indexador || "");
       setTaxa(mov.taxa ? String(mov.taxa) : "");
@@ -579,6 +587,7 @@ export default function CadastrarTransacaoPage() {
     setPrecoUnitario("1.000,00");
     setInstituicaoId("");
     setEmissorId("");
+    setEmissorNome("");
     setModalidade("");
     setIndexador("");
     setTaxa("");
@@ -726,7 +735,6 @@ export default function CadastrarTransacaoPage() {
 
     try {
       const produtoNome = produtos.find((p) => p.id === produtoId)?.nome || "";
-      const emissorNome = emissores.find((e) => e.id === emissorId)?.nome || "";
       const instituicaoNome = instituicoes.find((i) => i.id === instituicaoId)?.nome || "";
 
       let nomeAtivo: string | null;
@@ -822,7 +830,10 @@ export default function CadastrarTransacaoPage() {
           valor: valorNum,
           preco_unitario: isPoupanca ? null : puNum,
           instituicao_id: instituicaoId,
-          emissor_id: isPoupanca ? (instituicaoId || null) : emissorId || null,
+          // Poupanca nao tem emissor: o vinculo e com a instituicao onde a conta
+          // existe (instituicao_id acima + nome_ativo). Gravar o id de
+          // instituicoes aqui estourava a FK emissor_id -> emissores.
+          emissor_id: isPoupanca ? null : emissorId || null,
           modalidade: modalidadeToSave,
           taxa: isPoupanca ? null : taxaNum,
           pagamento: isPoupanca ? "Mensal" : pagamento,
@@ -864,7 +875,6 @@ export default function CadastrarTransacaoPage() {
 
   // Helper for displaying names from IDs (for Resgate readonly fields)
   const getInstituicaoNome = (id: string) => instituicoes.find((i) => i.id === id)?.nome || "—";
-  const getEmissorNome = (id: string) => emissores.find((e) => e.id === id)?.nome || "—";
 
   const fmtBrlDisplay = (v: number | null) =>
     v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -1050,15 +1060,11 @@ export default function CadastrarTransacaoPage() {
                   </Field>
 
                   <Field label="Emissor" required>
-                    <SearchableSelect
+                    <EmissorSelect
                       value={emissorId}
-                      onChange={(v) => { setEmissorId(v); setValidationErrors((prev) => { const n = new Set(prev); n.delete("emissorId"); return n; }); }}
+                      onChange={(id, nome) => { setEmissorId(id); setEmissorNome(nome); setValidationErrors((prev) => { const n = new Set(prev); n.delete("emissorId"); return n; }); }}
                       placeholder="Pesquisar emissor..."
                       hasError={validationErrors.has("emissorId")}
-                      options={emissores.map((e) => ({
-                        value: e.id,
-                        label: e.nome,
-                      }))}
                     />
                   </Field>
                 </div>
@@ -1363,7 +1369,7 @@ export default function CadastrarTransacaoPage() {
                       <Field label="Emissor">
                         <input
                           type="text"
-                          value={getEmissorNome(emissorId)}
+                          value={emissorNome || "—"}
                           disabled
                           className="input-field opacity-60"
                         />

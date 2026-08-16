@@ -249,21 +249,34 @@ export type Database = {
       emissores: {
         Row: {
           ativo: boolean
+          cnpj: string | null
           created_at: string
           id: string
           nome: string
+          nome_busca: string
+          origem: string
+          segmento: string | null
+          user_id: string | null
         }
         Insert: {
           ativo?: boolean
+          cnpj?: string | null
           created_at?: string
           id?: string
           nome: string
+          origem?: string
+          segmento?: string | null
+          user_id?: string | null
         }
         Update: {
           ativo?: boolean
+          cnpj?: string | null
           created_at?: string
           id?: string
           nome?: string
+          origem?: string
+          segmento?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }

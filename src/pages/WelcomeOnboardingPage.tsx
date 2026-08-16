@@ -5,12 +5,12 @@ import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
 import SearchableSelect from "@/components/SearchableSelect";
+import EmissorSelect from "@/components/EmissorSelect";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Reuse types and helpers from CadastrarTransacaoPage
 interface Produto { id: string; nome: string; }
 interface Instituicao { id: string; nome: string; }
-interface Emissor { id: string; nome: string; }
 interface Categoria { id: string; nome: string; }
 
 const PAGAMENTO_OPTIONS = ["Mensal", "Bimestral", "Trimestral", "Quatrimestral", "Semestral", "No Vencimento"];
@@ -70,7 +70,6 @@ export default function WelcomeOnboardingPage() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [instituicoes, setInstituicoes] = useState<Instituicao[]>([]);
-  const [emissores, setEmissores] = useState<Emissor[]>([]);
   const [categoriaId, setCategoriaId] = useState("");
   const [categoriaNome, setCategoriaNome] = useState("");
 
@@ -81,6 +80,7 @@ export default function WelcomeOnboardingPage() {
   const [precoUnitario, setPrecoUnitario] = useState("1.000,00");
   const [instituicaoId, setInstituicaoId] = useState("");
   const [emissorId, setEmissorId] = useState("");
+  const [emissorNome, setEmissorNome] = useState("");
   const [modalidade, setModalidade] = useState("");
   const [indexador, setIndexador] = useState("");
   const [taxa, setTaxa] = useState("");
@@ -100,7 +100,6 @@ export default function WelcomeOnboardingPage() {
       }
     });
     supabase.from("instituicoes").select("id, nome").eq("ativa", true).order("nome").then(({ data }) => { if (data) setInstituicoes(data); });
-    supabase.from("emissores").select("id, nome").eq("ativo", true).order("nome").then(({ data }) => { if (data) setEmissores(data); });
   }, []);
 
   useEffect(() => {
@@ -163,7 +162,6 @@ export default function WelcomeOnboardingPage() {
         indexadorToSave = null;
         valorExtrato = `R$ ${fmtBR(valorNum)}`;
       } else {
-        const emissorNome = emissores.find((e) => e.id === emissorId)?.nome || "";
         nomeAtivo = buildNomeAtivo(produtoNome, emissorNome, modalidade, taxa, vencimento, indexador);
         puNum = parseCurrencyToNumber(precoUnitario);
         taxaNum = parseFloat(taxa.replace(",", "."));
@@ -382,9 +380,8 @@ export default function WelcomeOnboardingPage() {
                           options={instituicoes.map((i) => ({ value: i.id, label: i.nome }))} />
                       </Field>
                       <Field label="Emissor" required>
-                        <SearchableSelect value={emissorId} onChange={(v) => { setEmissorId(v); clearError("emissorId"); }}
-                          placeholder="Pesquisar emissor..." hasError={validationErrors.has("emissorId")}
-                          options={emissores.map((e) => ({ value: e.id, label: e.nome }))} />
+                        <EmissorSelect value={emissorId} onChange={(id, nome) => { setEmissorId(id); setEmissorNome(nome); clearError("emissorId"); }}
+                          placeholder="Pesquisar emissor..." hasError={validationErrors.has("emissorId")} />
                       </Field>
                     </div>
 
