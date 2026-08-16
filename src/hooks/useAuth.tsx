@@ -7,6 +7,8 @@ interface AuthContextType {
   loading: boolean;
   hasProfile: boolean | null;
   profileName: string | null;
+  /** null = ainda carregando o papel do usuario. */
+  isAdmin: boolean | null;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   refreshCustodia: () => Promise<boolean | null>;
@@ -19,6 +21,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const [hasProfile, setHasProfile] = useState<boolean | null>(null);
   const [profileName, setProfileName] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+
+  /** Papel vem do banco (invest.user_roles via invest.is_admin), nunca do e-mail. */
+  const loadRole = useCallback(async () => {
+    const { data, error } = await supabase.rpc("is_admin");
+    if (error) {
+      console.error("Erro ao verificar papel do usuário", error);
+      setIsAdmin(false);
+      return;
+    }
+    setIsAdmin(data === true);
+  }, []);
 
   const loadProfile = useCallback(async (userId: string) => {
     const { data, error } = await supabase
@@ -42,6 +56,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
     setHasProfile(null);
     setProfileName(null);
+    setIsAdmin(null);
     setLoading(false);
   }, []);
 
@@ -66,7 +81,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (!initialLoadDone) {
         setLoading(true);
       }
-      await loadProfile(nextUser.id);
+      await Promise.all([loadProfile(nextUser.id), loadRole()]);
       if (isMounted) {
         setLoading(false);
         initialLoadDone = true;
@@ -95,7 +110,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       isMounted = false;
       subscription.unsubscribe();
     };
-  }, [clearAuthState, loadProfile]);
+  }, [clearAuthState, loadProfile, loadRole]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
@@ -124,8 +139,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [user]);
 
   const value = useMemo(
-    () => ({ user, loading, hasProfile, profileName, signOut, refreshProfile, refreshCustodia }),
-    [user, loading, hasProfile, profileName, signOut, refreshProfile, refreshCustodia]
+    () => ({ user, loading, hasProfile, profileName, isAdmin, signOut, refreshProfile, refreshCustodia }),
+    [user, loading, hasProfile, profileName, isAdmin, signOut, refreshProfile, refreshCustodia]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

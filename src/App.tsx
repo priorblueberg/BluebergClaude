@@ -54,6 +54,24 @@ const ProtectedRoute = () => {
   return <Outlet />;
 };
 
+/**
+ * Rotas restritas a admin. O menu ja esconde os links (adminOnly no
+ * AppSidebar), mas esconder nao e proteger: sem isto, qualquer usuario logado
+ * abria /admin ou /custodia digitando a URL.
+ */
+const AdminRoute = () => {
+  const { isAdmin } = useAuth();
+
+  if (isAdmin === null)
+    return (
+      <div className="flex min-h-screen items-center justify-center text-muted-foreground">
+        Carregando...
+      </div>
+    );
+  if (!isAdmin) return <Navigate to="/carteira/renda-fixa" replace />;
+  return <Outlet />;
+};
+
 const OnboardingRoute = () => {
   const { user, loading, hasProfile } = useAuth();
   if (loading || hasProfile === null)
@@ -96,14 +114,18 @@ const App = () => (
                 <Route path="/carteira/tesouro-direto" element={<CarteiraTesouroDireto />} />
                 <Route path="/posicao-consolidada" element={<PosicaoConsolidadaPage />} />
                 <Route path="/movimentacoes" element={<Movimentacoes />} />
-                <Route path="/custodia" element={<Custodia />} />
-                <Route path="/controle-carteiras" element={<ControleCarteiras />} />
                 <Route path="/proventos" element={<ProventosRecebidos />} />
                 <Route path="/cadastrar-transacao" element={<CadastrarTransacao />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route path="/usuario" element={<Usuario />} />
-                <Route path="/admin" element={<Admin />} />
-                <Route path="/calculadora" element={<CalculadoraPage />} />
+
+                {/* Somente admin */}
+                <Route element={<AdminRoute />}>
+                  <Route path="/custodia" element={<Custodia />} />
+                  <Route path="/controle-carteiras" element={<ControleCarteiras />} />
+                  <Route path="/admin" element={<Admin />} />
+                  <Route path="/calculadora" element={<CalculadoraPage />} />
+                </Route>
               </Route>
             </Route>
             <Route path="*" element={<NotFound />} />

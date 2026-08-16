@@ -641,6 +641,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      is_admin: {
+        Args: Record<string, never>
+        Returns: boolean
+      }
+      has_role: {
+        Args: { _user_id: string; _role: string }
+        Returns: boolean
+      }
       check_email_exists: { Args: { p_email: string }; Returns: boolean }
     }
     Enums: {
