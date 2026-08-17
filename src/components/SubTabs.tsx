@@ -1,6 +1,8 @@
 import { Link, useLocation } from "react-router-dom";
 
 const tabs = [
+  // A lamina Total abre sempre, mesmo com uma unica categoria cadastrada.
+  { label: "Investimentos", url: "/carteira" },
   { label: "Renda Fixa", url: "/carteira/renda-fixa" },
   // MVP2: Renda Variável, Fundos, Tesouro Direto
 ];

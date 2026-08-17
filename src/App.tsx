@@ -68,7 +68,7 @@ const AdminRoute = () => {
         Carregando...
       </div>
     );
-  if (!isAdmin) return <Navigate to="/carteira/renda-fixa" replace />;
+  if (!isAdmin) return <Navigate to="/carteira" replace />;
   return <Outlet />;
 };
 
@@ -81,7 +81,7 @@ const OnboardingRoute = () => {
       </div>
     );
   if (!user) return <Navigate to="/auth" replace />;
-  if (hasProfile) return <Navigate to="/carteira/renda-fixa" replace />;
+  if (hasProfile) return <Navigate to="/carteira" replace />;
   return <OnboardingPage />;
 };
 
@@ -106,8 +106,10 @@ const App = () => (
             {/* Protected routes */}
             <Route element={<ProtectedRoute />}>
               <Route element={<AppLayout />}>
-                <Route path="/welcome" element={<Navigate to="/carteira/renda-fixa" replace />} />
-                <Route path="/carteira" element={<Navigate to="/carteira/renda-fixa" replace />} />
+                <Route path="/welcome" element={<Navigate to="/carteira" replace />} />
+                {/* /carteira e a lamina de Investimentos (Total). Antes ela caia
+                    direto na carteira de Renda Fixa por ser a unica categoria. */}
+                <Route path="/carteira" element={<CarteiraVisaoGeral />} />
                 <Route path="/carteira/renda-fixa" element={<CarteiraRendaFixa />} />
                 <Route path="/carteira/renda-variavel" element={<CarteiraRendaVariavel />} />
                 <Route path="/carteira/fundos" element={<CarteiraFundos />} />
