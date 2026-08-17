@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
 import EntidadeSelect from "@/components/EntidadeSelect";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 // Reuse types and helpers from CadastrarTransacaoPage
@@ -55,13 +56,6 @@ function parseCurrencyToNumber(value: string): number {
   return parseFloat(value.replace(/\./g, "").replace(",", ".")) || 0;
 }
 
-function buildNomeAtivo(produtoNome: string, emissorNome: string, modalidade: string, taxa: string, vencimento: string, indexador: string): string {
-  const taxaFormatted = taxa ? `${taxa.replace(".", ",")}%` : "";
-  const vencFormatted = vencimento ? new Date(vencimento + "T00:00:00").toLocaleDateString("pt-BR") : "";
-  if (modalidade === "Prefixado") return [produtoNome, emissorNome, modalidade, taxaFormatted ? `${taxaFormatted} a.a.` : "", vencFormatted ? `- ${vencFormatted}` : ""].filter(Boolean).join(" ");
-  if (indexador === "CDI") return [produtoNome, emissorNome, modalidade, taxaFormatted, "do CDI", vencFormatted ? `- ${vencFormatted}` : ""].filter(Boolean).join(" ");
-  return [produtoNome, emissorNome, modalidade, indexador, taxaFormatted, vencFormatted ? `- ${vencFormatted}` : ""].filter(Boolean).join(" ");
-}
 
 export default function WelcomeOnboardingPage() {
   const { user, profileName, refreshCustodia } = useAuth();
