@@ -215,3 +215,61 @@ export function buildDetailRowsFromEngine(
 
   return rows.reverse();
 }
+
+/**
+ * Consolida as linhas diárias de todos os produtos numa única série e devolve
+ * as DetailRow da carteira. Usado pela carteira de Renda Fixa e pelo dashboard
+ * de Investimentos (lâmina Total), que precisam da mesma consolidação.
+ */
+export function buildCarteiraDetailRows(
+  allProductRows: { data: string; diaUtil: boolean; liquido: number; aplicacoes: number; resgates: number; jurosPago: number; saldoCotas: number; ganhoDiario: number }[][],
+  carteiraRows: { data: string; rentDiariaPct: number | null }[],
+  cdiRecords: CdiRecord[],
+  dataInicio: string,
+  dataCalculo: string,
+): DetailRow[] {
+  if (allProductRows.length === 0) return [];
+
+  const dateMap = new Map<string, any>();
+  for (const prodRows of allProductRows) {
+    for (const row of prodRows) {
+      if (row.data < dataInicio || row.data > dataCalculo) continue;
+      const existing = dateMap.get(row.data);
+      if (existing) {
+        existing.liquido += row.liquido;
+        existing.aplicacoes += row.aplicacoes;
+        existing.resgates += row.resgates;
+        existing.jurosPago += row.jurosPago;
+        existing.saldoCotas += row.saldoCotas;
+        existing.ganhoDiario += row.ganhoDiario;
+      } else {
+        dateMap.set(row.data, {
+          data: row.data,
+          diaUtil: row.diaUtil,
+          liquido: row.liquido,
+          aplicacoes: row.aplicacoes,
+          resgates: row.resgates,
+          jurosPago: row.jurosPago,
+          saldoCotas: row.saldoCotas,
+          ganhoAcumulado: 0,
+          ganhoDiario: row.ganhoDiario,
+          rentabilidadeDiaria: null,
+        });
+      }
+    }
+  }
+
+  const merged = Array.from(dateMap.values()).sort((a, b) => a.data.localeCompare(b.data));
+  const carteiraMap = new Map<string, { rentDiariaPct: number | null }>();
+  carteiraRows.forEach(r => carteiraMap.set(r.data, r));
+
+  let ganhoAcum = 0;
+  for (const row of merged) {
+    ganhoAcum += row.ganhoDiario;
+    row.ganhoAcumulado = ganhoAcum;
+    const cr = carteiraMap.get(row.data);
+    row.rentabilidadeDiaria = cr ? cr.rentDiariaPct : null;
+  }
+
+  return buildDetailRowsFromEngine(merged, cdiRecords, dataInicio);
+}
