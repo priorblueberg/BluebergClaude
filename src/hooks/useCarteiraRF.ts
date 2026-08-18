@@ -82,6 +82,7 @@ let _cartRFCached: {
   ibovespaData: { data: string; pontos: number }[];
   productList: ProductListItem[];
   allCustodiaForCategoria: CustodiaCategoriaItem[];
+  calendario: { data: string; dia_util: boolean }[];
 } | null = null;
 
 export function useCarteiraRF() {
@@ -95,6 +96,9 @@ export function useCarteiraRF() {
   const [loading, setLoading] = useState(_cartRFCachedVersion === null);
   const [productList, setProductList] = useState<ProductListItem[]>(_cartRFCached?.productList ?? []);
   const [allCustodiaForCategoria, setAllCustodiaForCategoria] = useState<CustodiaCategoriaItem[]>(_cartRFCached?.allCustodiaForCategoria ?? []);
+  // Calendário sai do hook porque o dashboard roda o motor de carteira por grupo
+  // (categoria/instituição) para obter a rentabilidade de cada linha.
+  const [calendario, setCalendario] = useState<{ data: string; dia_util: boolean }[]>(_cartRFCached?.calendario ?? []);
 
   useEffect(() => {
     if (!user) return;
@@ -161,6 +165,7 @@ export function useCarteiraRF() {
         setCdiRecords([]);
         setIbovespaData([]);
         setProductList([]);
+        setCalendario([]);
         setLoading(false);
         _cartRFCachedVersion = appliedVersion;
         return;
@@ -206,6 +211,7 @@ export function useCarteiraRF() {
       ]);
 
       const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
+      setCalendario(calendario);
       const cdiRaw = (cdiRes.data || []).map((c: any) => ({ data: c.data, taxa_anual: Number(c.taxa_anual) }));
       const ibovRaw = (ibovRes.data || []).map((r: any) => ({ data: r.data, pontos: Number(r.pontos) }));
       setIbovespaData(ibovRaw);
@@ -339,7 +345,7 @@ export function useCarteiraRF() {
 
       setCarteiraRows(result);
       _cartRFCachedVersion = appliedVersion;
-      _cartRFCached = { carteiraInfo: info, carteiraRows: result, allProductRows: allProdRows, cdiRecords: mergedCdi, ibovespaData: ibovRaw, productList: pList, allCustodiaForCategoria: (custodiaData || []).filter((r: any) => !r.resgate_total).map((r: any) => ({ categoria_nome: r.categorias?.nome || "Outros", valor_investido: Number(r.valor_investido), custodia_no_dia: r.custodia_no_dia != null ? Number(r.custodia_no_dia) : null })) };
+      _cartRFCached = { carteiraInfo: info, carteiraRows: result, allProductRows: allProdRows, cdiRecords: mergedCdi, ibovespaData: ibovRaw, productList: pList, allCustodiaForCategoria: (custodiaData || []).filter((r: any) => !r.resgate_total).map((r: any) => ({ categoria_nome: r.categorias?.nome || "Outros", valor_investido: Number(r.valor_investido), custodia_no_dia: r.custodia_no_dia != null ? Number(r.custodia_no_dia) : null })), calendario };
       setLoading(false);
     })();
   }, [user, appliedVersion]);
@@ -352,6 +358,7 @@ export function useCarteiraRF() {
     ibovespaData,
     productList,
     allCustodiaForCategoria,
+    calendario,
     loading,
   };
 }
