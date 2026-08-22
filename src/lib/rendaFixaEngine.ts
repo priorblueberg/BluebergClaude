@@ -165,12 +165,14 @@ export function gerarDatasPagamentoJuros(
     const targetStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
 
     if (targetStr < dataInicio) break;
-    if (dataCalculo && targetStr > dataCalculo) continue;
 
+    // O corte por dataCalculo olha a data EFETIVA de pagamento, nao a nominal: um cupom de 28/03
+    // que cai no sabado e pago em 27/03, e comparar o 28 com uma data de calculo de 27 fazia o
+    // cupom sumir. Aparece na virada de mes e em resgate no proprio dia do cupom.
     const adjusted = ajustarParaDiaUtil(targetStr);
-    if (adjusted && adjusted >= dataInicio) {
-      result.add(adjusted);
-    }
+    if (!adjusted || adjusted < dataInicio) continue;
+    if (dataCalculo && adjusted > dataCalculo) continue;
+    result.add(adjusted);
   }
 
   return result;
