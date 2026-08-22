@@ -8,12 +8,12 @@ import EntidadeSelect from "@/components/EntidadeSelect";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { PAGAMENTO_OPTIONS } from "@/lib/rendaFixaEngine";
 
 // Reuse types and helpers from CadastrarTransacaoPage
 interface Produto { id: string; nome: string; }
 interface Categoria { id: string; nome: string; }
 
-const PAGAMENTO_OPTIONS = ["Mensal", "Bimestral", "Trimestral", "Quatrimestral", "Semestral", "No Vencimento"];
 const MODALIDADE_OPTIONS = ["Prefixado", "Pós Fixado"];
 const INDEXADOR_OPTIONS = ["CDI", "CDI+"];
 

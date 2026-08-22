@@ -8,7 +8,7 @@ import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
-import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, PAGAMENTO_OPTIONS } from "@/lib/rendaFixaEngine";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
@@ -72,15 +72,6 @@ function numberToCurrency(num: number): string {
 const TIPOS_MOVIMENTACAO = [
   "Aplicação",
   "Resgate",
-];
-
-const PAGAMENTO_OPTIONS = [
-  "Mensal",
-  "Bimestral",
-  "Trimestral",
-  "Quatrimestral",
-  "Semestral",
-  "No Vencimento",
 ];
 
 const MODALIDADE_OPTIONS = ["Prefixado", "Pós Fixado"];

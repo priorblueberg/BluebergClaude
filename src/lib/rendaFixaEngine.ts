@@ -104,7 +104,16 @@ const PERIODICIDADE_MESES: Record<string, number> = {
   Trimestral: 3,
   Quadrimestral: 4,
   Semestral: 6,
+  Anual: 12,
 };
+
+/**
+ * Periodicidades que a boleta oferece. Sai daqui, e nao de uma lista solta na tela, porque
+ * periodicidade que o motor nao conhece NAO gera cupom nenhum: o titulo passa a ser calculado
+ * como se fosse "No Vencimento", sem erro na interface. Foi o que aconteceu com "Quatrimestral"
+ * (a boleta gravava com T; o motor so conhece "Quadrimestral", com D).
+ */
+export const PAGAMENTO_OPTIONS = [...Object.keys(PERIODICIDADE_MESES), "No Vencimento"];
 
 export function gerarDatasPagamentoJuros(
   dataInicio: string,
@@ -142,28 +151,26 @@ export function gerarDatasPagamentoJuros(
   }
 
   const result = new Set<string>();
-  let cursor = new Date(vencDate);
 
-  while (true) {
-    const year = cursor.getFullYear();
-    const month = cursor.getMonth();
+  // O passo anda em (ano, mes) contados a partir do vencimento, com o cursor ancorado no dia 1.
+  // Guardar o dia no cursor e chamar setMonth estoura: 31/12 menos 6 meses vira 01/07 (nao existe
+  // 31/06), e a partir dai TODA a serie fica deslocada um mes. O dia certo e recalculado a cada
+  // passo a partir do dia do vencimento, limitado ao ultimo dia do mes.
+  for (let passo = 0; ; passo++) {
+    const ref = new Date(vencDate.getFullYear(), vencDate.getMonth() - passo * meses, 1);
+    const year = ref.getFullYear();
+    const month = ref.getMonth();
     const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
     const targetDay = Math.min(diaBase, lastDayOfMonth);
     const targetStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
 
     if (targetStr < dataInicio) break;
-
-    if (dataCalculo && targetStr > dataCalculo) {
-      cursor.setMonth(cursor.getMonth() - meses);
-      continue;
-    }
+    if (dataCalculo && targetStr > dataCalculo) continue;
 
     const adjusted = ajustarParaDiaUtil(targetStr);
     if (adjusted && adjusted >= dataInicio) {
       result.add(adjusted);
     }
-
-    cursor.setMonth(cursor.getMonth() - meses);
   }
 
   return result;
@@ -258,6 +265,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
   let prevValorCota = cotaInicial;
   let rentAcumRS = 0;
   let valorInvestidoAcum = 0;
+  let qtdCustoAcum = 0;   // cotas que sustentam o custo acima (convencao do Gorila)
   let cupomAcumuladoAcum = 0;
   let prevPrecoUnitario = puInicial > 0 ? puInicial : 1000;
   let prevPuJurosPeriodicos = puInicial > 0 ? puInicial : 1000;
@@ -281,6 +289,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       prevSaldoCotas = 0;
       rentAcumRS = 0;
       valorInvestidoAcum = 0;
+      qtdCustoAcum = 0;
       cupomAcumuladoAcum = 0;
       prevBaseEconomica = 0;
       continue;
@@ -326,18 +335,6 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       apoioCupom = prevLiquido * (1 + dailyMult) + aplicacoes;
     }
 
-    // U: Valor Investido
-    valorInvestidoAcum += aplicacoes - manualResgates;
-    const valorInvestido = valorInvestidoAcum;
-
-    // V: Resgate Limpo
-    let resgateLimpo: number;
-    if (isFinalDay) {
-      resgateLimpo = valorInvestido;
-    } else {
-      resgateLimpo = manualResgates;
-    }
-
     // Q: Is this a payment date?
     const isPagamento = datasPagamento.has(cal.data);
 
@@ -354,6 +351,32 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     } else {
       const puMult = (isMistaCDI || isPosFixadoCDI) ? dailyMult : rawMultiplicador;
       precoUnitario = prevPrecoUnitario * puMult + prevPrecoUnitario;
+    }
+
+    // U: Valor Investido — CUSTO, na convencao do Gorila (2026-08-22): a aplicacao entra pelo
+    // valor pago e o resgate PARCIAL baixa o custo das cotas vendidas (quantidade x custo medio),
+    // nao o valor bruto recebido. Antes subtraiamos o bruto, e o custo caia demais: um resgate de
+    // 25% do saldo baixava 25% do SALDO em vez de 25% do principal. Saldo e P&L nao mudam; muda a
+    // base de qualquer rentabilidade money-weighted. No encerramento o comportamento e o de sempre
+    // (o capital devolvido e o proprio custo), para nao mexer na mecanica do dia final.
+    valorInvestidoAcum += aplicacoes;
+    if (precoUnitario > 0 && aplicacoes > 0) qtdCustoAcum += aplicacoes / precoUnitario;
+    if (isFinalDay) {
+      valorInvestidoAcum -= manualResgates;
+    } else if (manualResgates > 0.01 && precoUnitario > 0 && qtdCustoAcum > 0) {
+      const qtdVendida = manualResgates / precoUnitario;
+      const custoMedio = valorInvestidoAcum / qtdCustoAcum;
+      valorInvestidoAcum = Math.max(0, valorInvestidoAcum - qtdVendida * custoMedio);
+      qtdCustoAcum = Math.max(0, qtdCustoAcum - qtdVendida);
+    }
+    const valorInvestido = valorInvestidoAcum;
+
+    // V: Resgate Limpo
+    let resgateLimpo: number;
+    if (isFinalDay) {
+      resgateLimpo = valorInvestido;
+    } else {
+      resgateLimpo = manualResgates;
     }
 
     // X: Quantidade Aplicação = Aplicações / Preço Unitário
