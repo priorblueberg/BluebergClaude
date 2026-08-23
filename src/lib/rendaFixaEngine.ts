@@ -276,6 +276,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
   let prevBaseEconomica = 0;
   let prevRentDiariaPct = 0;
   let prevRentAcumulada2 = 0;
+  let prevLiquido2 = 0;   // saldo da serie 2 no dia anterior: base do retorno no dia do encerramento
 
   for (let i = startIdx; i < sorted.length; i++) {
     const cal = sorted[i];
@@ -552,10 +553,17 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       rentAcumulada2 = prevRentAcumulada2;
     } else {
       // Rent. Diária (%) = ganhoDiario / liquido2 do dia atual
+      // Base do retorno do dia: o saldo de hoje. No dia em que a posicao e encerrada o saldo vai
+      // a zero, e ai a base e o saldo de ONTEM -- o titulo rendeu ate ser vendido. Depois disso
+      // nao ha mais posicao e o retorno do dia e ZERO: a serie congela.
+      // Antes repetia-se o retorno do ultimo dia com saldo, e a rentabilidade seguia subindo
+      // sobre nada (o titulo 205 saiu de 22,02% na venda para 29,87% seis meses depois).
       if (liquido2 > 0.01) {
         rentDiariaPct = ganhoDiario / liquido2;
+      } else if (prevLiquido2 > 0.01) {
+        rentDiariaPct = ganhoDiario / prevLiquido2;
       } else {
-        rentDiariaPct = prevRentDiariaPct;
+        rentDiariaPct = 0;
       }
       rentAcumulada2 = (1 + prevRentAcumulada2) * (1 + rentDiariaPct) - 1;
     }
@@ -606,6 +614,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     prevBaseEconomica = baseEconomica;
     prevRentDiariaPct = rentDiariaPct;
     prevRentAcumulada2 = rentAcumulada2;
+    prevLiquido2 = liquido2;
   }
 
   return rows;
