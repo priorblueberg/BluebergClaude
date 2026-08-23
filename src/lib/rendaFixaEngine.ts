@@ -363,8 +363,13 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     // (o capital devolvido e o proprio custo), para nao mexer na mecanica do dia final.
     valorInvestidoAcum += aplicacoes;
     if (precoUnitario > 0 && aplicacoes > 0) qtdCustoAcum += aplicacoes / precoUnitario;
+    // No encerramento (vencimento ou venda que zera a posicao) o custo vai a ZERO, como no
+    // Gorila: a posicao nao existe mais. O capital devolvido ainda e preciso para o resgate
+    // limpo, entao fica guardado antes de zerar.
+    const custoNoEncerramento = valorInvestidoAcum;
     if (isFinalDay) {
-      valorInvestidoAcum -= manualResgates;
+      valorInvestidoAcum = 0;
+      qtdCustoAcum = 0;
     } else if (manualResgates > 0.01 && precoUnitario > 0 && qtdCustoAcum > 0) {
       const qtdVendida = manualResgates / precoUnitario;
       const custoMedio = valorInvestidoAcum / qtdCustoAcum;
@@ -376,7 +381,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     // V: Resgate Limpo
     let resgateLimpo: number;
     if (isFinalDay) {
-      resgateLimpo = valorInvestido;
+      resgateLimpo = custoNoEncerramento;
     } else {
       resgateLimpo = manualResgates;
     }

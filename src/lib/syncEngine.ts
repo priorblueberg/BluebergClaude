@@ -513,16 +513,34 @@ export async function syncCustodiaFromMovimentacao(movimentacaoId: string, dataR
   // Refine isPoupanca now that we have aplicacaoInicial
   isPoupanca = isPoupanca || aplicacaoInicial.modalidade === "Poupança";
 
-  // Compute net valor_investido: sum of aplicações - sum of resgates
+  // valor_investido = CUSTO, na convencao do Gorila (2026-08-22):
+  //  - aplicacao entra pelo valor pago;
+  //  - resgate parcial baixa quantidade x custo medio, NAO o valor bruto recebido (subtrair o
+  //    bruto derruba o custo demais: um resgate de 25% do saldo tirava 25% do saldo, e nao do
+  //    principal);
+  //  - resgate que zera (ou excede) as cotas ENCERRA a posicao: o custo vai a zero. E o mesmo
+  //    criterio para venda total e para vencimento, e dispensa olhar o tipo da movimentacao --
+  //    quem encerra e o tamanho do resgate, exatamente como no Gorila.
   let valorInvestidoLiquido = 0;
-  for (const m of allMovs || []) {
+  let cotasCusto = 0;
+  const movsOrdenadas = [...(allMovs || [])].sort((a: any, b: any) => String(a.data).localeCompare(String(b.data)));
+  for (const m of movsOrdenadas) {
+    const qtd = Number(m.quantidade) || (Number(m.preco_unitario) > 0 ? Number(m.valor) / Number(m.preco_unitario) : 0);
     if (["Aplicação Inicial", "Aplicação", "Aporte Adicional"].includes(m.tipo_movimentacao)) {
-      valorInvestidoLiquido += m.valor;
+      valorInvestidoLiquido += Number(m.valor);
+      cotasCusto += qtd;
     } else if (["Resgate", "Resgate no Vencimento", "Resgate Total"].includes(m.tipo_movimentacao)) {
-      valorInvestidoLiquido -= m.valor;
+      if (cotasCusto - qtd < 1e-6) {
+        valorInvestidoLiquido = 0;
+        cotasCusto = 0;
+      } else {
+        valorInvestidoLiquido -= qtd * (valorInvestidoLiquido / cotasCusto);
+        cotasCusto -= qtd;
+      }
     }
   }
   if (valorInvestidoLiquido < 0) valorInvestidoLiquido = 0;
+  valorInvestidoLiquido = Math.round(valorInvestidoLiquido * 100) / 100;
 
   // Compute resgate_total (for RF non-poupança or poupança with resgate total)
   let resgateTotal: string | null = null;
