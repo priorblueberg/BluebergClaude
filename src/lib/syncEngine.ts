@@ -539,6 +539,13 @@ export async function syncCustodiaFromMovimentacao(movimentacaoId: string, dataR
       }
     }
   }
+  // Titulo ja vencido tambem encerra: custo zero. Nao da para depender da movimentacao de
+  // "Resgate no Vencimento", porque ela e criada DEPOIS desta gravacao no reprocessamento -- na
+  // primeira passada ela ainda nao existe e o custo ficaria de pe indefinidamente.
+  const vencimentoDoTitulo = aplicacaoInicial.vencimento as string | null;
+  if (isRendaFixa && !isPoupanca && vencimentoDoTitulo && vencimentoDoTitulo <= refDate) {
+    valorInvestidoLiquido = 0;
+  }
   if (valorInvestidoLiquido < 0) valorInvestidoLiquido = 0;
   valorInvestidoLiquido = Math.round(valorInvestidoLiquido * 100) / 100;
 
