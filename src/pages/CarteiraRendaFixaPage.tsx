@@ -4,6 +4,7 @@ import type { CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { buildCdiSeries } from "@/lib/cdiCalculations";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
+import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
 import { useCarteiraRF } from "@/hooks/useCarteiraRF";
 import { ProductDetail, type CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +14,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
 
@@ -112,6 +113,12 @@ export default function CarteiraRendaFixaPage() {
     }
     return Array.from(map.values()).sort((a: any, b: any) => a.data.localeCompare(b.data));
   }, [carteiraRows, cdiRecords, carteiraInfo, ibovespaData]);
+
+  /** Mesma série da lâmina Investimentos: patrimônio diário até a data de referência. */
+  const patrimonioChartData = useMemo(
+    () => serieDePatrimonio(carteiraRows, dataReferenciaISO),
+    [carteiraRows, dataReferenciaISO],
+  );
 
   const detailRows = useMemo(() => {
     if (!carteiraInfo?.data_inicio || !carteiraInfo?.data_calculo) return [];
@@ -310,33 +317,7 @@ export default function CarteiraRendaFixaPage() {
               </div>
             </div>
 
-            <div className="rounded-md border border-border bg-card p-6">
-              <h2 className="text-sm font-semibold text-foreground">Patrimônio Mensal</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Evolução do patrimônio por mês (R$)</p>
-              <div className="mt-4 h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={(() => {
-                    const MONTH_LABELS = ["JAN","FEV","MAR","ABR","MAI","JUN","JUL","AGO","SET","OUT","NOV","DEZ"];
-                    const barData: { mes: string; patrimonio: number }[] = [];
-                    const chronRows = [...detailRows].reverse();
-                    for (const row of chronRows) {
-                      for (let m = 0; m < 12; m++) {
-                        if (row.patrimonioMonths[m] !== null) {
-                          barData.push({ mes: `${MONTH_LABELS[m]}/${String(row.year).slice(2)}`, patrimonio: row.patrimonioMonths[m]! });
-                        }
-                      }
-                    }
-                    return barData;
-                  })()}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="mes" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} tickFormatter={(v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 })} />
-                    <Tooltip formatter={(value: number) => [value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }), "Patrimônio"]} contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid hsl(var(--border))", background: "hsl(var(--card))" }} labelStyle={{ color: "hsl(var(--foreground))", fontWeight: 600 }} />
-                    <Bar dataKey="patrimonio" name="Patrimônio" fill="hsl(210, 100%, 45%)" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+            <PatrimonioChart dados={patrimonioChartData} comEspacador={false} />
           </div>
 
           {/* Detail Table */}

@@ -4,6 +4,7 @@ import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
 import { buildCdiSeries } from "@/lib/cdiCalculations";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
+import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
 import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -51,6 +52,12 @@ export default function CarteiraFundosPage() {
     }
     return Array.from(map.values()).sort((a, b) => a.data.localeCompare(b.data));
   }, [carteiraRows, cdiRecords, carteiraInfo]);
+
+  /** Mesma série das outras lâminas: patrimônio diário até a data de referência. */
+  const patrimonioChartData = useMemo(
+    () => serieDePatrimonio(carteiraRows, dataReferenciaISO),
+    [carteiraRows, dataReferenciaISO],
+  );
 
   const detailRows = useMemo(() => {
     if (!carteiraInfo?.data_inicio || !carteiraInfo?.data_calculo) return [];
@@ -125,6 +132,7 @@ export default function CarteiraFundosPage() {
         ))}
       </div>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div className="rounded-md border border-border bg-card p-6">
         <h2 className="text-sm font-semibold text-foreground">Histórico de Rentabilidade</h2>
         <p className="mt-1 text-xs text-muted-foreground">Variação acumulada (%) no período</p>
@@ -141,6 +149,9 @@ export default function CarteiraFundosPage() {
             </LineChart>
           </ResponsiveContainer>
         </div>
+      </div>
+
+      <PatrimonioChart dados={patrimonioChartData} comEspacador={false} />
       </div>
 
       <RentabilidadeDetailTable rows={detailRows} tituloLabel="Fundos de Investimentos" />

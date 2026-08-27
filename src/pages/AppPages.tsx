@@ -10,14 +10,13 @@ import { buildCdiSeries } from "@/lib/cdiCalculations";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
+import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
   LineChart,
   Line,
-  AreaChart,
-  Area,
   PieChart,
   Pie,
   Cell,
@@ -69,16 +68,6 @@ const CustomTooltipChart = ({ active, payload, label }: any) => {
 const fmtBrlValue = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtPctValue = (v: number | null) => (v != null ? `${v.toFixed(2)}%` : "—");
-
-const PatrimonioTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload || payload.length === 0) return null;
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2 shadow-md">
-      <p className="text-xs font-medium text-foreground mb-1">{label}</p>
-      <p className="text-xs text-primary">{fmtBrlValue(Number(payload[0].value))}</p>
-    </div>
-  );
-};
 
 const DonutTooltip = ({ active, payload }: any) => {
   if (!active || !payload || payload.length === 0) return null;
@@ -323,15 +312,10 @@ export const CarteiraVisaoGeral = () => {
   }, [carteiraRows, cdiRecords, ibovespaData, carteiraInfo]);
 
   /** Evolução do patrimônio (líquido) até a data de referência. */
-  const patrimonioChartData = useMemo(() => {
-    return carteiraRows
-      .filter(r => r.data <= dataReferenciaISO && (r.liquido > 0 || r.liquido2 > 0))
-      .map(r => ({
-        data: r.data,
-        label: new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR"),
-        patrimonio: parseFloat(r.liquido.toFixed(2)),
-      }));
-  }, [carteiraRows, dataReferenciaISO]);
+  const patrimonioChartData = useMemo(
+    () => serieDePatrimonio(carteiraRows, dataReferenciaISO),
+    [carteiraRows, dataReferenciaISO],
+  );
 
   const detailRows = useMemo(() => {
     if (!carteiraInfo?.data_inicio || !carteiraInfo?.data_calculo) return [];
@@ -589,56 +573,7 @@ export const CarteiraVisaoGeral = () => {
               </div>
             </div>
 
-            <div className="rounded-md border border-border bg-card p-6">
-              <div>
-                <h2 className="text-sm font-semibold text-foreground">Patrimônio</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Evolução do patrimônio no período
-                </p>
-              </div>
-              {/* Espaçador para alinhar a base do gráfico com o de rentabilidade */}
-              <div className="mt-3 h-[26px]" aria-hidden="true" />
-              <div className="mt-4 h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={patrimonioChartData}>
-                    <defs>
-                      <linearGradient id="gradPatrimonio" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="hsl(210, 100%, 45%)" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="hsl(210, 100%, 45%)" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(215, 20%, 88%)" />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fontSize: 10, fill: "hsl(215, 15%, 50%)" }}
-                      axisLine={{ stroke: "hsl(215, 20%, 88%)" }}
-                      tickLine={false}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: "hsl(215, 15%, 50%)" }}
-                      axisLine={{ stroke: "hsl(215, 20%, 88%)" }}
-                      tickLine={false}
-                      width={80}
-                      tickFormatter={(v) =>
-                        Number(v).toLocaleString("pt-BR", { notation: "compact", maximumFractionDigits: 1 })
-                      }
-                    />
-                    <Tooltip content={<PatrimonioTooltip />} />
-                    <Area
-                      type="monotone"
-                      dataKey="patrimonio"
-                      name="Patrimônio"
-                      stroke="hsl(210, 100%, 45%)"
-                      strokeWidth={2}
-                      fill="url(#gradPatrimonio)"
-                      dot={false}
-                      activeDot={{ r: 4, fill: "hsl(210, 100%, 45%)", strokeWidth: 0 }}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+            <PatrimonioChart dados={patrimonioChartData} />
           </div>
 
           {/* Tabela de rentabilidade: mesmo layout das demais lâminas, com anos anteriores */}
