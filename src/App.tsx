@@ -24,7 +24,6 @@ import CarteiraRendaFixa from "@/pages/CarteiraRendaFixaPage";
 import CalculadoraPage from "@/pages/CalculadoraPage";
 import PosicaoConsolidadaPage from "@/pages/PosicaoConsolidadaPage";
 import NotFound from "./pages/NotFound";
-import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
 import CadastroPage from "./pages/CadastroPage";
 import OnboardingPage from "./pages/OnboardingPage";
@@ -43,7 +42,7 @@ const ProtectedRoute = () => {
         Carregando...
       </div>
     );
-  if (!user) return <Navigate to="/auth" replace />;
+  if (!user) return <Navigate to="/" replace />;
   if (hasProfile === null)
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground">
@@ -80,7 +79,7 @@ const OnboardingRoute = () => {
         Carregando...
       </div>
     );
-  if (!user) return <Navigate to="/auth" replace />;
+  if (!user) return <Navigate to="/" replace />;
   if (hasProfile) return <Navigate to="/carteira" replace />;
   return <OnboardingPage />;
 };
@@ -93,9 +92,10 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <Routes>
-            {/* Public routes */}
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/auth" element={<AuthPage />} />
+            {/* Public routes. A raiz e a tela de login: a pagina comercial foi
+                removida e /auth continua valendo so para links antigos. */}
+            <Route path="/" element={<AuthPage />} />
+            <Route path="/auth" element={<Navigate to="/" replace />} />
             <Route path="/cadastro" element={<CadastroPage />} />
             <Route path="/onboarding" element={<OnboardingRoute />} />
             
