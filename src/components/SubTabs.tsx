@@ -5,6 +5,7 @@ const tabs = [
   { label: "Investimentos", url: "/carteira" },
   { label: "Renda Fixa", url: "/carteira/renda-fixa" },
   { label: "Fundos de Investimentos", url: "/carteira/fundos" },
+  { label: "Moedas", url: "/carteira/moedas" },
   // MVP2: Renda Variável, Tesouro Direto
 ];
 

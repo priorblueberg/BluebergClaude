@@ -1010,9 +1010,16 @@ export async function fullSyncAfterMovimentacao(
     // Get the codigo_custodia for this movimentação
     const { data: mov } = await supabase
       .from("movimentacoes")
-      .select("codigo_custodia, fundo_id")
+      .select("codigo_custodia, fundo_id, moeda")
       .eq("id", movimentacaoId)
       .single();
+
+    // Moeda tem motor proprio: saldo em moeda x cotacao do dia.
+    if ((mov as any)?.moeda && mov?.codigo_custodia) {
+      await syncCustodiaMoeda(mov.codigo_custodia, userId, dataReferencia);
+      await syncControleCarteiras(categoriaId, userId, dataReferencia);
+      return;
+    }
 
     // Fundo tem motor proprio: a custodia sai do saldo de cotas, nao do
     // reprocessamento de PU da renda fixa.
@@ -1042,10 +1049,16 @@ export async function fullSyncAfterDelete(
     // Check if there are remaining movimentações for this codigo
     const { data: remaining } = await supabase
       .from("movimentacoes")
-      .select("id, fundo_id")
+      .select("id, fundo_id, moeda")
       .eq("codigo_custodia", codigoCustodia)
       .eq("user_id", userId)
       .limit(1);
+
+    if (remaining && remaining.length > 0 && (remaining[0] as any).moeda) {
+      await syncCustodiaMoeda(codigoCustodia, userId, dataReferencia);
+      await syncControleCarteiras(categoriaId, userId, dataReferencia);
+      return;
+    }
 
     if (remaining && remaining.length > 0 && (remaining[0] as any).fundo_id) {
       await syncCustodiaFundo(codigoCustodia, userId, dataReferencia);
@@ -1245,6 +1258,122 @@ export async function syncCustodiaFundo(
     data_calculo: dataCalculo,
     resgate_total: dataZerou,
     alocacao_patrimonial: "Pós Fixado",
+  };
+
+  if (custodiaExistente) {
+    await supabase.from("custodia").update(dados).eq("id", custodiaExistente.id);
+  } else {
+    await supabase.from("custodia").insert(dados);
+  }
+}
+
+// ââ Moedas ââ
+
+const TABELA_COTACAO: Record<string, string> = {
+  USD: "historico_dolar",
+  EUR: "historico_euro",
+};
+
+/**
+ * Reconstroi a custodia de uma posicao em moeda estrangeira.
+ *
+ * E o mesmo desenho do fundo (saldo x preco do dia), com a cotacao de venda do
+ * Banco Central no lugar da cota. Compra soma saldo e custo; venda baixa
+ * quantidade x custo medio e zera a posicao quando o saldo acaba.
+ */
+export async function syncCustodiaMoeda(
+  codigoCustodia: string | number,
+  userId: string,
+  dataReferencia?: string
+) {
+  const refDate = dataReferencia || new Date().toISOString().slice(0, 10);
+  const codigo = String(codigoCustodia);
+
+  const { data: movs } = await supabase
+    .from("movimentacoes")
+    .select("*")
+    .eq("codigo_custodia", codigo)
+    .eq("user_id", userId)
+    .order("data", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  const { data: custodiaExistente } = await supabase
+    .from("custodia")
+    .select("id")
+    .eq("codigo_custodia", codigo)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!movs || movs.length === 0) {
+    if (custodiaExistente) await supabase.from("custodia").delete().eq("id", custodiaExistente.id);
+    return;
+  }
+
+  const primeira = movs[0] as any;
+  const moeda = (movs.find((m: any) => m.moeda) as any)?.moeda;
+  const tabela = TABELA_COTACAO[moeda];
+  if (!moeda || !tabela) return;
+
+  const { data: cotacoes } = await supabase
+    .from(tabela as any)
+    .select("data, cotacao_venda")
+    .order("data");
+
+  const cotacaoEm = (dataISO: string): number | null => {
+    let achada: number | null = null;
+    for (const c of (cotacoes || []) as any[]) {
+      if (c.data > dataISO) break;
+      achada = Number(c.cotacao_venda);
+    }
+    return achada;
+  };
+
+  const COMPRAS = ["Compra", "Aplicação", "Aplicação Inicial"];
+
+  let saldo = 0;
+  let custo = 0;
+  let dataZerou: string | null = null;
+
+  for (const m of movs as any[]) {
+    const cot = cotacaoEm(m.data);
+    let qtd = m.quantidade != null ? Number(m.quantidade) : null;
+    if (qtd == null && cot) {
+      qtd = Number(m.valor) / cot;
+      await supabase.from("movimentacoes")
+        .update({ quantidade: qtd, preco_unitario: cot })
+        .eq("id", m.id);
+    }
+    if (qtd == null) continue;
+
+    if (COMPRAS.includes(m.tipo_movimentacao)) {
+      saldo += qtd;
+      custo += Number(m.valor);
+      dataZerou = null;
+    } else {
+      const custoMedio = saldo > 0 ? custo / saldo : 0;
+      saldo -= qtd;
+      custo -= custoMedio * qtd;
+      if (saldo <= 1e-8) { saldo = 0; custo = 0; dataZerou = m.data; }
+    }
+  }
+
+  const dataCalculo = dataZerou && dataZerou < refDate ? dataZerou : refDate;
+  const dados = {
+    user_id: userId,
+    codigo_custodia: codigo,
+    categoria_id: primeira.categoria_id,
+    produto_id: primeira.produto_id,
+    instituicao_id: primeira.instituicao_id,
+    moeda,
+    nome: primeira.nome_ativo,
+    tipo_movimentacao: "Compra",
+    valor_investido: Math.round(custo * 100) / 100,
+    quantidade: saldo,
+    preco_unitario: cotacaoEm(dataCalculo),
+    data_inicio: primeira.data,
+    data_calculo: dataCalculo,
+    resgate_total: dataZerou,
+    alocacao_patrimonial: "Câmbio",
   };
 
   if (custodiaExistente) {

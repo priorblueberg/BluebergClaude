@@ -5,6 +5,7 @@ import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useCarteiraRF } from "@/hooks/useCarteiraRF";
 import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
+import { useCarteiraMoedas } from "@/hooks/useCarteiraMoedas";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { buildCdiSeries } from "@/lib/cdiCalculations";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
@@ -233,15 +234,19 @@ export const CarteiraVisaoGeral = () => {
     allProductRows: fundoProductRows, productList: fundoProductList,
     calendario: fundoCalendario, loading: fundosLoading,
   } = useCarteiraFundos();
-  const dadosLoading = rfLoading || fundosLoading;
+  const {
+    allProductRows: moedaProductRows, productList: moedaProductList,
+    loading: moedasLoading,
+  } = useCarteiraMoedas();
+  const dadosLoading = rfLoading || fundosLoading || moedasLoading;
 
   const allProductRows = useMemo(
-    () => [...rfProductRows, ...fundoProductRows],
-    [rfProductRows, fundoProductRows],
+    () => [...rfProductRows, ...fundoProductRows, ...moedaProductRows],
+    [rfProductRows, fundoProductRows, moedaProductRows],
   );
   const productList = useMemo(
-    () => [...rfProductList, ...fundoProductList],
-    [rfProductList, fundoProductList],
+    () => [...rfProductList, ...fundoProductList, ...moedaProductList],
+    [rfProductList, fundoProductList, moedaProductList],
   );
   /** Calendário da união: os fundos começam antes da renda fixa nesta carteira. */
   const calendario = useMemo(() => {
@@ -611,6 +616,7 @@ export const CarteiraVisaoGeral = () => {
 export { default as CarteiraRendaFixa } from "./CarteiraRendaFixaPage";
 export const CarteiraRendaVariavel = () => <PageStub title="Renda Variável" />;
 export { default as CarteiraFundos } from "./CarteiraFundosPage";
+export { default as CarteiraMoedas } from "./CarteiraMoedasPage";
 export const CarteiraTesouroDireto = () => <PageStub title="Tesouro Direto" />;
 export { default as CarteiraAnaliseIndividual } from "./AnaliseIndividualPage";
 export { default as Movimentacoes } from "./MovimentacoesPage";

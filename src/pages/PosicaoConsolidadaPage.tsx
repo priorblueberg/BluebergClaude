@@ -6,6 +6,7 @@ import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { calcularRendaFixaDiario, type DailyRow } from "@/lib/rendaFixaEngine";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
+import { calcularCambioDiario, cambioRowsToDailyRows } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 
@@ -51,6 +52,7 @@ interface CustodiaProduct {
   emissor_id: string | null;
   quantidade: number | null;
   fundo_id?: string | null;
+  moeda?: string | null;
   fundoCfg?: { dias_cotizacao_aplicacao: number | null; dias_cotizacao_resgate: number | null } | null;
 }
 
@@ -96,7 +98,7 @@ export default function PosicaoConsolidadaPage() {
     try {
       const { data: products } = await supabase
         .from("custodia")
-        .select("id, codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, multiplicador, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, data_limite, quantidade, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
+        .select("id, codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, multiplicador, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, data_limite, quantidade, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, moeda, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
         .eq("user_id", user!.id);
 
       if (!products || products.length === 0) { setRows([]); _cachedRows = []; _cachedVersion = appliedVersion; setLoading(false); return; }
@@ -127,15 +129,17 @@ export default function PosicaoConsolidadaPage() {
         emissor_id: r.emissor_id,
         quantidade: r.quantidade != null ? Number(r.quantidade) : null,
         fundo_id: r.fundo_id ?? null,
+        moeda: r.moeda ?? null,
         fundoCfg: r.cadastro_de_fundos ?? null,
       }));
 
       const rfProducts = mapped.filter((p) => p.categoria_nome === "Renda Fixa" && p.modalidade !== "Poupança");
       const poupancaProducts = mapped.filter((p) => p.modalidade === "Poupança");
       const fundoProducts = mapped.filter((p) => !!p.fundo_id);
-      const otherProducts = mapped.filter((p) => p.categoria_nome !== "Renda Fixa" && p.modalidade !== "Poupança" && !p.fundo_id);
+      const moedaProducts = mapped.filter((p) => !!p.moeda);
+      const otherProducts = mapped.filter((p) => p.categoria_nome !== "Renda Fixa" && p.modalidade !== "Poupança" && !p.fundo_id && !p.moeda);
 
-      const allCalcProducts = [...rfProducts, ...poupancaProducts, ...fundoProducts];
+      const allCalcProducts = [...rfProducts, ...poupancaProducts, ...fundoProducts, ...moedaProducts];
       const minDate = allCalcProducts.reduce((min, p) => (p.data_inicio < min ? p.data_inicio : min), allCalcProducts[0]?.data_inicio || dataReferenciaISO);
       const maxDate = allCalcProducts.reduce((max, p) => {
         const end = p.resgate_total || p.vencimento || dataReferenciaISO;
@@ -203,6 +207,18 @@ export default function PosicaoConsolidadaPage() {
       }
 
       // lotes are now derived from movimentações to avoid double-counting resgates
+
+      // Cotacao das moedas em posicao: o patrimonio e saldo x cotacao do dia.
+      const cotacoesPorMoeda = new Map<string, { data: string; cotacao: number }[]>();
+      const TABELA_MOEDA: Record<string, string> = { USD: "historico_dolar", EUR: "historico_euro" };
+      for (const codigo of new Set(moedaProducts.map((p) => p.moeda!))) {
+        const tabela = TABELA_MOEDA[codigo];
+        if (!tabela) continue;
+        const linhas = await fetchAllRows((de, ate) => supabase
+          .from(tabela as any).select("data, cotacao_venda")
+          .lte("data", dataReferenciaISO).order("data").range(de, ate));
+        cotacoesPorMoeda.set(codigo, (linhas as any[]).map((r) => ({ data: r.data, cotacao: Number(r.cotacao_venda) })));
+      }
 
       const posicaoRows: PosicaoRow[] = [];
       const allProductRows: DailyRow[][] = [];
@@ -310,6 +326,35 @@ export default function PosicaoConsolidadaPage() {
         posicaoRows.push({
           nome: product.nome || product.produto_nome,
           valorAtualizado: encerrado ? 0 : ult.saldoBruto,
+          ganhoFinanceiro: ult.ganhoAcumulado,
+          rentabilidade: ult.rentabilidadeAcumuladaMWPct * 100,
+          custodiante: product.instituicao_nome,
+          ativo: !encerrado,
+          product,
+        });
+      }
+
+      for (const product of moedaProducts) {
+        const fim = product.resgate_total && product.resgate_total < dataReferenciaISO
+          ? product.resgate_total
+          : dataReferenciaISO;
+        const rowsMoeda = calcularCambioDiario({
+          dataInicio: product.data_inicio,
+          dataCalculo: fim,
+          calendario,
+          cotacoes: cotacoesPorMoeda.get(product.moeda!) || [],
+          movimentacoes: (movFundoByCodigo.get(product.codigo_custodia) || []).map((m) => ({
+            data: m.data, tipo: m.tipo, valor: m.valor, quantidade: m.qtd_cotas,
+          })),
+        });
+        if (rowsMoeda.length === 0) continue;
+        allProductRows.push(cambioRowsToDailyRows(rowsMoeda));
+
+        const ult = rowsMoeda[rowsMoeda.length - 1];
+        const encerrado = !!product.resgate_total && product.resgate_total <= dataReferenciaISO;
+        posicaoRows.push({
+          nome: product.nome || product.produto_nome,
+          valorAtualizado: encerrado ? 0 : ult.saldoReais,
           ganhoFinanceiro: ult.ganhoAcumulado,
           rentabilidade: ult.rentabilidadeAcumuladaMWPct * 100,
           custodiante: product.instituicao_nome,

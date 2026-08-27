@@ -9,6 +9,7 @@ import {
   CarteiraVisaoGeral,
   CarteiraRendaVariavel,
   CarteiraFundos,
+  CarteiraMoedas,
   CarteiraTesouroDireto,
   
   Movimentacoes,
@@ -113,6 +114,7 @@ const App = () => (
                 <Route path="/carteira/renda-fixa" element={<CarteiraRendaFixa />} />
                 <Route path="/carteira/renda-variavel" element={<CarteiraRendaVariavel />} />
                 <Route path="/carteira/fundos" element={<CarteiraFundos />} />
+                <Route path="/carteira/moedas" element={<CarteiraMoedas />} />
                 <Route path="/carteira/tesouro-direto" element={<CarteiraTesouroDireto />} />
                 <Route path="/posicao-consolidada" element={<PosicaoConsolidadaPage />} />
                 <Route path="/movimentacoes" element={<Movimentacoes />} />

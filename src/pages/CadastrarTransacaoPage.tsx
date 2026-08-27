@@ -19,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
 import CadastrarFundoModal from "@/components/CadastrarFundoModal";
+import { MOEDAS } from "@/lib/cambioEngine";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -82,7 +83,10 @@ const INDEXADOR_OPTIONS = ["CDI", "CDI+"];
 // Categorias com fluxo de cadastro já implementado na boleta. As demais ficam
 // visíveis no dropdown mas caem num placeholder até ganharem seu próprio fluxo.
 // (Poupança é um produto dentro de Renda Fixa, não uma categoria à parte.)
-const CATEGORIAS_IMPLEMENTADAS = ["Renda Fixa", "Fundos de Investimentos"];
+const CATEGORIAS_IMPLEMENTADAS = ["Renda Fixa", "Fundos de Investimentos", "Moedas"];
+
+// Moeda: compra e venda de saldo em moeda estrangeira, sem juros.
+const TIPOS_MOVIMENTACAO_MOEDA = ["Compra", "Venda"];
 
 // Fundo nao tem "Resgate Total" na boleta: quem encerra a posicao e o resgate
 // que zera as cotas, como no mercado. Come-cotas e saida lancada pelo cotista.
@@ -193,6 +197,8 @@ export default function CadastrarTransacaoPage() {
   const [fundoId, setFundoId] = useState("");
   const [qtdCotas, setQtdCotas] = useState("");
   const [modalFundoOpen, setModalFundoOpen] = useState(false);
+  // Moedas
+  const [moedaSel, setMoedaSel] = useState("");
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
 
   // Derived
@@ -200,6 +206,7 @@ export default function CadastrarTransacaoPage() {
   const produtoSelecionado = produtos.find((p) => p.id === produtoId);
   const isRendaFixa = categoriaSelecionada?.nome === "Renda Fixa";
   const isFundo = categoriaSelecionada?.nome === "Fundos de Investimentos";
+  const isMoeda = categoriaSelecionada?.nome === "Moedas";
   const isPoupanca = produtoSelecionado?.nome === "Poupança";
   const isPosFixado = modalidade === "Pós Fixado";
   const isEditing = !!editId;
@@ -564,10 +571,11 @@ export default function CadastrarTransacaoPage() {
   }, [editId, editLoaded, categorias]);
 
   // Step visibility
-  const showTipoMovimentacao = !!categoriaId && (isRendaFixa || isFundo);
+  const showTipoMovimentacao = !!categoriaId && (isRendaFixa || isFundo || isMoeda);
   const showAplicacaoFields = showTipoMovimentacao && isRendaFixa && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate));
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
   const showFundoFields = isFundo && !!tipoMovimentacao && !isEditing;
+  const showMoedaFields = isMoeda && !!tipoMovimentacao && !isEditing;
   const showPoupancaFields = isPoupanca && isAplicacao;
 
   const resetForm = () => {
@@ -601,6 +609,84 @@ export default function CadastrarTransacaoPage() {
   const handleSubmit = async () => {
     if (!user) {
       toast.error("Usuário não autenticado. Faça login novamente.");
+      return;
+    }
+
+    // ── Moedas ──
+    if (isMoeda) {
+      const faltando = new Set<string>();
+      if (!moedaSel) faltando.add("moedaSel");
+      if (!data) faltando.add("data");
+      if (!valor || parseCurrencyToNumber(valor) <= 0) faltando.add("valor");
+      if (!instituicaoId) faltando.add("instituicaoId");
+      if (faltando.size > 0) {
+        setValidationErrors(faltando);
+        toast.error("Preencha todos os campos obrigatórios.");
+        return;
+      }
+      setValidationErrors(new Set());
+      setSubmitting(true);
+
+      try {
+        const moeda = MOEDAS.find((m) => m.codigo === moedaSel)!;
+        const valorNum = parseCurrencyToNumber(valor);
+        const qtd = qtdCotas ? parseFloat(qtdCotas.replace(/\./g, "").replace(",", ".")) : null;
+        const nomeAtivo = moeda.nome;
+
+        // Mesma moeda na mesma instituição é a mesma posição.
+        const { data: existentes } = await supabase
+          .from("movimentacoes")
+          .select("codigo_custodia")
+          .eq("user_id", user.id)
+          .eq("moeda", moedaSel)
+          .eq("instituicao_id", instituicaoId)
+          .not("codigo_custodia", "is", null)
+          .limit(1);
+
+        let codigoCustodia: string;
+        if (existentes && existentes.length > 0) {
+          codigoCustodia = String(existentes[0].codigo_custodia);
+        } else {
+          const { data: codigos } = await supabase
+            .from("movimentacoes")
+            .select("codigo_custodia")
+            .not("codigo_custodia", "is", null);
+          const maior = (codigos || []).reduce((mx: number, r: any) => {
+            const n = Number(r.codigo_custodia);
+            return Number.isFinite(n) && n > mx ? n : mx;
+          }, 99);
+          codigoCustodia = String(maior + 1);
+        }
+
+        const { data: inserida, error } = await supabase.from("movimentacoes").insert({
+          categoria_id: categoriaId,
+          produto_id: produtos[0]?.id ?? null,
+          instituicao_id: instituicaoId,
+          moeda: moedaSel,
+          codigo_custodia: codigoCustodia,
+          nome_ativo: nomeAtivo,
+          data,
+          tipo_movimentacao: tipoMovimentacao,
+          valor: valorNum,
+          quantidade: qtd,
+          user_id: user.id,
+          origem: "manual",
+        }).select("id").single();
+
+        if (error) throw error;
+
+        await fullSyncAfterMovimentacao(inserida.id, categoriaId, user.id, dataReferenciaISO);
+        applyDataReferencia();
+        toast.success("Operação de câmbio cadastrada com sucesso!");
+        resetForm();
+        setMoedaSel("");
+        setQtdCotas("");
+      } catch (err: any) {
+        toast.error("Erro ao cadastrar operação de câmbio.");
+        console.error(err);
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -1033,10 +1119,10 @@ export default function CadastrarTransacaoPage() {
                 }}
                 placeholder="Selecione o tipo de movimentação"
                 disabled={isEditing}
-                options={(isFundo ? TIPOS_MOVIMENTACAO_FUNDO : TIPOS_MOVIMENTACAO).map((t) => ({
+                options={(isMoeda ? TIPOS_MOVIMENTACAO_MOEDA : isFundo ? TIPOS_MOVIMENTACAO_FUNDO : TIPOS_MOVIMENTACAO).map((t) => ({
                   value: t,
                   label: t,
-                  disabled: !isFundo && t !== "Aplicação" && t !== "Resgate",
+                  disabled: !isFundo && !isMoeda && t !== "Aplicação" && t !== "Resgate",
                 }))}
               />
             </Field>
@@ -1059,6 +1145,68 @@ export default function CadastrarTransacaoPage() {
           onOpenChange={setModalFundoOpen}
           onCriado={(f) => setFundoId(f.id)}
         />
+
+        {/* ── Moedas ── */}
+        {showMoedaFields && (
+          <>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Moeda" required>
+                <NativeSelect
+                  value={moedaSel}
+                  onChange={setMoedaSel}
+                  placeholder="Selecione a moeda"
+                  options={MOEDAS.map((m) => ({ value: m.codigo, label: `${m.nome} (${m.codigo})` }))}
+                />
+              </Field>
+              <Field label="Data da Transação" required>
+                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label={tipoMovimentacao === "Compra" ? "Valor Pago (R$)" : "Valor Recebido (R$)"} required>
+                <Input
+                  value={valor}
+                  onChange={(e) => setValor(formatCurrency(e.target.value))}
+                  placeholder="0,00"
+                  inputMode="numeric"
+                />
+              </Field>
+              <Field label="Quantidade na Moeda">
+                <Input
+                  value={qtdCotas}
+                  onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
+                  placeholder="Em branco, usa a cotação do dia"
+                />
+              </Field>
+            </div>
+
+            <Field label="Instituição (custodiante)" required>
+              <EntidadeSelect
+                tipo="instituicao"
+                value={instituicaoId}
+                onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); }}
+                tituloCadastro="Cadastrar Nova Instituição"
+                labelCadastro="Nome da Instituição"
+                placeholder="Busque a corretora ou banco"
+              />
+            </Field>
+
+            <p className="text-xs text-muted-foreground">
+              A quantidade em branco é derivada pela cotação de venda do Banco Central na data.
+              Informe a quantidade quando quiser registrar o câmbio efetivo da operação, com spread e IOF.
+            </p>
+
+            <div className="flex gap-3">
+              <Button onClick={handleSubmit} disabled={submitting}>
+                {submitting ? "Salvando..." : "Cadastrar"}
+              </Button>
+              <Button variant="outline" onClick={resetForm} disabled={submitting}>
+                Cancelar
+              </Button>
+            </div>
+          </>
+        )}
 
         {/* ── Fundos de Investimentos ── */}
         {showFundoFields && (
