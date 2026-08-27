@@ -18,6 +18,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
+import CadastrarFundoModal from "@/components/CadastrarFundoModal";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -81,7 +82,11 @@ const INDEXADOR_OPTIONS = ["CDI", "CDI+"];
 // Categorias com fluxo de cadastro já implementado na boleta. As demais ficam
 // visíveis no dropdown mas caem num placeholder até ganharem seu próprio fluxo.
 // (Poupança é um produto dentro de Renda Fixa, não uma categoria à parte.)
-const CATEGORIAS_IMPLEMENTADAS = ["Renda Fixa"];
+const CATEGORIAS_IMPLEMENTADAS = ["Renda Fixa", "Fundos de Investimentos"];
+
+// Fundo nao tem "Resgate Total" na boleta: quem encerra a posicao e o resgate
+// que zera as cotas, como no mercado. Come-cotas e saida lancada pelo cotista.
+const TIPOS_MOVIMENTACAO_FUNDO = ["Aplicação", "Resgate", "Come-Cotas"];
 
 // ── Currency formatting helpers ──
 function formatCurrency(value: string): string {
@@ -183,12 +188,18 @@ export default function CadastrarTransacaoPage() {
   const [vencimento, setVencimento] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [editLoaded, setEditLoaded] = useState(false);
+  // Fundos
+  const [fundos, setFundos] = useState<{ id: string; nome: string; cnpj: string }[]>([]);
+  const [fundoId, setFundoId] = useState("");
+  const [qtdCotas, setQtdCotas] = useState("");
+  const [modalFundoOpen, setModalFundoOpen] = useState(false);
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
 
   // Derived
   const categoriaSelecionada = categorias.find((c) => c.id === categoriaId);
   const produtoSelecionado = produtos.find((p) => p.id === produtoId);
   const isRendaFixa = categoriaSelecionada?.nome === "Renda Fixa";
+  const isFundo = categoriaSelecionada?.nome === "Fundos de Investimentos";
   const isPoupanca = produtoSelecionado?.nome === "Poupança";
   const isPosFixado = modalidade === "Pós Fixado";
   const isEditing = !!editId;
@@ -209,10 +220,10 @@ export default function CadastrarTransacaoPage() {
       .order("nome")
       .then(({ data }) => {
         if (data) {
-          // TEMPORARIO: usuario comum so opera Renda Fixa enquanto as demais
-          // categorias nao estao liberadas. Admin ve tudo. Remover o filtro
-          // quando o resto for liberado.
-          const visiveis = isAdmin ? data : data.filter((c) => c.nome === "Renda Fixa");
+          // TEMPORARIO: usuario comum opera Renda Fixa e Fundos; as demais
+          // categorias seguem fechadas ate ganharem motor. Admin ve tudo.
+          const LIBERADAS = ["Renda Fixa", "Fundos de Investimentos"];
+          const visiveis = isAdmin ? data : data.filter((c) => LIBERADAS.includes(c.nome));
           setCategorias(visiveis);
           if (visiveis.length === 1 && !editId) {
             setCategoriaId(visiveis[0].id);
@@ -220,6 +231,19 @@ export default function CadastrarTransacaoPage() {
         }
       });
   }, [isAdmin, editId]);
+
+  // Fundos disponiveis (base publica da CVM, compartilhada por todos).
+  useEffect(() => {
+    if (!isFundo) return;
+    supabase
+      .from("cadastro_de_fundos")
+      .select("id, nome_curto, cnpj_classe")
+      .eq("ativo", true)
+      .order("nome_curto")
+      .then(({ data }) => {
+        if (data) setFundos(data.map((f: any) => ({ id: f.id, nome: f.nome_curto, cnpj: f.cnpj_classe })));
+      });
+  }, [isFundo, modalFundoOpen]);
 
   // Load produtos when categoria changes (for Aplicação flow)
   useEffect(() => {
@@ -540,9 +564,10 @@ export default function CadastrarTransacaoPage() {
   }, [editId, editLoaded, categorias]);
 
   // Step visibility
-  const showTipoMovimentacao = !!categoriaId && isRendaFixa;
-  const showAplicacaoFields = showTipoMovimentacao && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate));
-  const showResgateFields = showTipoMovimentacao && isResgate && !isEditing;
+  const showTipoMovimentacao = !!categoriaId && (isRendaFixa || isFundo);
+  const showAplicacaoFields = showTipoMovimentacao && isRendaFixa && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate));
+  const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
+  const showFundoFields = isFundo && !!tipoMovimentacao && !isEditing;
   const showPoupancaFields = isPoupanca && isAplicacao;
 
   const resetForm = () => {
@@ -576,6 +601,105 @@ export default function CadastrarTransacaoPage() {
   const handleSubmit = async () => {
     if (!user) {
       toast.error("Usuário não autenticado. Faça login novamente.");
+      return;
+    }
+
+    // ── Fundos de Investimentos ──
+    if (isFundo) {
+      const faltando = new Set<string>();
+      if (!fundoId) faltando.add("fundoId");
+      if (!data) faltando.add("data");
+      if (!valor || parseCurrencyToNumber(valor) <= 0) faltando.add("valor");
+      if (!instituicaoId) faltando.add("instituicaoId");
+      if (faltando.size > 0) {
+        setValidationErrors(faltando);
+        toast.error("Preencha todos os campos obrigatórios.");
+        return;
+      }
+      setValidationErrors(new Set());
+      setSubmitting(true);
+
+      try {
+        const fundo = fundos.find((f) => f.id === fundoId)!;
+        const valorNum = parseCurrencyToNumber(valor);
+        const qtd = qtdCotas ? parseFloat(qtdCotas.replace(/\./g, "").replace(",", ".")) : null;
+
+        // Cotizacao: o fundo pode cotizar D+n uteis, e o prazo da aplicacao pode
+        // ser diferente do resgate. Vem do cadastro da CVM.
+        const { data: cfg } = await supabase
+          .from("cadastro_de_fundos")
+          .select("dias_cotizacao_aplicacao, dias_cotizacao_resgate")
+          .eq("id", fundoId)
+          .single();
+        const dias = tipoMovimentacao === "Aplicação"
+          ? (cfg?.dias_cotizacao_aplicacao ?? 0)
+          : (cfg?.dias_cotizacao_resgate ?? 0);
+
+        const { data: diasCal } = await supabase
+          .from("calendario_dias_uteis")
+          .select("data, dia_util")
+          .gte("data", data)
+          .order("data")
+          .limit(60);
+        const uteis = (diasCal || []).filter((d: any) => d.dia_util).map((d: any) => d.data);
+        const dataCotizacao = uteis[dias] ?? uteis[0] ?? data;
+
+        // Fundo que ja esta na carteira reaproveita o codigo de custodia.
+        const { data: existentes } = await supabase
+          .from("movimentacoes")
+          .select("codigo_custodia")
+          .eq("user_id", user.id)
+          .eq("fundo_id", fundoId)
+          .not("codigo_custodia", "is", null)
+          .limit(1);
+
+        let codigoCustodia: string;
+        let tipoFinal = tipoMovimentacao;
+        if (existentes && existentes.length > 0) {
+          codigoCustodia = String(existentes[0].codigo_custodia);
+        } else {
+          const { data: codigos } = await supabase
+            .from("movimentacoes")
+            .select("codigo_custodia")
+            .not("codigo_custodia", "is", null);
+          const maior = (codigos || []).reduce((mx: number, r: any) => {
+            const n = Number(r.codigo_custodia);
+            return Number.isFinite(n) && n > mx ? n : mx;
+          }, 99);
+          codigoCustodia = String(maior + 1);
+          if (tipoMovimentacao === "Aplicação") tipoFinal = "Aplicação Inicial";
+        }
+
+        const { data: inserida, error } = await supabase.from("movimentacoes").insert({
+          categoria_id: categoriaId,
+          produto_id: produtos[0]?.id ?? null,
+          fundo_id: fundoId,
+          instituicao_id: instituicaoId,
+          codigo_custodia: codigoCustodia,
+          nome_ativo: fundo.nome,
+          data,
+          data_cotizacao: dataCotizacao,
+          tipo_movimentacao: tipoFinal,
+          valor: valorNum,
+          quantidade: qtd,
+          user_id: user.id,
+          origem: "manual",
+        }).select("id").single();
+
+        if (error) throw error;
+
+        await fullSyncAfterMovimentacao(inserida.id, categoriaId, user.id, dataReferenciaISO);
+        applyDataReferencia();
+        toast.success("Movimentação de fundo cadastrada com sucesso!");
+        resetForm();
+        setFundoId("");
+        setQtdCotas("");
+      } catch (err: any) {
+        toast.error("Erro ao cadastrar movimentação do fundo.");
+        console.error(err);
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -909,10 +1033,10 @@ export default function CadastrarTransacaoPage() {
                 }}
                 placeholder="Selecione o tipo de movimentação"
                 disabled={isEditing}
-                options={TIPOS_MOVIMENTACAO.map((t) => ({
+                options={(isFundo ? TIPOS_MOVIMENTACAO_FUNDO : TIPOS_MOVIMENTACAO).map((t) => ({
                   value: t,
                   label: t,
-                  disabled: t !== "Aplicação" && t !== "Resgate",
+                  disabled: !isFundo && t !== "Aplicação" && t !== "Resgate",
                 }))}
               />
             </Field>
@@ -928,6 +1052,85 @@ export default function CadastrarTransacaoPage() {
               disponível. Por enquanto, apenas <strong>Renda Fixa</strong> pode ser cadastrada pela boleta.
             </AlertDescription>
           </Alert>
+        )}
+
+        <CadastrarFundoModal
+          open={modalFundoOpen}
+          onOpenChange={setModalFundoOpen}
+          onCriado={(f) => setFundoId(f.id)}
+        />
+
+        {/* ── Fundos de Investimentos ── */}
+        {showFundoFields && (
+          <>
+            <Field label="Fundo" required>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <NativeSelect
+                    value={fundoId}
+                    onChange={setFundoId}
+                    placeholder="Selecione o fundo"
+                    options={fundos.map((f) => ({ value: f.id, label: f.nome }))}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setModalFundoOpen(true)}
+                  className="whitespace-nowrap rounded-md border border-border px-3 text-xs text-muted-foreground hover:bg-muted"
+                >
+                  Cadastrar novo
+                </button>
+              </div>
+            </Field>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Data da Transação" required>
+                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+              </Field>
+              <Field label="Valor" required>
+                <Input
+                  value={valor}
+                  onChange={(e) => setValor(formatCurrency(e.target.value))}
+                  placeholder="0,00"
+                  inputMode="numeric"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Quantidade de Cotas">
+                <Input
+                  value={qtdCotas}
+                  onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
+                  placeholder="Em branco, calcula pela cota do dia"
+                />
+              </Field>
+              <Field label="Instituição (custodiante)" required>
+                <EntidadeSelect
+                  tipo="instituicao"
+                  value={instituicaoId}
+                  onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); }}
+                  tituloCadastro="Cadastrar Nova Instituição"
+                  labelCadastro="Nome da Instituição"
+                  placeholder="Busque a corretora ou banco"
+                />
+              </Field>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              A cota vem da série da CVM na data de cotização do fundo. Come-cotas entra como
+              saída de cotas: reduz a posição sem dinheiro saindo da carteira.
+            </p>
+
+            <div className="flex gap-3">
+              <Button onClick={handleSubmit} disabled={submitting}>
+                {submitting ? "Salvando..." : "Cadastrar"}
+              </Button>
+              <Button variant="outline" onClick={resetForm} disabled={submitting}>
+                Cancelar
+              </Button>
+            </div>
+          </>
         )}
 
         {/* ── Aplicação Flow ── */}

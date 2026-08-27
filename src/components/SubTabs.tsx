@@ -4,7 +4,8 @@ const tabs = [
   // A lamina Total abre sempre, mesmo com uma unica categoria cadastrada.
   { label: "Investimentos", url: "/carteira" },
   { label: "Renda Fixa", url: "/carteira/renda-fixa" },
-  // MVP2: Renda Variável, Fundos, Tesouro Direto
+  { label: "Fundos de Investimentos", url: "/carteira/fundos" },
+  // MVP2: Renda Variável, Tesouro Direto
 ];
 
 export function SubTabs() {

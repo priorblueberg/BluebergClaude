@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { calcularRendaFixaDiario, type DailyRow } from "@/lib/rendaFixaEngine";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
+import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
 import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
@@ -48,6 +49,8 @@ interface CustodiaProduct {
   emissor_nome: string | null;
   emissor_id: string | null;
   quantidade: number | null;
+  fundo_id?: string | null;
+  fundoCfg?: { dias_cotizacao_aplicacao: number | null; dias_cotizacao_resgate: number | null } | null;
 }
 
 interface PosicaoRow {
@@ -92,7 +95,7 @@ export default function PosicaoConsolidadaPage() {
     try {
       const { data: products } = await supabase
         .from("custodia")
-        .select("id, codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, multiplicador, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, data_limite, quantidade, categoria_id, produto_id, instituicao_id, emissor_id, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome)")
+        .select("id, codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, multiplicador, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, data_limite, quantidade, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
         .eq("user_id", user!.id);
 
       if (!products || products.length === 0) { setRows([]); _cachedRows = []; _cachedVersion = appliedVersion; setLoading(false); return; }
@@ -122,13 +125,16 @@ export default function PosicaoConsolidadaPage() {
         emissor_nome: r.emissores?.nome || null,
         emissor_id: r.emissor_id,
         quantidade: r.quantidade != null ? Number(r.quantidade) : null,
+        fundo_id: r.fundo_id ?? null,
+        fundoCfg: r.cadastro_de_fundos ?? null,
       }));
 
       const rfProducts = mapped.filter((p) => p.categoria_nome === "Renda Fixa" && p.modalidade !== "Poupança");
       const poupancaProducts = mapped.filter((p) => p.modalidade === "Poupança");
-      const otherProducts = mapped.filter((p) => p.categoria_nome !== "Renda Fixa" && p.modalidade !== "Poupança");
+      const fundoProducts = mapped.filter((p) => !!p.fundo_id);
+      const otherProducts = mapped.filter((p) => p.categoria_nome !== "Renda Fixa" && p.modalidade !== "Poupança" && !p.fundo_id);
 
-      const allCalcProducts = [...rfProducts, ...poupancaProducts];
+      const allCalcProducts = [...rfProducts, ...poupancaProducts, ...fundoProducts];
       const minDate = allCalcProducts.reduce((min, p) => (p.data_inicio < min ? p.data_inicio : min), allCalcProducts[0]?.data_inicio || dataReferenciaISO);
       const maxDate = allCalcProducts.reduce((max, p) => {
         const end = p.resgate_total || p.vencimento || dataReferenciaISO;
@@ -142,7 +148,7 @@ export default function PosicaoConsolidadaPage() {
         supabase.from("calendario_dias_uteis").select("data, dia_util").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data"),
         supabase.from("historico_cdi").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data"),
         allCodigos.length > 0
-          ? supabase.from("movimentacoes").select("data, tipo_movimentacao, valor, codigo_custodia").in("codigo_custodia", allCodigos).eq("user_id", user!.id).order("data")
+          ? supabase.from("movimentacoes").select("data, data_cotizacao, tipo_movimentacao, valor, quantidade, codigo_custodia").in("codigo_custodia", allCodigos).eq("user_id", user!.id).order("data")
           : Promise.resolve({ data: [] }),
         poupancaCodigos.length > 0
           ? supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data")
@@ -165,10 +171,33 @@ export default function PosicaoConsolidadaPage() {
       const poupancaRendimentoRecords = ((poupRendRes as any).data || []).map((r: any) => ({ data: r.data, rendimento_mensal: Number(r.rendimento_mensal) }));
 
       const movByCodigo = new Map<number, { data: string; tipo_movimentacao: string; valor: number }[]>();
+      const movFundoByCodigo = new Map<number, { data: string; tipo: string; valor: number; data_cotizacao: string | null; qtd_cotas: number | null }[]>();
       for (const m of ((movRes as any).data || [])) {
         const code = m.codigo_custodia as number;
         if (!movByCodigo.has(code)) movByCodigo.set(code, []);
         movByCodigo.get(code)!.push({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) });
+        if (!movFundoByCodigo.has(code)) movFundoByCodigo.set(code, []);
+        movFundoByCodigo.get(code)!.push({
+          data: m.data, tipo: m.tipo_movimentacao, valor: Number(m.valor),
+          data_cotizacao: m.data_cotizacao ?? null,
+          qtd_cotas: m.quantidade != null ? Number(m.quantidade) : null,
+        });
+      }
+
+      // Cotas dos fundos do usuario: a posicao do fundo e saldo de cotas x cota do dia.
+      const cotasPorFundo = new Map<string, { data: string; valor_cota: number }[]>();
+      if (fundoProducts.length > 0) {
+        const { data: cotasData } = await supabase
+          .from("cotas_fundos")
+          .select("fundo_id, data, valor_cota")
+          .in("fundo_id", fundoProducts.map((p) => p.fundo_id!))
+          .lte("data", dataReferenciaISO)
+          .order("data");
+        for (const c of cotasData || []) {
+          const arr = cotasPorFundo.get((c as any).fundo_id) || [];
+          arr.push({ data: (c as any).data, valor_cota: Number((c as any).valor_cota) });
+          cotasPorFundo.set((c as any).fundo_id, arr);
+        }
       }
 
       // lotes are now derived from movimentações to avoid double-counting resgates
@@ -254,6 +283,37 @@ export default function PosicaoConsolidadaPage() {
             });
           }
         }
+      }
+
+      for (const product of fundoProducts) {
+        const fim = product.resgate_total && product.resgate_total < dataReferenciaISO
+          ? product.resgate_total
+          : dataReferenciaISO;
+        const rowsFundo = calcularFundoDiario({
+          dataInicio: product.data_inicio,
+          dataCalculo: fim,
+          calendario,
+          cotas: cotasPorFundo.get(product.fundo_id!) || [],
+          movimentacoes: movFundoByCodigo.get(product.codigo_custodia) || [],
+          fundo: {
+            dias_cotizacao_aplicacao: product.fundoCfg?.dias_cotizacao_aplicacao ?? 0,
+            dias_cotizacao_resgate: product.fundoCfg?.dias_cotizacao_resgate ?? 0,
+          },
+        });
+        if (rowsFundo.length === 0) continue;
+        allProductRows.push(fundoRowsToDailyRows(rowsFundo));
+
+        const ult = rowsFundo[rowsFundo.length - 1];
+        const encerrado = !!product.resgate_total && product.resgate_total <= dataReferenciaISO;
+        posicaoRows.push({
+          nome: product.nome || product.produto_nome,
+          valorAtualizado: encerrado ? 0 : ult.saldoBruto,
+          ganhoFinanceiro: ult.ganhoAcumulado,
+          rentabilidade: ult.rentabilidadeAcumuladaMWPct * 100,
+          custodiante: product.instituicao_nome,
+          ativo: !encerrado,
+          product,
+        });
       }
 
       for (const product of otherProducts) {

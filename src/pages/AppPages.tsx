@@ -4,6 +4,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { useAuth } from "@/hooks/useAuth";
 import { useCarteiraRF } from "@/hooks/useCarteiraRF";
+import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
+import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { buildCdiSeries } from "@/lib/cdiCalculations";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
@@ -231,11 +233,46 @@ export const CarteiraVisaoGeral = () => {
   const { appliedVersion, dataReferenciaISO } = useDataReferencia();
   const navigate = useNavigate();
 
-  // Números vêm do mesmo hook que alimenta a carteira de Renda Fixa: uma fonte só.
+  // Números vêm dos mesmos hooks que alimentam as lâminas por categoria: uma
+  // fonte só por categoria, consolidadas aqui pelo motor de carteira.
   const {
-    carteiraRows, allProductRows, cdiRecords, ibovespaData,
-    productList, allCustodiaForCategoria, calendario, loading: dadosLoading,
+    carteiraRows: rfCarteiraRows, allProductRows: rfProductRows, cdiRecords, ibovespaData,
+    productList: rfProductList, allCustodiaForCategoria, calendario: rfCalendario,
+    loading: rfLoading,
   } = useCarteiraRF();
+  const {
+    allProductRows: fundoProductRows, productList: fundoProductList,
+    calendario: fundoCalendario, loading: fundosLoading,
+  } = useCarteiraFundos();
+  const dadosLoading = rfLoading || fundosLoading;
+
+  const allProductRows = useMemo(
+    () => [...rfProductRows, ...fundoProductRows],
+    [rfProductRows, fundoProductRows],
+  );
+  const productList = useMemo(
+    () => [...rfProductList, ...fundoProductList],
+    [rfProductList, fundoProductList],
+  );
+  /** Calendário da união: os fundos começam antes da renda fixa nesta carteira. */
+  const calendario = useMemo(() => {
+    const map = new Map<string, { data: string; dia_util: boolean }>();
+    for (const c of [...rfCalendario, ...fundoCalendario]) map.set(c.data, c);
+    return Array.from(map.values()).sort((a, b) => a.data.localeCompare(b.data));
+  }, [rfCalendario, fundoCalendario]);
+
+  /** Consolidado: renda fixa e fundos passam pelo MESMO motor de carteira. */
+  const carteiraRows = useMemo(() => {
+    if (!carteiraInfo?.data_inicio || !carteiraInfo?.data_calculo || calendario.length === 0) {
+      return rfCarteiraRows;
+    }
+    return calcularCarteiraRendaFixa({
+      productRows: allProductRows,
+      calendario,
+      dataInicio: carteiraInfo.data_inicio,
+      dataCalculo: carteiraInfo.data_calculo,
+    });
+  }, [allProductRows, calendario, carteiraInfo, rfCarteiraRows]);
 
   useEffect(() => {
     if (!user) return;
@@ -638,7 +675,7 @@ export const CarteiraVisaoGeral = () => {
 
 export { default as CarteiraRendaFixa } from "./CarteiraRendaFixaPage";
 export const CarteiraRendaVariavel = () => <PageStub title="Renda Variável" />;
-export const CarteiraFundos = () => <PageStub title="Fundos de Investimentos" />;
+export { default as CarteiraFundos } from "./CarteiraFundosPage";
 export const CarteiraTesouroDireto = () => <PageStub title="Tesouro Direto" />;
 export { default as CarteiraAnaliseIndividual } from "./AnaliseIndividualPage";
 export { default as Movimentacoes } from "./MovimentacoesPage";

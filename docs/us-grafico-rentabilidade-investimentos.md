@@ -6,7 +6,7 @@
 | **Componente** | `CarteiraVisaoGeral` |
 | **Tipo** | Documentação de comportamento existente (as-is) |
 | **Status** | Em produção (www.blueberg.com.br) |
-| **Última revisão** | 2026-08-25 |
+| **Última revisão** | 2026-08-27 |
 
 ---
 
