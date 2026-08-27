@@ -6,6 +6,7 @@ import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { calcularRendaFixaDiario, type DailyRow } from "@/lib/rendaFixaEngine";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
@@ -145,10 +146,10 @@ export default function PosicaoConsolidadaPage() {
       const poupancaCodigos = poupancaProducts.map((p) => p.codigo_custodia);
 
       const [calRes, cdiRes, movRes, selicRes, lotesRes, trRes, poupRendRes] = await Promise.all([
-        supabase.from("calendario_dias_uteis").select("data, dia_util").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data"),
-        supabase.from("historico_cdi").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data"),
+        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
+        fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
         allCodigos.length > 0
-          ? supabase.from("movimentacoes").select("data, data_cotizacao, tipo_movimentacao, valor, quantidade, codigo_custodia").in("codigo_custodia", allCodigos).eq("user_id", user!.id).order("data")
+          ? fetchAllRows((de, ate) => supabase.from("movimentacoes").select("data, data_cotizacao, tipo_movimentacao, valor, quantidade, codigo_custodia").in("codigo_custodia", allCodigos).eq("user_id", user!.id).order("data").range(de, ate)).then((data) => ({ data }))
           : Promise.resolve({ data: [] }),
         poupancaCodigos.length > 0
           ? supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data")
@@ -187,13 +188,14 @@ export default function PosicaoConsolidadaPage() {
       // Cotas dos fundos do usuario: a posicao do fundo e saldo de cotas x cota do dia.
       const cotasPorFundo = new Map<string, { data: string; valor_cota: number }[]>();
       if (fundoProducts.length > 0) {
-        const { data: cotasData } = await supabase
+        const cotasData = await fetchAllRows((de, ate) => supabase
           .from("cotas_fundos")
           .select("fundo_id, data, valor_cota")
           .in("fundo_id", fundoProducts.map((p) => p.fundo_id!))
           .lte("data", dataReferenciaISO)
-          .order("data");
-        for (const c of cotasData || []) {
+          .order("data")
+          .range(de, ate));
+        for (const c of cotasData) {
           const arr = cotasPorFundo.get((c as any).fundo_id) || [];
           arr.push({ data: (c as any).data, valor_cota: Number((c as any).valor_cota) });
           cotasPorFundo.set((c as any).fundo_id, arr);

@@ -14,6 +14,7 @@ import { calcularRendaFixaDiario, DailyRow } from "@/lib/rendaFixaEngine";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { CdiRecord } from "@/lib/cdiCalculations";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 
 export interface CarteiraInfo {
@@ -192,13 +193,18 @@ export function useCarteiraRF() {
       const poupancaProds = rfProducts.filter(p => p.modalidade === "Poupança");
       const poupancaCodigos = poupancaProds.map(p => p.codigo_custodia);
 
+      // Paginado: calendario ate o vencimento mais longo e serie de CDI passam
+      // das 1000 linhas por requisicao do PostgREST, que corta em silencio.
       const [calRes, cdiRes, ibovRes, selicRes, trRes, poupRendRes] = await Promise.all([
-        supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data"),
-        supabase.from("historico_cdi").select("data, taxa_anual")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data"),
-        supabase.from("historico_ibovespa").select("data, pontos")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data"),
+        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+          .gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data").range(de, ate))
+          .then((data) => ({ data })),
+        fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
+          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate))
+          .then((data) => ({ data })),
+        fetchAllRows((de, ate) => supabase.from("historico_ibovespa").select("data, pontos")
+          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate))
+          .then((data) => ({ data })),
         poupancaCodigos.length > 0
           ? supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data")
           : Promise.resolve({ data: [] }),
@@ -232,12 +238,13 @@ export function useCarteiraRF() {
       const poupancaRendimentoRecords = ((poupRendRes as any).data || []).map((r: any) => ({ data: r.data, rendimento_mensal: Number(r.rendimento_mensal) }));
 
       const allCodigos = rfProducts.map(p => p.codigo_custodia);
-      const { data: allMovData } = await supabase
+      const allMovData = await fetchAllRows((de, ate) => supabase
         .from("movimentacoes")
         .select("data, tipo_movimentacao, valor, codigo_custodia")
         .in("codigo_custodia", allCodigos)
         .eq("user_id", user!.id)
-        .order("data");
+        .order("data")
+        .range(de, ate));
 
       const movByCodigo = new Map<number, { data: string; tipo_movimentacao: string; valor: number }[]>();
       for (const m of (allMovData || [])) {

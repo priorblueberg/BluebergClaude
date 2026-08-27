@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
@@ -114,33 +115,35 @@ export function useCarteiraFundos() {
       const fundoIds = fundos.map((f) => f.fundo_id);
       const codigos = fundos.map((f) => f.codigo_custodia);
 
-      const [calRes, cotasRes, movRes, cdiRes] = await Promise.all([
-        supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data"),
-        supabase.from("cotas_fundos").select("fundo_id, data, valor_cota")
-          .in("fundo_id", fundoIds).lte("data", dataCalculo).order("data"),
-        supabase.from("movimentacoes")
+      // Paginado: a serie de cotas passa das 1000 linhas que o PostgREST devolve
+      // por requisicao, e o corte e silencioso.
+      const [calRaw, cotasRaw, movRaw, cdiRaw] = await Promise.all([
+        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate)),
+        fetchAllRows((de, ate) => supabase.from("cotas_fundos").select("fundo_id, data, valor_cota")
+          .in("fundo_id", fundoIds).lte("data", dataCalculo).order("data").range(de, ate)),
+        fetchAllRows((de, ate) => supabase.from("movimentacoes")
           .select("codigo_custodia, data, data_cotizacao, tipo_movimentacao, valor, quantidade")
-          .eq("user_id", user.id).in("codigo_custodia", codigos).order("data"),
-        supabase.from("historico_cdi").select("data, taxa_anual")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data"),
+          .eq("user_id", user.id).in("codigo_custodia", codigos).order("data").range(de, ate)),
+        fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
+          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate)),
       ]);
 
-      const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
+      const calendario = calRaw.map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
       const calMap = new Map<string, boolean>(calendario.map((c) => [c.data, c.dia_util]));
-      const mergedCdi: CdiRecord[] = (cdiRes.data || []).map((c: any) => ({
+      const mergedCdi: CdiRecord[] = cdiRaw.map((c: any) => ({
         data: c.data, taxa_anual: Number(c.taxa_anual), dia_util: calMap.get(c.data) ?? false,
       }));
 
       const cotasPorFundo = new Map<string, { data: string; valor_cota: number }[]>();
-      for (const c of cotasRes.data || []) {
+      for (const c of cotasRaw) {
         const arr = cotasPorFundo.get((c as any).fundo_id) || [];
         arr.push({ data: (c as any).data, valor_cota: Number((c as any).valor_cota) });
         cotasPorFundo.set((c as any).fundo_id, arr);
       }
 
       const movsPorCodigo = new Map<string, any[]>();
-      for (const m of movRes.data || []) {
+      for (const m of movRaw) {
         const arr = movsPorCodigo.get((m as any).codigo_custodia) || [];
         arr.push(m);
         movsPorCodigo.set((m as any).codigo_custodia, arr);
