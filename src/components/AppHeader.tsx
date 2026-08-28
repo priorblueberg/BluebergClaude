@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { recalculateAllForDataReferencia } from "@/lib/syncEngine";
+import { haVersaoNovaPublicada } from "@/lib/versaoDoApp";
 import { toast } from "sonner";
 import {
   DropdownMenu,
@@ -39,8 +40,18 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
 
   const isStagedSameAsApplied = format(stagedDate, "yyyy-MM-dd") === format(dataReferencia, "yyyy-MM-dd");
 
+  /** Aba com build antigo nao pode recalcular: ela reescreve a carteira inteira
+   *  com regras velhas. Melhor recarregar do que corromper os dados. */
+  const bloqueadoPorVersaoAntiga = async () => {
+    if (!(await haVersaoNovaPublicada())) return false;
+    toast.info("Ha uma versao mais nova do app. Recarregando antes de recalcular...");
+    setTimeout(() => window.location.reload(), 1200);
+    return true;
+  };
+
   const handleForceRecalculate = async () => {
     if (!user || isForceRecalculating) return;
+    if (await bloqueadoPorVersaoAntiga()) return;
     setIsForceRecalculating(true);
     setIsRecalculating(true);
     try {
@@ -58,6 +69,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
 
   const handleApply = async () => {
     if (!user || isStagedSameAsApplied) return;
+    if (await bloqueadoPorVersaoAntiga()) return;
     const clamped = clampDate(stagedDate);
     setDataReferencia(clamped);
     setStagedDate(clamped);
