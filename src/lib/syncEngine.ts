@@ -5,7 +5,45 @@
  * automaticamente quando movimentacoes são alteradas.
  */
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
+
+/**
+ * Calendario e CDI inteiros, lidos UMA vez e reaproveitados.
+ *
+ * Antes cada titulo fazia as suas duas consultas: com 30 titulos eram 60 idas ao
+ * banco de ~1000 linhas cada, e era o grosso da demora ao trocar a data de
+ * referencia. Tambem passam pelo paginador, porque as duas series ja estouram o
+ * teto de 1000 linhas por requisicao do PostgREST.
+ */
+let _seriesCache: {
+  calendario: { data: string; dia_util: boolean }[];
+  cdi: { data: string; taxa_anual: number }[];
+} | null = null;
+
+export function limparCacheDeSeries() {
+  _seriesCache = null;
+}
+
+async function carregarSeries() {
+  if (_seriesCache) return _seriesCache;
+  const [calendario, cdi] = await Promise.all([
+    fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis")
+      .select("data, dia_util").order("data").range(de, ate)),
+    fetchAllRows((de, ate) => supabase.from("historico_cdi")
+      .select("data, taxa_anual").order("data").range(de, ate)),
+  ]);
+  _seriesCache = {
+    calendario: (calendario as any[]).map((c) => ({ data: c.data, dia_util: c.dia_util })),
+    cdi: (cdi as any[]).map((c) => ({ data: c.data, taxa_anual: Number(c.taxa_anual) })),
+  };
+  return _seriesCache;
+}
+
+async function calendarioEntre(dataInicio: string, dataFim: string) {
+  const { calendario } = await carregarSeries();
+  return calendario.filter((c) => c.data >= dataInicio && c.data <= dataFim);
+}
 
 /** Fetch CDI records if the product uses CDI indexador */
 async function fetchCdiIfNeeded(
@@ -14,13 +52,8 @@ async function fetchCdiIfNeeded(
   dataFim: string
 ): Promise<{ data: string; taxa_anual: number }[] | undefined> {
   if (!indexador || !indexador.includes("CDI")) return undefined;
-  const { data } = await supabase
-    .from("historico_cdi")
-    .select("data, taxa_anual")
-    .gte("data", dataInicio)
-    .lte("data", dataFim)
-    .order("data");
-  return data?.map((r) => ({ data: r.data, taxa_anual: Number(r.taxa_anual) })) || undefined;
+  const { cdi } = await carregarSeries();
+  return cdi.filter((c) => c.data >= dataInicio && c.data <= dataFim);
 }
 
 // ── Resgate no Vencimento Auto Sync ──
@@ -71,13 +104,8 @@ async function syncManualResgatesTotais(
 
     const lastResgateDate = manualResgates[manualResgates.length - 1].data;
 
-    const [{ data: calendario }, { data: movs }] = await Promise.all([
-      supabase
-        .from("calendario_dias_uteis")
-        .select("data, dia_util")
-        .gte("data", custodiaRecord.data_inicio)
-        .lte("data", lastResgateDate)
-        .order("data"),
+    const [calendario, { data: movs }] = await Promise.all([
+      calendarioEntre(custodiaRecord.data_inicio, lastResgateDate),
       supabase
         .from("movimentacoes")
         .select("id, data, tipo_movimentacao, valor")
@@ -203,12 +231,7 @@ async function syncResgateNoVencimento(
 
   // Calculate liquido and cota via engine
   try {
-    const { data: calendario } = await supabase
-      .from("calendario_dias_uteis")
-      .select("data, dia_util")
-      .gte("data", custodiaRecord.data_inicio)
-      .lte("data", vencimento!)
-      .order("data");
+    const calendario = await calendarioEntre(custodiaRecord.data_inicio, vencimento!);
 
     const { data: movs } = await supabase
       .from("movimentacoes")
@@ -910,14 +933,8 @@ export async function reprocessMovimentacoesForCodigo(
   const lastDate = manualMovs[manualMovs.length - 1].data;
   const calEnd = baseInfo.vencimento && baseInfo.vencimento > lastDate ? baseInfo.vencimento : lastDate;
 
-  const { data: calendario } = await supabase
-    .from("calendario_dias_uteis")
-    .select("data, dia_util")
-    .gte("data", baseInfo.dataInicio)
-    .lte("data", calEnd > refDate ? calEnd : refDate)
-    .order("data");
-
-  if (!calendario) return;
+  const calendario = await calendarioEntre(baseInfo.dataInicio, calEnd > refDate ? calEnd : refDate);
+  if (calendario.length === 0) return;
 
   // 5. Fetch CDI if needed
   const cdiRecordsReprocess = await fetchCdiIfNeeded(aplicacaoInicial.indexador, baseInfo.dataInicio, calEnd > refDate ? calEnd : refDate);
@@ -1084,9 +1101,17 @@ export async function fullSyncAfterDelete(
 /** Guard to prevent concurrent full recalculations */
 let _isRecalculating = false;
 
-/** Recalculate ALL custodia and controle_de_carteiras for a user based on a new data_referencia.
- *  Destructive-reconstructive: wipes custodia, controle_de_carteiras, and automatic movimentacoes,
- *  then replays every unique codigo_custodia once.
+/** Recalcula custodia e controle_de_carteiras do usuario para uma nova data de referencia.
+ *
+ *  Reconstrutivo, NAO destrutivo-primeiro: cada codigo_custodia e reconstruido no
+ *  lugar e so no fim somem as custodias que nao foram reconstruidas. A versao
+ *  anterior apagava tudo antes de recalcular, entao qualquer interrupcao no meio
+ *  (aba fechada, navegacao, erro em um titulo) deixava o dashboard vazio - foi o
+ *  que aconteceu em 27/08/2026.
+ *
+ *  Cada categoria vai para o SEU motor: fundo pelo saldo de cotas, moeda pelo
+ *  saldo em moeda, renda fixa pelo reprocessamento de PU. Sem esse desvio, fundos
+ *  e moedas eram simplesmente descartados na reconstrucao.
  */
 export async function recalculateAllForDataReferencia(userId: string, dataReferencia: string) {
   if (_isRecalculating) {
@@ -1094,42 +1119,59 @@ export async function recalculateAllForDataReferencia(userId: string, dataRefere
     return;
   }
   _isRecalculating = true;
+  limparCacheDeSeries();
 
   try {
-    // 1. Delete all custodia for the user
-    await supabase.from("custodia").delete().eq("user_id", userId);
-
-    // 2. Delete all controle_de_carteiras for the user
-    await supabase.from("controle_de_carteiras").delete().eq("user_id", userId);
-
-    // 3. Delete all automatic movimentacoes
+    // 1. Movimentacoes automaticas sao derivadas: sempre refeitas.
     await supabase
       .from("movimentacoes")
       .delete()
       .eq("user_id", userId)
       .eq("origem", "automatico");
 
-    // 4. Fetch all remaining (manual) movimentacoes ordered chronologically
-    const { data: manualMovs } = await supabase
+    // 2. Todas as movimentacoes, em ordem cronologica.
+    const manualMovs = await fetchAllRows((de, ate) => supabase
       .from("movimentacoes")
-      .select("id, categoria_id, codigo_custodia")
+      .select("id, categoria_id, codigo_custodia, fundo_id, moeda")
       .eq("user_id", userId)
       .order("data", { ascending: true })
-      .order("created_at", { ascending: true });
+      .order("created_at", { ascending: true })
+      .range(de, ate));
 
     if (!manualMovs || manualMovs.length === 0) return;
 
-    // 5. Process each codigo_custodia only ONCE via reprocessMovimentacoesForCodigo
-    const processedCodigos = new Set<number>();
+    // 3. Um passe por codigo_custodia, cada um no motor da sua categoria.
+    const processedCodigos = new Set<string>();
     const categoriaIds = new Set<string>();
 
-    for (const mov of manualMovs) {
+    for (const mov of manualMovs as any[]) {
       categoriaIds.add(mov.categoria_id);
       const code = mov.codigo_custodia;
-      if (code != null && !processedCodigos.has(code)) {
-        processedCodigos.add(code);
-        await reprocessMovimentacoesForCodigo(code, userId, mov.categoria_id, dataReferencia);
+      if (code == null || processedCodigos.has(String(code))) continue;
+      processedCodigos.add(String(code));
+
+      try {
+        if (mov.fundo_id) {
+          await syncCustodiaFundo(code, userId, dataReferencia);
+        } else if (mov.moeda) {
+          await syncCustodiaMoeda(code, userId, dataReferencia);
+        } else {
+          await reprocessMovimentacoesForCodigo(code, userId, mov.categoria_id, dataReferencia);
+        }
+      } catch (e) {
+        // Um titulo com problema nao pode levar o resto da carteira junto.
+        console.error(`recalculo: falha no codigo ${code}`, e);
       }
+    }
+
+    // 4. Custodia que nao foi reconstruida nao existe mais (movimentacoes apagadas).
+    if (processedCodigos.size > 0) {
+      const lista = Array.from(processedCodigos).map((c) => `"${c}"`).join(",");
+      await supabase
+        .from("custodia")
+        .delete()
+        .eq("user_id", userId)
+        .not("codigo_custodia", "in", `(${lista})`);
     }
 
     // 6. Sync controle_de_carteiras for each category
