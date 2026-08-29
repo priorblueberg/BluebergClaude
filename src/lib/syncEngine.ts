@@ -137,7 +137,11 @@ async function syncManualResgatesTotais(
     const cdiRecords = await fetchCdiIfNeeded(custodiaRecord.indexador, custodiaRecord.data_inicio, lastResgateDate);
 
     for (const manualResgate of manualResgates) {
-      const calendarioAteData = calendario.filter((dia) => dia.data <= manualResgate.data);
+      // NAO cortar o calendario na data do resgate: o motor conta as datas de
+      // cupom a partir do vencimento e precisa dos dias uteis ate la. Ele ja para
+      // sozinho em dataCalculo. Cortando aqui, titulo com cupom recalculava o
+      // "Resgate Total" pelo principal - o Fechar Posicao gravava R$ 110.000,00
+      // onde a boleta tinha mostrado R$ 113.131,56.
       const movsAteData = movs
         .filter((mov) => mov.id !== manualResgate.id && mov.data <= manualResgate.data)
         .map((mov) => ({
@@ -146,7 +150,7 @@ async function syncManualResgatesTotais(
           valor: Number(mov.valor),
         }));
 
-      if (calendarioAteData.length === 0) continue;
+      if (calendario.length === 0) continue;
 
       const rows = calcularRendaFixaDiario({
         dataInicio: custodiaRecord.data_inicio,
@@ -154,7 +158,7 @@ async function syncManualResgatesTotais(
         taxa: custodiaRecord.taxa || 0,
         modalidade: custodiaRecord.modalidade || "Prefixado",
         puInicial: custodiaRecord.preco_unitario || 1000,
-        calendario: calendarioAteData,
+        calendario,
         movimentacoes: movsAteData,
         dataResgateTotal: null,
         pagamento: custodiaRecord.pagamento,
