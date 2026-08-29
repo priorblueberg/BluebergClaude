@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "checar": "node scripts/checar-simbolos.mjs"
   },
   "dependencies": {
     "@fontsource/roboto-mono": "^5.2.8",

@@ -448,6 +448,33 @@ export function resgateTotalDeMovs(movs: MovResgate[], vencimento: string | null
   return houveAplicacaoDepois ? (vencimento || null) : ultimo;
 }
 
+/**
+ * Todas as movimentacoes que interessam ao encerramento, agrupadas por codigo.
+ *
+ * Antes cada custodia fazia as suas proprias consultas: no recalculo completo
+ * eram 232 idas ao banco so para isso, mais da metade do tempo total. Agora sao
+ * duas (paginadas) e o resto e memoria.
+ */
+export async function indiceDeEncerramento(userId: string): Promise<Map<string, MovResgate[]>> {
+  const linhas = await fetchAllRows<MovResgate>((de, ate) =>
+    supabase
+      .from("movimentacoes")
+      .select("codigo_custodia, data, tipo_movimentacao")
+      .eq("user_id", userId)
+      .in("tipo_movimentacao", ["Resgate Total", "Aplicação Inicial", "Aplicação"])
+      .range(de, ate),
+  );
+
+  const indice = new Map<string, MovResgate[]>();
+  for (const l of linhas) {
+    const chave = String(l.codigo_custodia);
+    const arr = indice.get(chave) || [];
+    arr.push(l);
+    indice.set(chave, arr);
+  }
+  return indice;
+}
+
 
 /** Compute data_calculo based on data_referencia, resgate_total, and data_limite */
 function computeDataCalculo(dataReferencia: string, resgateTotal: string | null, dataLimite: string | null): string | null {
