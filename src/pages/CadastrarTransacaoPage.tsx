@@ -20,6 +20,9 @@ import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
 import CadastrarFundoModal from "@/components/CadastrarFundoModal";
 import { MOEDAS } from "@/lib/cambioEngine";
+import { fetchAllRows } from "@/lib/fetchAllRows";
+import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
+import { parseQuantidade } from "@/lib/numeroBR";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -421,12 +424,16 @@ export default function CadastrarTransacaoPage() {
       try {
         const isPosFixadoCDI = ((selectedCustodia.modalidade === "Pos Fixado" || selectedCustodia.modalidade === "Pós Fixado") && selectedCustodia.indexador === "CDI") || (selectedCustodia.modalidade === "Mista" && selectedCustodia.indexador === "CDI");
 
-        const calQuery = supabase
+        // Paginado: acima de 1000 dias corridos entre a aplicacao e o resgate a
+        // serie vinha cortada e o motor devolvia saldo errado, que virava o teto
+        // da validacao do valor resgatado.
+        const calQuery = fetchAllRows((de, ate) => supabase
           .from("calendario_dias_uteis")
           .select("data, dia_util")
           .gte("data", selectedCustodia.data_inicio)
           .lte("data", dateISO)
-          .order("data");
+          .order("data")
+          .range(de, ate)).then((data) => ({ data }));
         const movQuery = supabase
           .from("movimentacoes")
           .select("data, tipo_movimentacao, valor")
@@ -440,12 +447,13 @@ export default function CadastrarTransacaoPage() {
           .eq("user_id", user.id)
           .maybeSingle();
         const cdiQuery = isPosFixadoCDI
-          ? supabase
+          ? fetchAllRows((de, ate) => supabase
               .from("historico_cdi")
               .select("data, taxa_anual")
               .gte("data", selectedCustodia.data_inicio)
               .lte("data", dateISO)
               .order("data")
+              .range(de, ate)).then((data) => ({ data }))
           : null;
 
         const [calRes, movRes, custRes, cdiRes] = await Promise.all([
@@ -630,7 +638,7 @@ export default function CadastrarTransacaoPage() {
       try {
         const moeda = MOEDAS.find((m) => m.codigo === moedaSel)!;
         const valorNum = parseCurrencyToNumber(valor);
-        const qtd = qtdCotas ? parseFloat(qtdCotas.replace(/\./g, "").replace(",", ".")) : null;
+        const qtd = parseQuantidade(qtdCotas);
         const nomeAtivo = moeda.nome;
 
         // Mesma moeda na mesma instituição é a mesma posição.
@@ -647,15 +655,7 @@ export default function CadastrarTransacaoPage() {
         if (existentes && existentes.length > 0) {
           codigoCustodia = String(existentes[0].codigo_custodia);
         } else {
-          const { data: codigos } = await supabase
-            .from("movimentacoes")
-            .select("codigo_custodia")
-            .not("codigo_custodia", "is", null);
-          const maior = (codigos || []).reduce((mx: number, r: any) => {
-            const n = Number(r.codigo_custodia);
-            return Number.isFinite(n) && n > mx ? n : mx;
-          }, 99);
-          codigoCustodia = String(maior + 1);
+          codigoCustodia = await proximoCodigoCustodia(user.id);
         }
 
         const { data: inserida, error } = await supabase.from("movimentacoes").insert({
@@ -708,7 +708,7 @@ export default function CadastrarTransacaoPage() {
       try {
         const fundo = fundos.find((f) => f.id === fundoId)!;
         const valorNum = parseCurrencyToNumber(valor);
-        const qtd = qtdCotas ? parseFloat(qtdCotas.replace(/\./g, "").replace(",", ".")) : null;
+        const qtd = parseQuantidade(qtdCotas);
 
         // Cotizacao: o fundo pode cotizar D+n uteis, e o prazo da aplicacao pode
         // ser diferente do resgate. Vem do cadastro da CVM.
@@ -744,15 +744,7 @@ export default function CadastrarTransacaoPage() {
         if (existentes && existentes.length > 0) {
           codigoCustodia = String(existentes[0].codigo_custodia);
         } else {
-          const { data: codigos } = await supabase
-            .from("movimentacoes")
-            .select("codigo_custodia")
-            .not("codigo_custodia", "is", null);
-          const maior = (codigos || []).reduce((mx: number, r: any) => {
-            const n = Number(r.codigo_custodia);
-            return Number.isFinite(n) && n > mx ? n : mx;
-          }, 99);
-          codigoCustodia = String(maior + 1);
+          codigoCustodia = await proximoCodigoCustodia(user.id);
           if (tipoMovimentacao === "Aplicação") tipoFinal = "Aplicação Inicial";
         }
 
@@ -970,36 +962,31 @@ export default function CadastrarTransacaoPage() {
         toast.success("Transação atualizada com sucesso!");
         navigate("/movimentacoes");
       } else {
-        let codigoCustodia: number;
+        // Texto, como a coluna: o codigo pode ser legado nao numerico.
+        let codigoCustodia: string;
         let tipoFinal = tipoMovimentacao;
 
         if (nomeAtivo) {
+          // O nome do ativo NAO carrega o custodiante, entao o mesmo titulo
+          // comprado em duas corretoras caia na mesma posicao. A instituicao
+          // entra na busca para as duas ficarem separadas.
           const { data: existing } = await supabase
             .from("movimentacoes")
             .select("codigo_custodia")
+            .eq("user_id", user.id)
             .eq("nome_ativo", nomeAtivo)
+            .eq("instituicao_id", instituicaoId)
             .not("codigo_custodia", "is", null)
             .limit(1);
 
           if (existing && existing.length > 0) {
-            codigoCustodia = existing[0].codigo_custodia!;
+            codigoCustodia = String(existing[0].codigo_custodia);
           } else {
-            // Próximo código NUMÉRICO limpo (100, 101, 102...). Ignora códigos
-            // legados não-numéricos (ex.: "TST-CMB-NN") e evita a concatenação de
-            // string do text column ("100" + 1 → "1001"). Fix 2026-08-15.
-            const { data: codigos } = await supabase
-              .from("movimentacoes")
-              .select("codigo_custodia")
-              .not("codigo_custodia", "is", null);
-            const maxCodigo = (codigos || []).reduce((mx, r: any) => {
-              const n = Number(r.codigo_custodia);
-              return Number.isFinite(n) && n > mx ? n : mx;
-            }, 99);
-            codigoCustodia = maxCodigo + 1;
+            codigoCustodia = await proximoCodigoCustodia(user.id);
             tipoFinal = "Aplicação Inicial";
           }
         } else {
-          codigoCustodia = 0;
+          codigoCustodia = "";
         }
 
         const { error } = await supabase.from("movimentacoes").insert({
