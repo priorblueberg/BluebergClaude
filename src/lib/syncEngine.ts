@@ -410,40 +410,28 @@ async function syncPoupancaLotes(codigoCustodia: number, userId: string, custodi
 // ── Custodia Sync ──
 
 /** Compute resgate_total for a Renda Fixa custodia record */
-async function computeResgateTotal(codigoCustodia: number, userId: string, vencimento: string | null): Promise<string | null> {
-  // Find the most recent "Resgate Total"
-  const { data: resgateTotal } = await supabase
-    .from("movimentacoes")
-    .select("data")
-    .eq("codigo_custodia", codigoCustodia)
-    .eq("user_id", userId)
-    .eq("tipo_movimentacao", "Resgate Total")
-    .order("data", { ascending: false })
-    .limit(1);
+type MovResgate = { codigo_custodia: string | number; data: string; tipo_movimentacao: string };
 
-  if (resgateTotal && resgateTotal.length > 0) {
-    const dataResgate = resgateTotal[0].data;
+/**
+ * Data em que a posicao foi encerrada, a partir das movimentacoes JA carregadas.
+ *
+ * Regra: vale o "Resgate Total" mais recente, salvo se houver aplicacao depois
+ * dele - nesse caso a posicao voltou a existir e quem encerra e o vencimento.
+ */
+export function resgateTotalDeMovs(movs: MovResgate[], vencimento: string | null): string | null {
+  const totais = movs
+    .filter((m) => m.tipo_movimentacao === "Resgate Total")
+    .map((m) => m.data)
+    .sort();
+  if (totais.length === 0) return vencimento || null;
 
-    // Check if there's an application AFTER the most recent Resgate Total
-    const { data: aplicacaoPostResgate } = await supabase
-      .from("movimentacoes")
-      .select("data")
-      .eq("codigo_custodia", codigoCustodia)
-      .eq("user_id", userId)
-      .in("tipo_movimentacao", ["Aplicação Inicial", "Aplicação"])
-      .gt("data", dataResgate)
-      .order("data", { ascending: false })
-      .limit(1);
-
-    if (aplicacaoPostResgate && aplicacaoPostResgate.length > 0) {
-      // There's an application after the resgate total — revert to vencimento
-      return vencimento || null;
-    }
-
-    return dataResgate;
-  }
-  return vencimento || null;
+  const ultimo = totais[totais.length - 1];
+  const houveAplicacaoDepois = movs.some(
+    (m) => ["Aplicação Inicial", "Aplicação"].includes(m.tipo_movimentacao) && m.data > ultimo,
+  );
+  return houveAplicacaoDepois ? (vencimento || null) : ultimo;
 }
+
 
 /** Compute data_calculo based on data_referencia, resgate_total, and data_limite */
 function computeDataCalculo(dataReferencia: string, resgateTotal: string | null, dataLimite: string | null): string | null {
@@ -575,10 +563,10 @@ export async function syncCustodiaFromMovimentacao(movimentacaoId: string, dataR
   // Compute resgate_total (for RF non-poupança or poupança with resgate total)
   let resgateTotal: string | null = null;
   if (isRendaFixa && !isPoupanca) {
-    resgateTotal = await computeResgateTotal(mov.codigo_custodia, mov.user_id!, aplicacaoInicial.vencimento);
+    resgateTotal = resgateTotalDeMovs((allMovs || []) as any, aplicacaoInicial.vencimento);
   } else if (isPoupanca) {
     // For Poupança, compute resgate_total from manual "Resgate Total" movements
-    resgateTotal = await computeResgateTotal(mov.codigo_custodia, mov.user_id!, null);
+    resgateTotal = resgateTotalDeMovs((allMovs || []) as any, null);
   }
 
   // Compute data_limite — Poupança gets a far-future date so the portfolio stays active
@@ -758,9 +746,10 @@ export async function syncControleCarteiras(categoriaId: string, userId: string,
   let resgateTotal: string | null = null;
   let hasActiveWithoutResgate = false;
   if (custodiaResgateRows && custodiaResgateRows.length > 0) {
+    const indice = await indiceDeEncerramento(userId);
     const resgateDates: string[] = [];
     for (const row of custodiaResgateRows) {
-      const rt = await computeResgateTotal(row.codigo_custodia, userId, row.vencimento);
+      const rt = resgateTotalDeMovs(indice.get(String(row.codigo_custodia)) || [], row.vencimento);
       if (rt) {
         resgateDates.push(rt);
       } else {
@@ -834,8 +823,9 @@ export async function syncCarteiraGeral(userId: string, dataReferencia?: string)
   // Compute resgate_total across all custodia
   const resgateDates: string[] = [];
   let hasActiveWithoutResgate = false;
+  const indiceGeral = await indiceDeEncerramento(userId);
   for (const row of allCustodia) {
-    const rt = await computeResgateTotal(row.codigo_custodia, userId, row.vencimento);
+    const rt = resgateTotalDeMovs(indiceGeral.get(String(row.codigo_custodia)) || [], row.vencimento);
     if (rt) {
       resgateDates.push(rt);
     } else {
