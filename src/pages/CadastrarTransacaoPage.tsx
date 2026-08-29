@@ -425,14 +425,22 @@ export default function CadastrarTransacaoPage() {
       try {
         const isPosFixadoCDI = ((selectedCustodia.modalidade === "Pos Fixado" || selectedCustodia.modalidade === "Pós Fixado") && selectedCustodia.indexador === "CDI") || (selectedCustodia.modalidade === "Mista" && selectedCustodia.indexador === "CDI");
 
-        // Paginado: acima de 1000 dias corridos entre a aplicacao e o resgate a
-        // serie vinha cortada e o motor devolvia saldo errado, que virava o teto
-        // da validacao do valor resgatado.
+        // O calendario tem que ir ate o VENCIMENTO, nao ate a data do resgate: o
+        // motor usa esse calendario para montar as datas de pagamento de cupom,
+        // que sao contadas a partir do vencimento. Com o calendario curto, as
+        // datas saiam erradas e o titulo aparecia com o saldo travado no valor
+        // aplicado - um CDB de 112% do CDI mostrava R$ 140.000,00 em vez dos
+        // R$ 149,4 mil que tinha rendido.
+        const fimSerie = [dateISO, selectedCustodia.vencimento ?? "", selectedCustodia.resgate_total ?? ""]
+          .reduce((maior, d) => (d > maior ? d : maior), dateISO);
+
+        // Paginado: acima de 1000 dias corridos a serie vinha cortada e o motor
+        // devolvia saldo errado, que vira o teto da validacao do valor resgatado.
         const calQuery = fetchAllRows((de, ate) => supabase
           .from("calendario_dias_uteis")
           .select("data, dia_util")
           .gte("data", selectedCustodia.data_inicio)
-          .lte("data", dateISO)
+          .lte("data", fimSerie)
           .order("data")
           .range(de, ate)).then((data) => ({ data }));
         const movQuery = supabase
