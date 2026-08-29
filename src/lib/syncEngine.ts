@@ -21,8 +21,20 @@ let _seriesCache: {
   cdi: { data: string; taxa_anual: number }[];
 } | null = null;
 
+const _nomeCategoria = new Map<string, string>();
+
 export function limparCacheDeSeries() {
   _seriesCache = null;
+  _nomeCategoria.clear();
+}
+
+async function nomeDaCategoria(categoriaId: string): Promise<string> {
+  const emCache = _nomeCategoria.get(categoriaId);
+  if (emCache !== undefined) return emCache;
+  const { data } = await supabase.from("categorias").select("nome").eq("id", categoriaId).maybeSingle();
+  const nome = (data as any)?.nome || "";
+  _nomeCategoria.set(categoriaId, nome);
+  return nome;
 }
 
 async function carregarSeries() {
@@ -185,13 +197,17 @@ async function syncManualResgatesTotais(
 async function syncResgateNoVencimento(
   codigoCustodia: number,
   userId: string,
-  custodiaRecord: SyncCustodiaBase
+  custodiaRecord: SyncCustodiaBase,
+  /** O chamador garante que nao ha movimentacao automatica: dispensa a consulta. */
+  semAutomaticos?: boolean,
 ) {
   const hoje = new Date().toISOString().slice(0, 10);
   const { vencimento, resgate_total } = custodiaRecord;
 
   const shouldCreate =
     vencimento && resgate_total && resgate_total === vencimento && vencimento < hoje;
+
+  if (semAutomaticos && !shouldCreate) return;
 
   // Find ALL existing auto resgates (to clean up any duplicates)
   const { data: existingAutos } = await supabase
@@ -456,34 +472,51 @@ function computeDataCalculo(dataReferencia: string, resgateTotal: string | null,
 }
 
 /** After inserting/updating a movimentacao, upsert the corresponding custodia record */
-export async function syncCustodiaFromMovimentacao(movimentacaoId: string, dataReferencia?: string) {
+/**
+ * @param precarregado o que o chamador ja tem em memoria. O reprocessamento
+ *   acabou de ler e reescrever todas as movimentacoes do codigo: sem isto, esta
+ *   funcao repetia as duas leituras por titulo.
+ */
+export async function syncCustodiaFromMovimentacao(
+  movimentacaoId: string,
+  dataReferencia?: string,
+  precarregado?: {
+    mov: any;
+    categoriaNome: string;
+    todasMovs: any[];
+    /** true quando o chamador acabou de apagar as movimentacoes automaticas. */
+    semAutomaticos?: boolean;
+  },
+) {
   const refDate = dataReferencia || new Date().toISOString().slice(0, 10);
 
-  // Fetch the movimentacao with related names
-  const { data: mov, error } = await supabase
-    .from("movimentacoes")
-    .select("*, categorias(nome)")
-    .eq("id", movimentacaoId)
-    .single();
-
-  if (error || !mov) {
-    console.error("syncCustodia: movimentação não encontrada", error);
-    return;
+  let mov: any = precarregado?.mov ?? null;
+  if (!mov) {
+    const { data, error } = await supabase
+      .from("movimentacoes")
+      .select("*, categorias(nome)")
+      .eq("id", movimentacaoId)
+      .single();
+    if (error || !data) {
+      console.error("syncCustodia: movimentação não encontrada", error);
+      return;
+    }
+    mov = data;
   }
 
-  const categoriaNome = (mov as any).categorias?.nome || "";
+  const categoriaNome = precarregado?.categoriaNome ?? ((mov as any).categorias?.nome || "");
   const isRendaFixa = categoriaNome === "Renda Fixa";
   let isPoupanca = mov.modalidade === "Poupança";
 
   if (!mov.codigo_custodia) return;
 
-  // Fetch ALL movimentações for this codigo_custodia to aggregate values
-  const { data: allMovs } = await supabase
+  // Todas as movimentacoes do codigo. Vem do chamador quando ele ja as tem.
+  const allMovs = precarregado?.todasMovs ?? (await supabase
     .from("movimentacoes")
     .select("*")
     .eq("codigo_custodia", mov.codigo_custodia)
     .eq("user_id", mov.user_id)
-    .order("data", { ascending: true });
+    .order("data", { ascending: true })).data;
 
   // ── Ensure "Aplicação Inicial" is always the earliest application ──
   const aplicacoes = (allMovs || []).filter(
@@ -575,14 +608,6 @@ export async function syncCustodiaFromMovimentacao(movimentacaoId: string, dataR
   // Compute data_calculo
   const dataCalculo = computeDataCalculo(refDate, resgateTotal, dataLimite);
 
-  // Check if custodia record already exists
-  const { data: existing } = await supabase
-    .from("custodia")
-    .select("id")
-    .eq("codigo_custodia", mov.codigo_custodia)
-    .eq("user_id", mov.user_id!)
-    .limit(1);
-
   // Derive estrategia from modalidade + indexador
   const derivedEstrategia = (() => {
     const mod = aplicacaoInicial.modalidade;
@@ -621,18 +646,13 @@ export async function syncCustodiaFromMovimentacao(movimentacaoId: string, dataR
     estrategia: derivedEstrategia,
   };
 
-  if (existing && existing.length > 0) {
-    const { error: upErr } = await supabase
-      .from("custodia")
-      .update(custodiaData)
-      .eq("id", existing[0].id);
-    if (upErr) console.error("syncCustodia: erro ao atualizar", upErr);
-  } else {
-    const { error: insErr } = await supabase
-      .from("custodia")
-      .insert(custodiaData);
-    if (insErr) console.error("syncCustodia: erro ao inserir", insErr);
-  }
+  // Upsert pelo indice unico (user_id, codigo_custodia): evita a consulta previa
+  // para decidir entre insert e update, e e idempotente se dois recalculos se
+  // cruzarem.
+  const { error: upsertErr } = await supabase
+    .from("custodia")
+    .upsert(custodiaData, { onConflict: "user_id,codigo_custodia" });
+  if (upsertErr) console.error("syncCustodia: erro ao gravar", upsertErr);
 
   // Sync manual "Resgate Total" values created by the "Fechar Posição" flow (RF non-poupança only)
   if (isRendaFixa && !isPoupanca) {
@@ -667,12 +687,14 @@ export async function syncCustodiaFromMovimentacao(movimentacaoId: string, dataR
       indexador: aplicacaoInicial.indexador,
       nome: aplicacaoInicial.nome_ativo,
       preco_unitario: aplicacaoInicial.preco_unitario,
-    });
+    }, precarregado?.semAutomaticos);
   }
 
   // ── Sync Poupança lotes ──
   if (isPoupanca) {
-    await syncPoupancaLotes(mov.codigo_custodia, mov.user_id!, existing?.[0]?.id);
+    // Sem o id em maos: a propria funcao busca a custodia quando precisa, e so
+    // a poupanca precisa. Consultar aqui custava uma ida ao banco por titulo.
+    await syncPoupancaLotes(mov.codigo_custodia, mov.user_id!, undefined);
   }
 }
 
@@ -996,6 +1018,11 @@ export async function reprocessMovimentacoesForCodigo(
 
     // As gravacoes sao independentes entre si: disparar em serie custava uma ida
     // ao banco por movimentacao, e um titulo com 5 lancamentos pagava 5 latencias.
+    // A copia em memoria acompanha o que vai para o banco: e ela que o
+    // syncCustodia usa para montar quantidade e custo.
+    mov.preco_unitario = newPU;
+    mov.quantidade = newQuantidade;
+
     atualizacoes.push(
       supabase
         .from("movimentacoes")
@@ -1007,8 +1034,14 @@ export async function reprocessMovimentacoesForCodigo(
 
   await Promise.all(atualizacoes);
 
-  // 6. Now run normal custodia sync using the first movimentação
-  await syncCustodiaFromMovimentacao(aplicacaoInicial.id, refDate);
+  // 6. Custodia a partir do que ja esta em memoria: as movimentacoes acabaram de
+  // ser lidas e reescritas aqui, e as automaticas foram apagadas no passo 1.
+  await syncCustodiaFromMovimentacao(aplicacaoInicial.id, refDate, {
+    mov: aplicacaoInicial,
+    categoriaNome: await nomeDaCategoria(categoriaId),
+    todasMovs: manualMovs,
+    semAutomaticos: true,
+  });
 }
 
 /** Full sync: reprocess all movimentações for the codigo and update custodia + carteiras */
