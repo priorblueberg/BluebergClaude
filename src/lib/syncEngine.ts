@@ -940,6 +940,7 @@ export async function reprocessMovimentacoesForCodigo(
   const cdiRecordsReprocess = await fetchCdiIfNeeded(aplicacaoInicial.indexador, baseInfo.dataInicio, calEnd > refDate ? calEnd : refDate);
 
   // 6. For each movimentação, compute engine and update PU/Qty from calculator columns
+  const atualizacoes: Promise<void>[] = [];
   for (let i = 0; i < manualMovs.length; i++) {
     const mov = manualMovs[i];
 
@@ -1003,14 +1004,18 @@ export async function reprocessMovimentacoesForCodigo(
       }
     }
 
-    await supabase
-      .from("movimentacoes")
-      .update({
-        preco_unitario: newPU,
-        quantidade: newQuantidade,
-      })
-      .eq("id", mov.id);
+    // As gravacoes sao independentes entre si: disparar em serie custava uma ida
+    // ao banco por movimentacao, e um titulo com 5 lancamentos pagava 5 latencias.
+    atualizacoes.push(
+      supabase
+        .from("movimentacoes")
+        .update({ preco_unitario: newPU, quantidade: newQuantidade })
+        .eq("id", mov.id)
+        .then(() => undefined),
+    );
   }
+
+  await Promise.all(atualizacoes);
 
   // 6. Now run normal custodia sync using the first movimentação
   await syncCustodiaFromMovimentacao(aplicacaoInicial.id, refDate);
@@ -1140,28 +1145,48 @@ export async function recalculateAllForDataReferencia(userId: string, dataRefere
 
     if (!manualMovs || manualMovs.length === 0) return;
 
+    // Carrega calendario e CDI uma vez, ANTES do paralelo: sem isto os primeiros
+    // titulos do lote disparariam a mesma carga simultaneamente.
+    await carregarSeries();
+
     // 3. Um passe por codigo_custodia, cada um no motor da sua categoria.
     const processedCodigos = new Set<string>();
     const categoriaIds = new Set<string>();
+    const aReconstruir: { code: string; categoriaId: string; fundo: boolean; moeda: boolean }[] = [];
 
     for (const mov of manualMovs as any[]) {
       categoriaIds.add(mov.categoria_id);
       const code = mov.codigo_custodia;
       if (code == null || processedCodigos.has(String(code))) continue;
       processedCodigos.add(String(code));
+      aReconstruir.push({
+        code: String(code),
+        categoriaId: mov.categoria_id,
+        fundo: !!mov.fundo_id,
+        moeda: !!mov.moeda,
+      });
+    }
 
-      try {
-        if (mov.fundo_id) {
-          await syncCustodiaFundo(code, userId, dataReferencia);
-        } else if (mov.moeda) {
-          await syncCustodiaMoeda(code, userId, dataReferencia);
-        } else {
-          await reprocessMovimentacoesForCodigo(code, userId, mov.categoria_id, dataReferencia);
+    // Titulos sao independentes entre si: cada um so le e grava as proprias
+    // linhas. Em serie, a carteira inteira pagava a latencia de um por vez -
+    // era o que sobrava da demora ao trocar a data. As series de mercado ja
+    // estao em memoria (carregarSeries), entao o paralelo nao multiplica leitura.
+    const LOTE = 6;
+    for (let i = 0; i < aReconstruir.length; i += LOTE) {
+      await Promise.all(aReconstruir.slice(i, i + LOTE).map(async (item) => {
+        try {
+          if (item.fundo) {
+            await syncCustodiaFundo(item.code, userId, dataReferencia);
+          } else if (item.moeda) {
+            await syncCustodiaMoeda(item.code, userId, dataReferencia);
+          } else {
+            await reprocessMovimentacoesForCodigo(item.code, userId, item.categoriaId, dataReferencia);
+          }
+        } catch (e) {
+          // Um titulo com problema nao pode levar o resto da carteira junto.
+          console.error(`recalculo: falha no codigo ${item.code}`, e);
         }
-      } catch (e) {
-        // Um titulo com problema nao pode levar o resto da carteira junto.
-        console.error(`recalculo: falha no codigo ${code}`, e);
-      }
+      }));
     }
 
     // 4. Custodia que nao foi reconstruida nao existe mais (movimentacoes apagadas).
