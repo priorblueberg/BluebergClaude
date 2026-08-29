@@ -23,6 +23,7 @@ import { MOEDAS } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
+import { ehDiaUtil, ehFutura, cotacaoMoeda, cotaFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -232,7 +233,7 @@ export default function CadastrarTransacaoPage() {
         if (data) {
           // TEMPORARIO: usuario comum opera Renda Fixa e Fundos; as demais
           // categorias seguem fechadas ate ganharem motor. Admin ve tudo.
-          const LIBERADAS = ["Renda Fixa", "Fundos de Investimentos"];
+          const LIBERADAS = ["Renda Fixa", "Fundos de Investimentos", "Moedas"];
           const visiveis = isAdmin ? data : data.filter((c) => LIBERADAS.includes(c.nome));
           setCategorias(visiveis);
           if (visiveis.length === 1 && !editId) {
@@ -574,6 +575,10 @@ export default function CadastrarTransacaoPage() {
       setTaxa(mov.taxa ? String(mov.taxa) : "");
       setPagamento(mov.pagamento || "No Vencimento");
       setVencimento(mov.vencimento || "");
+      // Fundo e moeda tambem sao editaveis: sem isto a tela de edicao abria vazia.
+      setFundoId((mov as any).fundo_id || "");
+      setMoedaSel((mov as any).moeda || "");
+      setQtdCotas(mov.quantidade != null ? String(mov.quantidade).replace(".", ",") : "");
       setEditLoaded(true);
     })();
   }, [editId, editLoaded, categorias]);
@@ -582,8 +587,8 @@ export default function CadastrarTransacaoPage() {
   const showTipoMovimentacao = !!categoriaId && (isRendaFixa || isFundo || isMoeda);
   const showAplicacaoFields = showTipoMovimentacao && isRendaFixa && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate));
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
-  const showFundoFields = isFundo && !!tipoMovimentacao && !isEditing;
-  const showMoedaFields = isMoeda && !!tipoMovimentacao && !isEditing;
+  const showFundoFields = isFundo && !!tipoMovimentacao;
+  const showMoedaFields = isMoeda && !!tipoMovimentacao;
   const showPoupancaFields = isPoupanca && isAplicacao;
 
   const resetForm = () => {
@@ -633,12 +638,38 @@ export default function CadastrarTransacaoPage() {
         return;
       }
       setValidationErrors(new Set());
+
+      if (ehFutura(data)) {
+        toast.error("A data da operação não pode ser no futuro.");
+        return;
+      }
+      if (!(await ehDiaUtil(data))) {
+        toast.error("A data da operação deve ser um dia útil.");
+        return;
+      }
+
+      const valorNum = parseCurrencyToNumber(valor);
+      const qtdInformada = parseQuantidade(qtdCotas);
+
+      // Sem quantidade informada, ela sai da cotacao do dia: se o BCB ainda nao
+      // publicou, gravar agora produziria quantidade errada em silencio.
+      const { naData: cotacaoDoDia, ultima: ultimaCotacao } = await cotacaoMoeda(moedaSel, data);
+      if (qtdInformada == null && cotacaoDoDia == null) {
+        toast.error(
+          ultimaCotacao
+            ? `Não há cotação publicada para ${fmtData(data)}. A última é de ${fmtData(ultimaCotacao.data)} - informe a quantidade na moeda para gravar.`
+            : "Não há cotação disponível para essa moeda nessa data. Informe a quantidade na moeda.",
+        );
+        return;
+      }
+
+      const qtdOperacao = qtdInformada ?? (cotacaoDoDia ? valorNum / cotacaoDoDia : null);
+
       setSubmitting(true);
 
       try {
         const moeda = MOEDAS.find((m) => m.codigo === moedaSel)!;
-        const valorNum = parseCurrencyToNumber(valor);
-        const qtd = parseQuantidade(qtdCotas);
+        const qtd = qtdOperacao;
         const nomeAtivo = moeda.nome;
 
         // Mesma moeda na mesma instituição é a mesma posição.
@@ -658,6 +689,35 @@ export default function CadastrarTransacaoPage() {
           codigoCustodia = await proximoCodigoCustodia(user.id);
         }
 
+        // Venda nao pode passar do saldo: o motor aceita posicao negativa e ela
+        // segue rendendo, entao o erro so apareceria semanas depois na carteira.
+        if (tipoMovimentacao === "Venda" && qtd != null) {
+          const saldo = await saldoEmQuantidade(codigoCustodia, user.id, data, editId);
+          if (qtd > saldo + 1e-8) {
+            setSubmitting(false);
+            toast.error(
+              `Venda de ${qtd.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} ${moedaSel} maior que o saldo de ${saldo.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} ${moedaSel} em ${fmtData(data)}.`,
+            );
+            return;
+          }
+        }
+
+        if (isEditing) {
+          const { error: errUp } = await supabase.from("movimentacoes").update({
+            instituicao_id: instituicaoId,
+            data,
+            valor: valorNum,
+            quantidade: qtd,
+            preco_unitario: cotacaoDoDia,
+          }).eq("id", editId);
+          if (errUp) throw errUp;
+          await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
+          applyDataReferencia();
+          toast.success("Operação de câmbio atualizada com sucesso!");
+          navigate("/movimentacoes");
+          return;
+        }
+
         const { data: inserida, error } = await supabase.from("movimentacoes").insert({
           categoria_id: categoriaId,
           produto_id: produtos[0]?.id ?? null,
@@ -669,6 +729,7 @@ export default function CadastrarTransacaoPage() {
           tipo_movimentacao: tipoMovimentacao,
           valor: valorNum,
           quantidade: qtd,
+          preco_unitario: cotacaoDoDia,
           user_id: user.id,
           origem: "manual",
         }).select("id").single();
@@ -703,12 +764,22 @@ export default function CadastrarTransacaoPage() {
         return;
       }
       setValidationErrors(new Set());
+
+      if (ehFutura(data)) {
+        toast.error("A data da operação não pode ser no futuro.");
+        return;
+      }
+      if (!(await ehDiaUtil(data))) {
+        toast.error("A data da operação deve ser um dia útil.");
+        return;
+      }
+
       setSubmitting(true);
 
       try {
         const fundo = fundos.find((f) => f.id === fundoId)!;
         const valorNum = parseCurrencyToNumber(valor);
-        const qtd = parseQuantidade(qtdCotas);
+        const qtdInformada = parseQuantidade(qtdCotas);
 
         // Cotizacao: o fundo pode cotizar D+n uteis, e o prazo da aplicacao pode
         // ser diferente do resgate. Vem do cadastro da CVM.
@@ -730,6 +801,20 @@ export default function CadastrarTransacaoPage() {
         const uteis = (diasCal || []).filter((d: any) => d.dia_util).map((d: any) => d.data);
         const dataCotizacao = uteis[dias] ?? uteis[0] ?? data;
 
+        // Sem quantidade informada, ela sai da cota da data de cotizacao. Se o
+        // fundo ainda nao divulgou, gravar produziria quantidade errada calada.
+        const { naData: cotaDoDia, ultima: ultimaCota } = await cotaFundo(fundoId, dataCotizacao);
+        if (qtdInformada == null && cotaDoDia == null) {
+          setSubmitting(false);
+          toast.error(
+            ultimaCota
+              ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)} (a última é de ${fmtData(ultimaCota.data)}). Informe a quantidade de cotas para gravar.`
+              : "Não há cota disponível para esse fundo nessa data. Informe a quantidade de cotas.",
+          );
+          return;
+        }
+        const qtd = qtdInformada ?? (cotaDoDia ? valorNum / cotaDoDia : null);
+
         // Fundo que ja esta na carteira reaproveita o codigo de custodia.
         const { data: existentes } = await supabase
           .from("movimentacoes")
@@ -748,6 +833,37 @@ export default function CadastrarTransacaoPage() {
           if (tipoMovimentacao === "Aplicação") tipoFinal = "Aplicação Inicial";
         }
 
+        // Resgate e come-cotas nao podem passar do saldo de cotas: posicao
+        // negativa segue rendendo e o erro so aparece semanas depois.
+        if (tipoMovimentacao !== "Aplicação" && qtd != null) {
+          const saldo = await saldoEmQuantidade(codigoCustodia, user.id, dataCotizacao, editId);
+          if (qtd > saldo + 1e-8) {
+            setSubmitting(false);
+            const fmtQtd = (n: number) => n.toLocaleString("pt-BR", { maximumFractionDigits: 8 });
+            toast.error(
+              `${tipoMovimentacao} de ${fmtQtd(qtd)} cotas maior que o saldo de ${fmtQtd(saldo)} cotas em ${fmtData(dataCotizacao)}.`,
+            );
+            return;
+          }
+        }
+
+        if (isEditing) {
+          const { error: errUp } = await supabase.from("movimentacoes").update({
+            instituicao_id: instituicaoId,
+            data,
+            data_cotizacao: dataCotizacao,
+            valor: valorNum,
+            quantidade: qtd,
+            preco_unitario: cotaDoDia,
+          }).eq("id", editId);
+          if (errUp) throw errUp;
+          await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
+          applyDataReferencia();
+          toast.success("Movimentação de fundo atualizada com sucesso!");
+          navigate("/movimentacoes");
+          return;
+        }
+
         const { data: inserida, error } = await supabase.from("movimentacoes").insert({
           categoria_id: categoriaId,
           produto_id: produtos[0]?.id ?? null,
@@ -760,6 +876,7 @@ export default function CadastrarTransacaoPage() {
           tipo_movimentacao: tipoFinal,
           valor: valorNum,
           quantidade: qtd,
+          preco_unitario: cotaDoDia,
           user_id: user.id,
           origem: "manual",
         }).select("id").single();
@@ -881,6 +998,18 @@ export default function CadastrarTransacaoPage() {
       return;
     }
     setValidationErrors(new Set());
+
+    // Aplicacao com data futura deixa a custodia depois da data de referencia e
+    // a carteira aparece como "Nao Iniciada"; o resgate ja barrava isso.
+    if (ehFutura(data)) {
+      toast.error("A Data de Transação não pode ser no futuro.");
+      return;
+    }
+
+    if (!isPoupanca && vencimento && vencimento <= data) {
+      toast.error("O vencimento deve ser posterior à Data de Transação.");
+      return;
+    }
 
     // Validate business day AFTER required fields check
     if (!isPoupanca) {
@@ -1122,7 +1251,8 @@ export default function CadastrarTransacaoPage() {
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
               O fluxo de cadastro para <strong>{categoriaSelecionada?.nome}</strong> ainda não está
-              disponível. Por enquanto, apenas <strong>Renda Fixa</strong> pode ser cadastrada pela boleta.
+              disponível. Por enquanto a boleta cadastra <strong>Renda Fixa</strong>,{" "}
+              <strong>Fundos de Investimentos</strong> e <strong>Moedas</strong>.
             </AlertDescription>
           </Alert>
         )}
@@ -1142,6 +1272,7 @@ export default function CadastrarTransacaoPage() {
                   value={moedaSel}
                   onChange={setMoedaSel}
                   placeholder="Selecione a moeda"
+                  disabled={isEditing}
                   options={MOEDAS.map((m) => ({ value: m.codigo, label: `${m.nome} (${m.codigo})` }))}
                 />
               </Field>
@@ -1186,7 +1317,7 @@ export default function CadastrarTransacaoPage() {
 
             <div className="flex gap-3">
               <Button onClick={handleSubmit} disabled={submitting}>
-                {submitting ? "Salvando..." : "Cadastrar"}
+                {submitting ? "Salvando..." : isEditing ? "Salvar alterações" : "Cadastrar"}
               </Button>
               <Button variant="outline" onClick={resetForm} disabled={submitting}>
                 Cancelar
@@ -1205,6 +1336,7 @@ export default function CadastrarTransacaoPage() {
                     value={fundoId}
                     onChange={setFundoId}
                     placeholder="Selecione o fundo"
+                    disabled={isEditing}
                     options={fundos.map((f) => ({ value: f.id, label: f.nome }))}
                   />
                 </div>
@@ -1259,7 +1391,7 @@ export default function CadastrarTransacaoPage() {
 
             <div className="flex gap-3">
               <Button onClick={handleSubmit} disabled={submitting}>
-                {submitting ? "Salvando..." : "Cadastrar"}
+                {submitting ? "Salvando..." : isEditing ? "Salvar alterações" : "Cadastrar"}
               </Button>
               <Button variant="outline" onClick={resetForm} disabled={submitting}>
                 Cancelar

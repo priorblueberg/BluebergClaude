@@ -1,0 +1,103 @@
+/**
+ * Checagens que a boleta faz antes de gravar fundo e moeda.
+ *
+ * A boleta de renda fixa já validava dia útil, data futura e saldo do resgate;
+ * fundo e moeda não validavam nada disso, então dava para lançar câmbio no
+ * sábado, aplicar com data futura e vender mais do que se tem - a posição ficava
+ * negativa em silêncio, como aconteceu com o título 228 da massa de CDB.
+ */
+import { supabase } from "@/integrations/supabase/client";
+
+const TABELA_COTACAO: Record<string, string> = {
+  USD: "historico_dolar",
+  EUR: "historico_euro",
+};
+
+const ENTRADAS = ["Aplicação", "Aplicação Inicial", "Compra"];
+
+export const fmtData = (iso: string) =>
+  new Date(iso + "T00:00:00").toLocaleDateString("pt-BR");
+
+/** A data existe no calendário e é dia útil? */
+export async function ehDiaUtil(dataISO: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("calendario_dias_uteis")
+    .select("dia_util")
+    .eq("data", dataISO)
+    .maybeSingle();
+  return !!data?.dia_util;
+}
+
+export function ehFutura(dataISO: string): boolean {
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  return new Date(dataISO + "T00:00:00") > hoje;
+}
+
+/** Cotação de venda da moeda na data exata, ou a última publicada antes dela. */
+export async function cotacaoMoeda(moeda: string, dataISO: string) {
+  const tabela = TABELA_COTACAO[moeda];
+  if (!tabela) return { naData: null as number | null, ultima: null as { data: string; valor: number } | null };
+
+  const { data } = await supabase
+    .from(tabela as any)
+    .select("data, cotacao_venda")
+    .lte("data", dataISO)
+    .order("data", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) return { naData: null, ultima: null };
+  const linha = data as any;
+  const ultima = { data: linha.data as string, valor: Number(linha.cotacao_venda) };
+  return { naData: ultima.data === dataISO ? ultima.valor : null, ultima };
+}
+
+/** Cota do fundo na data exata, ou a última publicada antes dela. */
+export async function cotaFundo(fundoId: string, dataISO: string) {
+  const { data } = await supabase
+    .from("cotas_fundos")
+    .select("data, valor_cota")
+    .eq("fundo_id", fundoId)
+    .lte("data", dataISO)
+    .order("data", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) return { naData: null as number | null, ultima: null as { data: string; valor: number } | null };
+  const linha = data as any;
+  const ultima = { data: linha.data as string, valor: Number(linha.valor_cota) };
+  return { naData: ultima.data === dataISO ? ultima.valor : null, ultima };
+}
+
+/**
+ * Saldo em cotas (fundo) ou em moeda estrangeira (câmbio) até a data, somando as
+ * entradas e subtraindo as saídas já lançadas.
+ */
+export async function saldoEmQuantidade(
+  codigoCustodia: string,
+  userId: string,
+  ateDataISO: string,
+  /** Ao editar, a propria movimentacao nao pode entrar no saldo contra o qual ela e validada. */
+  ignorarId?: string | null,
+): Promise<number> {
+  const { data } = await supabase
+    .from("movimentacoes")
+    .select("id, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario")
+    .eq("codigo_custodia", codigoCustodia)
+    .eq("user_id", userId);
+
+  let saldo = 0;
+  for (const m of (data || []) as any[]) {
+    if (ignorarId && m.id === ignorarId) continue;
+    const dataEfetiva = m.data_cotizacao || m.data;
+    if (dataEfetiva > ateDataISO) continue;
+
+    let qtd = m.quantidade != null ? Number(m.quantidade) : null;
+    if (qtd == null && Number(m.preco_unitario) > 0) qtd = Number(m.valor) / Number(m.preco_unitario);
+    if (qtd == null) continue;
+
+    saldo += ENTRADAS.includes(m.tipo_movimentacao) ? qtd : -qtd;
+  }
+  return saldo;
+}
