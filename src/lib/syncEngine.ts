@@ -116,8 +116,13 @@ async function syncManualResgatesTotais(
 
     const lastResgateDate = manualResgates[manualResgates.length - 1].data;
 
+    // Ate o vencimento, pelo mesmo motivo das telas: as datas de cupom sao
+    // contadas a partir dele.
+    const fimSerie = [lastResgateDate, custodiaRecord.vencimento ?? "", custodiaRecord.resgate_total ?? ""]
+      .reduce((maior, d) => (d > maior ? d : maior), lastResgateDate);
+
     const [calendario, { data: movs }] = await Promise.all([
-      calendarioEntre(custodiaRecord.data_inicio, lastResgateDate),
+      calendarioEntre(custodiaRecord.data_inicio, fimSerie),
       supabase
         .from("movimentacoes")
         .select("id, data, tipo_movimentacao, valor")

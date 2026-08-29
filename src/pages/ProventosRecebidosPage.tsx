@@ -74,8 +74,12 @@ export default function ProventosRecebidosPage() {
       // Find date range for calendar
       const allProducts = [...withPayment, ...poupancaProducts];
       const minDate = allProducts.reduce((m: string, p: any) => p.data_inicio < m ? p.data_inicio : m, allProducts[0].data_inicio);
+      // Precisa alcancar o vencimento: e dele que o motor conta as datas de
+      // pagamento de cupom, justamente o que esta tela lista.
       const maxDate = allProducts.reduce((m: string, p: any) => {
-        const end = p.data_calculo || dataReferenciaISO;
+        const end = [p.resgate_total, p.vencimento, p.data_calculo, dataReferenciaISO]
+          .filter(Boolean)
+          .reduce((maior: string, d: string) => (d > maior ? d : maior), dataReferenciaISO);
         return end > m ? end : m;
       }, dataReferenciaISO);
 

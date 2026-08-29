@@ -209,11 +209,18 @@ export default function BoletaCustodiaDialog({
       try {
         const isPosFixadoCDI = ((row.modalidade === "Pos Fixado" || row.modalidade === "Pós Fixado") && row.indexador === "CDI") || (row.modalidade === "Mista" && row.indexador === "CDI");
 
+        // O calendario vai ate o VENCIMENTO, nao ate a data da operacao: o motor
+        // conta as datas de cupom a partir do vencimento e precisa desses dias
+        // uteis. Com o calendario curto, titulo com cupom trava o saldo no valor
+        // aplicado (mesmo defeito corrigido na boleta de resgate em 29/08/2026).
+        const fimSerie = [dateISO, row.vencimento ?? "", row.resgate_total ?? ""]
+          .reduce((maior, d) => (d > maior ? d : maior), dateISO);
+
         const calQuery = supabase
             .from("calendario_dias_uteis")
             .select("data, dia_util")
             .gte("data", row.data_inicio)
-            .lte("data", dateISO)
+            .lte("data", fimSerie)
             .order("data");
         const movQuery = supabase
             .from("movimentacoes")
