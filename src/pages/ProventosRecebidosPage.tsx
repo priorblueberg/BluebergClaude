@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { useAuth } from "@/hooks/useAuth";
 import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -48,7 +49,7 @@ export default function ProventosRecebidosPage() {
       // Load all custodia products for this user
       const { data: custodias } = await supabase
         .from("custodia")
-        .select("codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, preco_unitario, resgate_total, pagamento, vencimento, categoria_id, categorias(nome)")
+        .select("codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, indexador, preco_unitario, resgate_total, pagamento, vencimento, categoria_id, categorias(nome)")
         .eq("user_id", user.id);
 
       if (!custodias || custodias.length === 0) {
@@ -58,8 +59,12 @@ export default function ProventosRecebidosPage() {
       }
 
       // Separate renda fixa with periodic payment and poupança (by modalidade)
+      // Todo titulo de renda fixa com pagamento periodico entra, nao so o
+      // prefixado: pos-fixado e mista tambem pagam cupom, e ficavam de fora
+      // desta tela - que existe justamente para listar cupom.
+      const MODALIDADES_COM_CUPOM = ["Prefixado", "Pos Fixado", "Pós Fixado", "Mista"];
       const withPayment = custodias.filter(
-        (c: any) => c.pagamento && c.pagamento !== "No Vencimento" && c.modalidade === "Prefixado"
+        (c: any) => c.pagamento && c.pagamento !== "No Vencimento" && MODALIDADES_COM_CUPOM.includes(c.modalidade)
       );
       const poupancaProducts = custodias.filter(
         (c: any) => c.modalidade === "Poupança"
@@ -87,15 +92,25 @@ export default function ProventosRecebidosPage() {
       const allCodigos = allProducts.map((p: any) => p.codigo_custodia);
       const poupancaCodigos = poupancaProducts.map((p: any) => p.codigo_custodia);
 
-      const [calRes, allMovRes, selicRes, lotesRes, trRes, poupRendRes] = await Promise.all([
-        supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data"),
-        supabase.from("movimentacoes").select("data, tipo_movimentacao, valor, codigo_custodia")
-          .in("codigo_custodia", allCodigos).eq("user_id", user.id).order("data"),
+      const precisaCdi = withPayment.some((p: any) => (p.indexador || "").includes("CDI"));
+
+      // Paginado: calendario ate o vencimento mais longo e serie de CDI passam
+      // das 1000 linhas que o PostgREST devolve por requisicao.
+      const [calRes, allMovRes, selicRes, cdiRes, trRes, poupRendRes] = await Promise.all([
+        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+          .gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate))
+          .then((data) => ({ data })),
+        fetchAllRows((de, ate) => supabase.from("movimentacoes").select("data, tipo_movimentacao, valor, codigo_custodia")
+          .in("codigo_custodia", allCodigos).eq("user_id", user.id).order("data").range(de, ate))
+          .then((data) => ({ data })),
         poupancaCodigos.length > 0
           ? supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data")
           : Promise.resolve({ data: [] }),
-        Promise.resolve({ data: [] }), // lotes now built from movimentações
+        precisaCdi
+          ? fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
+              .gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate))
+              .then((data) => ({ data }))
+          : Promise.resolve({ data: [] }),
         poupancaCodigos.length > 0
           ? supabase.from("historico_tr").select("data, taxa_mensal").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data")
           : Promise.resolve({ data: [] }),
@@ -105,6 +120,7 @@ export default function ProventosRecebidosPage() {
       ]);
 
       const calendario = (calRes.data || []).map((d: any) => ({ data: d.data, dia_util: d.dia_util }));
+      const cdiRecords = ((cdiRes as any).data || []).map((c: any) => ({ data: c.data, taxa_anual: Number(c.taxa_anual) }));
       const movByCodigo = new Map<number, { data: string; tipo_movimentacao: string; valor: number }[]>();
       for (const m of (allMovRes.data || [])) {
         const code = m.codigo_custodia as number;
@@ -129,6 +145,8 @@ export default function ProventosRecebidosPage() {
           dataResgateTotal: prod.resgate_total,
           pagamento: prod.pagamento,
           vencimento: prod.vencimento,
+          indexador: (prod as any).indexador,
+          cdiRecords,
           calendarioSorted: true,
         });
 
