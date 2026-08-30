@@ -495,7 +495,7 @@ export default function CadastrarTransacaoPage() {
           indexador: selectedCustodia.indexador,
           cdiRecords,
           ipcaFatores: await fatoresIpcaSeNecessario(
-            selectedCustodia.indexador, selectedCustodia.vencimento, calendario),
+            selectedCustodia.indexador, selectedCustodia.vencimento, calendario, selectedCustodia.data_inicio),
         });
 
         const rowDia = rows.find((r) => r.data === dateISO);

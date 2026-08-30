@@ -278,7 +278,7 @@ export function useCarteiraRF() {
           vencimento: product.vencimento,
           indexador: product.indexador,
           cdiRecords: cdiRaw,
-          ipcaFatores: fatoresIpcaDoTitulo(seriesIpca, product.indexador, product.vencimento, calendario),
+          ipcaFatores: fatoresIpcaDoTitulo(seriesIpca, product.indexador, product.vencimento, calendario, product.data_inicio),
           dataLimite: product.data_limite,
           precomputedCdiMap: cdiMap,
           calendarioSorted: true,

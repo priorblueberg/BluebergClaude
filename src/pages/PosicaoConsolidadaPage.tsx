@@ -247,7 +247,7 @@ export default function PosicaoConsolidadaPage() {
           vencimento: product.vencimento,
           indexador: product.indexador,
           cdiRecords,
-          ipcaFatores: fatoresIpcaDoTitulo(seriesIpca, product.indexador, product.vencimento, calendario),
+          ipcaFatores: fatoresIpcaDoTitulo(seriesIpca, product.indexador, product.vencimento, calendario, product.data_inicio),
           dataLimite: product.data_limite,
           precomputedCdiMap: cdiMap,
           calendarioSorted: true,

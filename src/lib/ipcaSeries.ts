@@ -10,7 +10,7 @@ import { construirFatoresIpcaDiarios, type IpcaCompetencia, type IpcaProjecao } 
  * o mesmo fator, e uma carteira inteira costuma usar poucos dias distintos.
  */
 let _cache: { competencias: IpcaCompetencia[]; projecao: IpcaProjecao[] } | null = null;
-const _porDia = new Map<number, Map<string, number>>();
+const _porDia = new Map<string, Map<string, number>>();
 
 export function limparCacheIpca() {
   _cache = null;
@@ -22,7 +22,7 @@ export async function carregarSeriesIpca() {
   const [comp, proj] = await Promise.all([
     fetchAllRows((de, ate) => supabase
       .from("historico_ipca")
-      .select("competencia, numero_indice, variacao_mensal")
+      .select("competencia, numero_indice, variacao_mensal, data_publicacao")
       .order("competencia")
       .range(de, ate)),
     fetchAllRows((de, ate) => supabase
@@ -46,6 +46,7 @@ export async function carregarSeriesIpca() {
       competencia: c.competencia,
       numero_indice: c.numero_indice == null ? null : Number(c.numero_indice),
       variacao_mensal: c.variacao_mensal == null ? null : Number(c.variacao_mensal),
+      data_publicacao: c.data_publicacao ?? null,
     })),
     projecao: [...maisRecente.values()],
   };
@@ -59,14 +60,17 @@ export async function carregarSeriesIpca() {
 export async function fatoresIpcaSeNecessario(
   indexador: string | null | undefined,
   vencimento: string | null | undefined,
-  calendario: { data: string; dia_util: boolean }[]
+  calendario: { data: string; dia_util: boolean }[],
+  dataInicio?: string | null
 ): Promise<Map<string, number> | undefined> {
   if (!indexador || !indexador.includes("IPCA") || !vencimento) return undefined;
 
   const dia = Number(vencimento.slice(8, 10));
   if (!dia) return undefined;
 
-  const emCache = _porDia.get(dia);
+  // O cache tem que considerar a data de inicio: ela muda o primeiro ciclo.
+  const chave = `${dia}|${dataInicio || ""}`;
+  const emCache = _porDia.get(chave);
   if (emCache) return emCache;
 
   const { competencias, projecao } = await carregarSeriesIpca();
@@ -75,8 +79,9 @@ export async function fatoresIpcaSeNecessario(
     calendario,
     competencias,
     projecao,
+    dataInicio,
   });
-  _porDia.set(dia, fatores);
+  _porDia.set(chave, fatores);
   return fatores;
 }
 
@@ -91,14 +96,16 @@ export function fatoresIpcaDoTitulo(
   series: SeriesIpca | null,
   indexador: string | null | undefined,
   vencimento: string | null | undefined,
-  calendario: { data: string; dia_util: boolean }[]
+  calendario: { data: string; dia_util: boolean }[],
+  dataInicio?: string | null
 ): Map<string, number> | undefined {
   if (!series || !indexador || !indexador.includes("IPCA") || !vencimento) return undefined;
 
   const dia = Number(vencimento.slice(8, 10));
   if (!dia) return undefined;
 
-  const emCache = _porDia.get(dia);
+  const chave = `${dia}|${dataInicio || ""}`;
+  const emCache = _porDia.get(chave);
   if (emCache) return emCache;
 
   const fatores = construirFatoresIpcaDiarios({
@@ -106,8 +113,9 @@ export function fatoresIpcaDoTitulo(
     calendario,
     competencias: series.competencias,
     projecao: series.projecao,
+    dataInicio,
   });
-  _porDia.set(dia, fatores);
+  _porDia.set(chave, fatores);
   return fatores;
 }
 

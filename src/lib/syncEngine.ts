@@ -155,7 +155,7 @@ async function syncManualResgatesTotais(
       if (calendario.length === 0) continue;
 
       const ipcaFatores = await fatoresIpcaSeNecessario(
-        custodiaRecord.indexador, custodiaRecord.vencimento, calendario);
+        custodiaRecord.indexador, custodiaRecord.vencimento, calendario, custodiaRecord.data_inicio);
 
       const rows = calcularRendaFixaDiario({
         dataInicio: custodiaRecord.data_inicio,
@@ -276,7 +276,7 @@ async function syncResgateNoVencimento(
 
     const cdiRecords = await fetchCdiIfNeeded(custodiaRecord.indexador, custodiaRecord.data_inicio, vencimento!);
     const ipcaFatores = await fatoresIpcaSeNecessario(
-      custodiaRecord.indexador, custodiaRecord.vencimento, calendario);
+      custodiaRecord.indexador, custodiaRecord.vencimento, calendario, custodiaRecord.data_inicio);
 
     const rows = calcularRendaFixaDiario({
       dataInicio: custodiaRecord.data_inicio,
@@ -1026,7 +1026,7 @@ export async function reprocessMovimentacoesForCodigo(
       indexador: aplicacaoInicial.indexador,
       cdiRecords: cdiRecordsReprocess,
       ipcaFatores: await fatoresIpcaSeNecessario(
-        aplicacaoInicial.indexador, baseInfo.vencimento, calendario),
+        aplicacaoInicial.indexador, baseInfo.vencimento, calendario, baseInfo.dataInicio),
     });
 
     const rowDia = rows.find((r) => r.data === mov.data);

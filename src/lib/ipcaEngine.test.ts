@@ -36,6 +36,18 @@ function calendario(de: string, ate: string) {
   return out;
 }
 
+/** Datas em que o IBGE divulgou cada competencia (API v3 do IBGE, produto 9256). */
+const PUBLICACAO: Record<string, string> = {
+  "2024-08": "2024-09-10", "2024-09": "2024-10-09", "2024-10": "2024-11-08",
+  "2024-11": "2024-12-10", "2024-12": "2025-01-10", "2025-01": "2025-02-11",
+  "2025-02": "2025-03-12", "2025-03": "2025-04-11", "2025-04": "2025-05-09",
+  "2025-05": "2025-06-10", "2025-06": "2025-07-10", "2025-07": "2025-08-12",
+  "2025-08": "2025-09-10", "2025-09": "2025-10-09", "2025-10": "2025-11-11",
+  "2025-11": "2025-12-10", "2025-12": "2026-01-09", "2026-01": "2026-02-10",
+  "2026-02": "2026-03-12", "2026-03": "2026-04-10", "2026-04": "2026-05-12",
+  "2026-05": "2026-06-12", "2026-06": "2026-07-10", "2026-07": "2026-08-11",
+};
+
 const COMPETENCIAS = [
   ["2024-08", 6966.5], ["2024-09", 6997.15], ["2024-10", 7036.33], ["2024-11", 7063.77],
   ["2024-12", 7100.5], ["2025-01", 7111.86], ["2025-02", 7205.03], ["2025-03", 7245.38],
@@ -43,7 +55,12 @@ const COMPETENCIAS = [
   ["2025-08", 7323.91], ["2025-09", 7359.06], ["2025-10", 7365.68], ["2025-11", 7378.94],
   ["2025-12", 7403.29], ["2026-01", 7427.72], ["2026-02", 7479.71], ["2026-03", 7545.53],
   ["2026-04", 7596.09], ["2026-05", 7640.15], ["2026-06", 7652.37], ["2026-07", 7657.73],
-].map(([competencia, numero_indice]) => ({ competencia: competencia as string, numero_indice: numero_indice as number }));
+].map(([competencia, numero_indice]) => ({
+  competencia: competencia as string,
+  numero_indice: numero_indice as number,
+  data_publicacao: PUBLICACAO[competencia as string] ?? null,
+}));
+
 
 const PROJECAO = [{ competencia: "2026-08", variacao_projetada: -0.28 }];
 
@@ -145,6 +162,7 @@ describe("fator de IPCA na convencao do Gorila", () => {
     const vna = (diaAniversario: number, inicio: string, dataCalculo: string) => {
       const fatores = construirFatoresIpcaDiarios({
         diaAniversario, calendario: CAL, competencias: COMPETENCIAS, projecao: PROJECAO,
+        dataInicio: inicio,
       });
       return 1000 * DIAS_UTEIS
         .filter((d) => d > inicio && d <= dataCalculo)
@@ -159,6 +177,11 @@ describe("fator de IPCA na convencao do Gorila", () => {
       [8,  "2025-01-02", 1084.568, 0.05],
       [15, "2025-01-02", 1085.443, 0.10],
       [31, "2025-01-02", 1086.708, 0.25],    // meses curtos, o pior caso
+      // Comprados no proprio dia do aniversario, em maio/2025. Abril foi divulgado em
+      // 09/05: o de dia 8 comprou na vespera e corrige o primeiro ciclo; o de dia 15
+      // comprou depois, com o indice ja publico, e nao corrige.
+      [8,  "2025-05-08", 1056.560, 0.001],   // exato
+      [15, "2025-05-15", 1051.784, 0.10],
     ];
 
     it.each(CASOS)("vencimento dia %i comprado em %s", (dia, compra, alvo, folga) => {
@@ -168,6 +191,13 @@ describe("fator de IPCA na convencao do Gorila", () => {
     it("bate no centavo quando a compra cai no dia do aniversario", () => {
       // sem ciclo inicial parcial, a formula reproduz o Gorila exatamente
       expect(vna(10, "2025-02-10", "2026-08-24")).toBeCloseTo(1078.066, 2);
+      expect(vna(8, "2025-05-08", "2026-08-24")).toBeCloseTo(1056.560, 2);
+    });
+
+    it("nao corrige o primeiro ciclo quando o indice ja era publico na compra", () => {
+      // Comprado em 15/05/2025, com o IPCA de abril divulgado desde 09/05. Sem a
+      // regra o erro seria de 4,60 no PU; com ela, 0,08.
+      expect(Math.abs(vna(15, "2025-05-15", "2026-08-24") - 1051.784)).toBeLessThan(0.1);
     });
   });
 });

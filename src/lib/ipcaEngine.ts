@@ -26,6 +26,7 @@ export interface IpcaCompetencia {
   competencia: string;              // "AAAA-MM"
   numero_indice?: number | null;    // base dez/1993 = 100 (SIDRA 1737 / 2266)
   variacao_mensal?: number | null;  // fallback, em % (2 casas)
+  data_publicacao?: string | null;  // dia em que o IBGE divulgou
 }
 
 export interface IpcaProjecao {
@@ -40,6 +41,22 @@ export interface FatoresIpcaInput {
   calendario: { data: string; dia_util: boolean }[];
   competencias: IpcaCompetencia[];
   projecao?: IpcaProjecao[];
+  /**
+   * Data de inicio da rentabilidade (a compra). So e usada para a regra do ciclo
+   * inicial: quando a compra cai EXATAMENTE numa data de aniversario e o indice
+   * daquele ciclo ja tinha sido divulgado nesse dia, o ciclo nao corrige.
+   *
+   * Medido no Gorila em 30/08/2026 com tres titulos comprados no proprio
+   * aniversario. Os dois cujo indice ainda nao tinha saido (compra em 10/02/2025,
+   * com janeiro divulgado so em 11/02; e em 08/05/2025, com abril divulgado em
+   * 09/05) corrigem o primeiro ciclo e batem no centavo. O terceiro, comprado em
+   * 15/05/2025 com abril ja publicado desde 09/05, NAO corrige - ignorar isso dava
+   * um erro de 4,60 no PU, contra 0,08 com a regra.
+   *
+   * A leitura economica fecha: o Gorila nao paga a correcao de um mes cujo indice ja
+   * era publico na hora da compra, porque ele ja estava no preco.
+   */
+  dataInicio?: string | null;
 }
 
 function competenciaAnterior(competencia: string): string {
@@ -119,8 +136,13 @@ function gerarAniversarios(
  * trata como dias sem rendimento).
  */
 export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string, number> {
-  const { diaAniversario, calendario, competencias, projecao } = input;
+  const { diaAniversario, calendario, competencias, projecao, dataInicio } = input;
   const fatoresMensais = montarFatoresMensais(competencias, projecao);
+
+  const publicacao = new Map<string, string>();
+  for (const c of competencias) {
+    if (c.data_publicacao) publicacao.set(c.competencia, c.data_publicacao);
+  }
   const diasUteis = calendario.filter((c) => c.dia_util).map((c) => c.data).sort();
   const aniversarios = gerarAniversarios(diaAniversario, diasUteis);
 
@@ -132,8 +154,16 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     const fim = aniversarios[i + 1].data;
 
     // O ciclo que comeca no aniversario do mes M carrega a variacao do mes M-1.
-    const fatorCiclo = fatoresMensais.get(competenciaAnterior(inicio.competencia));
+    const competenciaDoCiclo = competenciaAnterior(inicio.competencia);
+    const fatorCiclo = fatoresMensais.get(competenciaDoCiclo);
     if (fatorCiclo == null) continue;
+
+    // Compra em cima do aniversario com o indice do ciclo ja publicado: sem correcao
+    // neste ciclo. Ver o comentario de `dataInicio`.
+    if (dataInicio && dataInicio === inicio.data) {
+      const publicado = publicacao.get(competenciaDoCiclo);
+      if (publicado && publicado <= dataInicio) continue;
+    }
 
     // Dias uteis em (aniversario nominal, proximo aniversario nominal]. O dut e o
     // tamanho dessa lista: mesma fronteira para os dias que recebem o fator e para o
