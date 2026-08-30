@@ -5,9 +5,13 @@
  * exceto pelo dia do vencimento (08 e 22 de janeiro). Ver
  * `_knowledge/ipca-metodologia-gorila.md` no vault, secao 11. Em resumo:
  *
- *  - a data de aniversario mensal e o DIA DO VENCIMENTO do papel, adiada para o
- *    proximo dia util quando cai em fim de semana ou feriado. Nao e o dia 15, que
- *    e a convencao das NTN-B e das debentures;
+ *  - a data de aniversario mensal e o DIA DO VENCIMENTO do papel. Nao e o dia 15,
+ *    que e a convencao das NTN-B e das debentures;
+ *  - o ciclo e delimitado pelas datas de aniversario NOMINAIS, sem adiar para o
+ *    proximo dia util. Medido em 30/08/2026: o fator diario do titulo de vencimento
+ *    22, no ciclo de junho, e (1+0,16%)^(1/22) - e 22 e o numero de dias uteis entre
+ *    22/07 e 22/08, as datas nominais. Entre as datas adiadas seriam 23. Adiar so
+ *    mudaria quando o fator novo entra em vigor, nao o tamanho do periodo;
  *  - o ciclo que comeca no aniversario do mes M aplica a variacao do IPCA do mes
  *    M-1, distribuida pro rata em DIAS UTEIS dentro do ciclo (dup/dut);
  *  - o mes ainda nao divulgado entra pela projecao ANBIMA. Como o Gorila recalcula
@@ -82,16 +86,15 @@ function ultimoDiaDoMes(ano: number, mes: number): number {
 }
 
 /**
- * Datas de aniversario que cobrem o calendario, ja adiadas para o proximo dia util.
- * Guardamos a competencia NOMINAL (o mes a que o aniversario pertence), porque e ela
- * que define qual indice o ciclo usa - e nao o mes em que o dia util caiu.
+ * Datas de aniversario NOMINAIS que cobrem o calendario: o dia do vencimento em cada
+ * mes, sem adiar para dia util. Meses mais curtos que o dia do vencimento usam o
+ * ultimo dia do mes (um papel que vence dia 31 faz aniversario em 28 de fevereiro).
  */
 function gerarAniversarios(
   dia: number,
   diasUteis: string[]
 ): { data: string; competencia: string }[] {
   if (diasUteis.length === 0) return [];
-  const uteis = new Set(diasUteis);
   const primeiro = diasUteis[0];
   const ultimo = diasUteis[diasUteis.length - 1];
 
@@ -102,17 +105,8 @@ function gerarAniversarios(
   const out: { data: string; competencia: string }[] = [];
   for (let i = 0; i < 480; i++) {
     const diaEfetivo = Math.min(dia, ultimoDiaDoMes(ano, mes));
-    let d = new Date(Date.UTC(ano, mes - 1, diaEfetivo));
-    // adia ate cair num dia util do calendario
-    for (let k = 0; k < 15; k++) {
-      const iso = d.toISOString().slice(0, 10);
-      if (uteis.has(iso)) break;
-      d = new Date(d.getTime() + 86400000);
-    }
-    const iso = d.toISOString().slice(0, 10);
-    if (uteis.has(iso)) {
-      out.push({ data: iso, competencia: `${ano}-${String(mes).padStart(2, "0")}` });
-    }
+    const iso = `${ano}-${String(mes).padStart(2, "0")}-${String(diaEfetivo).padStart(2, "0")}`;
+    out.push({ data: iso, competencia: `${ano}-${String(mes).padStart(2, "0")}` });
     mes += 1;
     if (mes > 12) { mes = 1; ano += 1; }
     if (iso > ultimo) break;
@@ -141,12 +135,9 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     const fatorCiclo = fatoresMensais.get(competenciaAnterior(inicio.competencia));
     if (fatorCiclo == null) continue;
 
-    // dut: dias uteis em (inicio, fim]. O dia do aniversario fecha o ciclo anterior.
-    //
-    // Testei as duas fronteiras contra os 14 pontos medidos no Gorila: esta erra no
-    // maximo 0,083 no PU (R$ 0,83 numa posicao de R$ 11.900), a outra erra 0,232.
-    // Fica a ressalva de que no proprio dia do aniversario ha um residuo de cerca de
-    // 0,02 no PU, entao a fronteira exata daquele dia ainda nao esta cravada.
+    // Dias uteis em (aniversario nominal, proximo aniversario nominal]. O dut e o
+    // tamanho dessa lista: mesma fronteira para os dias que recebem o fator e para o
+    // divisor do pro rata, senao o ciclo aplicaria mais ou menos que a variacao do mes.
     const doCiclo = diasUteis.filter((d) => d > inicio.data && d <= fim);
     if (doCiclo.length === 0) continue;
 
