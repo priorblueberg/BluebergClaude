@@ -7,6 +7,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
+import { fatoresIpcaSeNecessario, limparCacheIpca } from "@/lib/ipcaSeries";
 
 /**
  * Calendario e CDI inteiros, lidos UMA vez e reaproveitados.
@@ -26,6 +27,7 @@ const _nomeCategoria = new Map<string, string>();
 export function limparCacheDeSeries() {
   _seriesCache = null;
   _nomeCategoria.clear();
+  limparCacheIpca();
 }
 
 async function nomeDaCategoria(categoriaId: string): Promise<string> {
@@ -152,6 +154,9 @@ async function syncManualResgatesTotais(
 
       if (calendario.length === 0) continue;
 
+      const ipcaFatores = await fatoresIpcaSeNecessario(
+        custodiaRecord.indexador, custodiaRecord.vencimento, calendario);
+
       const rows = calcularRendaFixaDiario({
         dataInicio: custodiaRecord.data_inicio,
         dataCalculo: manualResgate.data,
@@ -165,6 +170,7 @@ async function syncManualResgatesTotais(
         vencimento: custodiaRecord.vencimento,
         indexador: custodiaRecord.indexador,
         cdiRecords,
+        ipcaFatores,
       });
 
       const rowDia = rows[rows.length - 1];
@@ -269,6 +275,8 @@ async function syncResgateNoVencimento(
     if (!calendario || !movs) return;
 
     const cdiRecords = await fetchCdiIfNeeded(custodiaRecord.indexador, custodiaRecord.data_inicio, vencimento!);
+    const ipcaFatores = await fatoresIpcaSeNecessario(
+      custodiaRecord.indexador, custodiaRecord.vencimento, calendario);
 
     const rows = calcularRendaFixaDiario({
       dataInicio: custodiaRecord.data_inicio,
@@ -283,6 +291,7 @@ async function syncResgateNoVencimento(
       vencimento: custodiaRecord.vencimento,
       indexador: custodiaRecord.indexador,
       cdiRecords,
+      ipcaFatores,
     });
 
     if (rows.length === 0) return;
@@ -1016,6 +1025,8 @@ export async function reprocessMovimentacoesForCodigo(
       vencimento: baseInfo.vencimento,
       indexador: aplicacaoInicial.indexador,
       cdiRecords: cdiRecordsReprocess,
+      ipcaFatores: await fatoresIpcaSeNecessario(
+        aplicacaoInicial.indexador, baseInfo.vencimento, calendario),
     });
 
     const rowDia = rows.find((r) => r.data === mov.data);

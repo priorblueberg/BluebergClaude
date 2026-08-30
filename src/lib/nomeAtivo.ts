@@ -31,14 +31,20 @@ export function buildNomeAtivo(
     : "";
   const venc = vencFormatted ? `- ${vencFormatted}` : "";
 
+  // Mista com IPCA: na boleta é "Pós Fixado" + indexador "IPCA+"; gravada vira
+  // "Mista" + "IPCA". Precisa vir antes do teste de Mista, senão cai no rótulo CDI+.
+  const ehIpca = indexador === "IPCA+" || indexador === "IPCA";
+
   const partes =
     modalidade === "Prefixado"
       ? [prod, emissorNome, taxaFormatted ? `${taxaFormatted} a.a.` : "", venc]
-      : // Mista: na boleta é "Pós Fixado" + indexador "CDI+"; gravada vira "Mista".
-        indexador === "CDI+" || modalidade === "Mista"
-        ? [prod, emissorNome, "CDI+", taxaFormatted, venc]
-        : // Pós fixado indexado ao CDI
-          [prod, emissorNome, taxaFormatted, "do CDI", venc];
+      : ehIpca
+        ? [prod, emissorNome, "IPCA+", taxaFormatted, venc]
+        : // Mista: na boleta é "Pós Fixado" + indexador "CDI+"; gravada vira "Mista".
+          indexador === "CDI+" || modalidade === "Mista"
+          ? [prod, emissorNome, "CDI+", taxaFormatted, venc]
+          : // Pós fixado indexado ao CDI
+            [prod, emissorNome, taxaFormatted, "do CDI", venc];
 
   return partes.filter(Boolean).join(" ");
 }

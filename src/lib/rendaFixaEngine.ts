@@ -89,6 +89,12 @@ export interface EngineInput {
   vencimento?: string | null;
   indexador?: string | null;
   cdiRecords?: { data: string; taxa_anual: number }[];
+  /**
+   * Fator de IPCA por dia util, vindo de `construirFatoresIpcaDiarios`. So e usado
+   * quando indexador === "IPCA": o fator ja carrega o pro rata do ciclo, entao aqui
+   * ele entra como o CDI diario entra na modalidade Mista.
+   */
+  ipcaFatores?: Map<string, number>;
   dataLimite?: string | null;
   /** Pre-computed CDI map (data -> taxa_anual) to avoid rebuilding per product */
   precomputedCdiMap?: Map<string, number>;
@@ -219,14 +225,17 @@ function findDayBefore(dataInicio: string, calendario: EngineInput["calendario"]
 // ── Main engine ──
 
 export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
-  const { dataInicio, dataCalculo, taxa, modalidade, puInicial, calendario, movimentacoes, dataResgateTotal, pagamento, vencimento, indexador, cdiRecords, dataLimite, precomputedCdiMap, calendarioSorted } = input;
+  const { dataInicio, dataCalculo, taxa, modalidade, puInicial, calendario, movimentacoes, dataResgateTotal, pagamento, vencimento, indexador, cdiRecords, dataLimite, precomputedCdiMap, calendarioSorted, ipcaFatores } = input;
 
   const cotaInicial = puInicial > 0 ? puInicial : 1000;
   const rawMultiplicador = getMultiplicador(modalidade, taxa);
   const isPosFixadoCDI = (modalidade === "Pos Fixado" || modalidade === "Pós Fixado") && indexador === "CDI";
   const isMistaCDI = modalidade === "Mista" && indexador === "CDI";
+  // IPCA+ tem a mesma forma do CDI+: indice do dia vezes o spread. O que muda e a
+  // origem do fator diario, que para o IPCA vem pronto em ipcaFatores.
+  const isMistaIPCA = modalidade === "Mista" && indexador === "IPCA";
   // Pre-compute fixed spread for Mista: (1+taxa)^(1/252)
-  const mistaSpreadFactor = isMistaCDI ? Math.pow(1 + taxa / 100, 1 / 252) : 1;
+  const mistaSpreadFactor = (isMistaCDI || isMistaIPCA) ? Math.pow(1 + taxa / 100, 1 / 252) : 1;
 
   // Build CDI map: reuse pre-computed if available
   let cdiMap: Map<string, number>;
@@ -312,7 +321,13 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
 
     // Multiplicador
     let dailyMult: number;
-    if (isMistaCDI) {
+    if (isMistaIPCA) {
+      // (1 + IPCA do dia) * (1 + spread)^(1/252) - 1. Diferente do CDI, o fator do
+      // IPCA e do proprio dia: nao ha defasagem de um dia, porque a variacao do ciclo
+      // ja e conhecida quando o ciclo comeca.
+      const fatorIpcaDia = ipcaFatores?.get(cal.data) ?? 1;
+      dailyMult = diaUtil ? fatorIpcaDia * mistaSpreadFactor - 1 : 0;
+    } else if (isMistaCDI) {
       // Mista: (1 + CDI Diário anterior) * (1 + Taxa)^(1/252) - 1
       const prevCdiDiario = rows.length > 0 ? rows[rows.length - 1].cdiDiario : 0;
       dailyMult = diaUtil ? (1 + prevCdiDiario) * mistaSpreadFactor - 1 : 0;
@@ -352,7 +367,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       // Reset to initial PU on payment days (including "No Vencimento" final day)
       precoUnitario = puInicialCustodia;
     } else {
-      const puMult = (isMistaCDI || isPosFixadoCDI) ? dailyMult : rawMultiplicador;
+      const puMult = (isMistaCDI || isMistaIPCA || isPosFixadoCDI) ? dailyMult : rawMultiplicador;
       precoUnitario = prevPrecoUnitario * puMult + prevPrecoUnitario;
     }
 

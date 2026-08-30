@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
 import { calcularRendaFixaDiario, PAGAMENTO_OPTIONS } from "@/lib/rendaFixaEngine";
+import { fatoresIpcaSeNecessario } from "@/lib/ipcaSeries";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
@@ -82,7 +83,7 @@ const TIPOS_MOVIMENTACAO = [
 
 const MODALIDADE_OPTIONS = ["Prefixado", "Pós Fixado"];
 
-const INDEXADOR_OPTIONS = ["CDI", "CDI+"];
+const INDEXADOR_OPTIONS = ["CDI", "CDI+", "IPCA+"];
 
 // Categorias com fluxo de cadastro já implementado na boleta. As demais ficam
 // visíveis no dropdown mas caem num placeholder até ganharem seu próprio fluxo.
@@ -493,6 +494,8 @@ export default function CadastrarTransacaoPage() {
           vencimento: selectedCustodia.vencimento,
           indexador: selectedCustodia.indexador,
           cdiRecords,
+          ipcaFatores: await fatoresIpcaSeNecessario(
+            selectedCustodia.indexador, selectedCustodia.vencimento, calendario),
         });
 
         const rowDia = rows.find((r) => r.data === dateISO);
@@ -1060,12 +1063,17 @@ export default function CadastrarTransacaoPage() {
       // nao so na lista do campo.
       const pagamentoToSave = isAdmin ? pagamento : "No Vencimento";
 
-      // Mapeamento: "Pós Fixado" + "CDI+" → "Mista" + "CDI"
+      // Mapeamento: "Pós Fixado" + "CDI+" → "Mista" + "CDI"; o mesmo vale para
+      // "IPCA+" → "Mista" + "IPCA". A modalidade "Mista" é a de índice mais spread,
+      // e o indexador diz qual índice.
       let modalidadeToSave = isPoupanca ? "Poupança" : modalidade;
       let indexadorToSave = isPosFixado ? indexador : null;
       if (modalidade === "Pós Fixado" && indexador === "CDI+") {
         modalidadeToSave = "Mista";
         indexadorToSave = "CDI";
+      } else if (modalidade === "Pós Fixado" && indexador === "IPCA+") {
+        modalidadeToSave = "Mista";
+        indexadorToSave = "IPCA";
       }
 
       const fmtBR = (v: number) =>

@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { calcularRendaFixaDiario, DailyRow } from "@/lib/rendaFixaEngine";
+import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { CdiRecord } from "@/lib/cdiCalculations";
@@ -253,6 +254,11 @@ export function useCarteiraRF() {
         movByCodigo.get(code)!.push({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) });
       }
 
+      // Series de IPCA so quando ha papel indexado a ele.
+      const seriesIpca: SeriesIpca | null = algumIndexadoAoIpca(rfProducts as any[])
+        ? await carregarSeriesIpca()
+        : null;
+
       const allProdRows: DailyRow[][] = [];
       const prodRowProducts: CustodiaProduct[] = []; // parallel array to track which product each row set belongs to
 
@@ -272,6 +278,7 @@ export function useCarteiraRF() {
           vencimento: product.vencimento,
           indexador: product.indexador,
           cdiRecords: cdiRaw,
+          ipcaFatores: fatoresIpcaDoTitulo(seriesIpca, product.indexador, product.vencimento, calendario),
           dataLimite: product.data_limite,
           precomputedCdiMap: cdiMap,
           calendarioSorted: true,

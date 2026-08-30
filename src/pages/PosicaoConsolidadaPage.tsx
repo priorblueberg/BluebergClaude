@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { calcularRendaFixaDiario, type DailyRow } from "@/lib/rendaFixaEngine";
+import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
 import { calcularCambioDiario, cambioRowsToDailyRows } from "@/lib/cambioEngine";
@@ -175,6 +176,11 @@ export default function PosicaoConsolidadaPage() {
       const trRecords = ((trRes as any).data || []).map((t: any) => ({ data: t.data, taxa_mensal: Number(t.taxa_mensal) }));
       const poupancaRendimentoRecords = ((poupRendRes as any).data || []).map((r: any) => ({ data: r.data, rendimento_mensal: Number(r.rendimento_mensal) }));
 
+      // Series de IPCA so quando ha papel indexado a ele: sao duas leituras a mais.
+      const seriesIpca: SeriesIpca | null = algumIndexadoAoIpca(rfProducts as any[])
+        ? await carregarSeriesIpca()
+        : null;
+
       const movByCodigo = new Map<number, { data: string; tipo_movimentacao: string; valor: number }[]>();
       const movFundoByCodigo = new Map<number, { data: string; tipo: string; valor: number; data_cotizacao: string | null; qtd_cotas: number | null }[]>();
       for (const m of ((movRes as any).data || [])) {
@@ -241,6 +247,7 @@ export default function PosicaoConsolidadaPage() {
           vencimento: product.vencimento,
           indexador: product.indexador,
           cdiRecords,
+          ipcaFatores: fatoresIpcaDoTitulo(seriesIpca, product.indexador, product.vencimento, calendario),
           dataLimite: product.data_limite,
           precomputedCdiMap: cdiMap,
           calendarioSorted: true,
