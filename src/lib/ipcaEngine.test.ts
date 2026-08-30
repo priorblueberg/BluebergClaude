@@ -130,4 +130,44 @@ describe("fator de IPCA na convencao do Gorila", () => {
     // em 17/08 os dois estao em ciclos diferentes, entao os fatores diarios diferem
     expect(d8.get("2026-08-17")).not.toBeCloseTo(d22.get("2026-08-17")!, 6);
   });
+
+  /**
+   * Titulos IPCA+0% cadastrados no Gorila em 30/08/2026. Sem spread o PU e o fator
+   * do IPCA puro, entao estes valores testam a correcao sozinha, sem o ruido dos
+   * juros. Seis papeis, cinco deles variando so o dia do vencimento (logo, a posicao
+   * da compra dentro do ciclo inicial) e um comprado no proprio dia do aniversario.
+   *
+   * Tres batem exato. Os tres que sobram sao o residuo conhecido: aniversario 8 e 15
+   * (cujo aniversario de dezembro/2024 caiu num domingo) e o 31, que ainda esbarra
+   * nos meses curtos. Ver a secao 15 de `_knowledge/ipca-metodologia-gorila.md`.
+   */
+  describe("VNA puro, sem spread (titulos IPCA+0%)", () => {
+    const vna = (diaAniversario: number, inicio: string, dataCalculo: string) => {
+      const fatores = construirFatoresIpcaDiarios({
+        diaAniversario, calendario: CAL, competencias: COMPETENCIAS, projecao: PROJECAO,
+      });
+      return 1000 * DIAS_UTEIS
+        .filter((d) => d > inicio && d <= dataCalculo)
+        .reduce((acc, d) => acc * (fatores.get(d) ?? 1), 1);
+    };
+
+    // [dia do vencimento, compra, VNA no Gorila em 24/08/2026, folga aceita]
+    const CASOS: [number, string, number, number][] = [
+      [20, "2025-01-02", 1086.069, 0.001],   // exato
+      [25, "2025-01-02", 1086.465, 0.001],   // exato
+      [10, "2025-02-10", 1078.066, 0.001],   // exato: compra no proprio aniversario
+      [8,  "2025-01-02", 1084.568, 0.05],
+      [15, "2025-01-02", 1085.443, 0.10],
+      [31, "2025-01-02", 1086.708, 0.25],    // meses curtos, o pior caso
+    ];
+
+    it.each(CASOS)("vencimento dia %i comprado em %s", (dia, compra, alvo, folga) => {
+      expect(Math.abs(vna(dia, compra, "2026-08-24") - alvo)).toBeLessThan(folga);
+    });
+
+    it("bate no centavo quando a compra cai no dia do aniversario", () => {
+      // sem ciclo inicial parcial, a formula reproduz o Gorila exatamente
+      expect(vna(10, "2025-02-10", "2026-08-24")).toBeCloseTo(1078.066, 2);
+    });
+  });
 });
