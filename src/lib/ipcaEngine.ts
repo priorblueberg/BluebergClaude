@@ -251,7 +251,10 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     if (doCiclo.length === 0) continue;
     // O denominador pode incluir o dia do aniversario inicial; os dias que recebem o
     // fator, nao. Ver `janelaIncluiOAniversario`.
-    const dut = janelaIncluiOAniversario(diaAniversario)
+    // No ciclo em que o papel nasce, o dia do aniversario e a data da compra: nao ha
+    // ciclo anterior para emendar, entao ele nao entra no denominador.
+    const cicloDaCompra = dataInicio != null && inicio.data === dataInicio;
+    const dut = janelaIncluiOAniversario(diaAniversario) && !cicloDaCompra
       ? diasUteis.filter((d) => d >= inicio.data && d < fim).length
       : doCiclo.length;
     if (dut === 0) continue;
