@@ -287,13 +287,30 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
   const out = new Map<string, number>();
   if (aniversarios.length < 2) return out;
 
-  // Comprou em cima de um aniversario do dia 15 em diante: o papel pula essa
-  // competencia e fica um mes adiantado para sempre. Ver o comentario de `dataInicio`.
+  // Comprou COLADO num aniversario do dia 15 em diante: o papel pula essa competencia e
+  // fica um mes adiantado para sempre. Ver o comentario de `dataInicio`.
+  //
+  // "Colado" e o ponto: nao precisa cair EM CIMA do aniversario, basta nao haver dia util
+  // entre a compra e ele. Levantado invertendo a competencia de um ciclo liquidado em cada
+  // um dos 59 papeis de teste do Gorila (31/08/2026), o que separa 14 deslocados dos 45
+  // normais sem ambiguidade:
+  //
+  //   no aniversario, dia >= 15  -> deslocado  (12 papeis)
+  //   no aniversario, dia < 15   -> normal     (11 papeis)
+  //   ultimo dia util ANTES dele -> deslocado  (2 papeis, aniversarios 16 e 29)
+  //   dois ou mais dias uteis antes, ou depois -> normal (34 papeis)
+  //
+  // Os dois da vespera sao o CDB IPCA+6,10% comprado em 15/01/2025 com aniversario em
+  // 16/01 (quinta, dia util) e o IPCA+6,40% comprado em 28/11/2025 com aniversario em
+  // 29/11 (sabado). Antes desta correcao os dois eram os ultimos papeis divergentes da
+  // carteira de teste, com padrao irregular e troca de sinal - assinatura de competencia
+  // trocada, nao de janela.
   let deslocado = false;
   if (dataInicio) {
-    const naCompra = aniversarios.find((a) => a.data === dataInicio);
-    if (naCompra && Number(dataInicio.slice(8, 10)) >= 15) {
-      const publicado = publicacao.get(competenciaAnterior(naCompra.competencia));
+    const proximo = aniversarios.find((a) => a.data >= dataInicio);
+    const colado = !!proximo && !diasUteis.some((d) => d > dataInicio && d < proximo.data);
+    if (proximo && colado && Number(proximo.data.slice(8, 10)) >= 15) {
+      const publicado = publicacao.get(competenciaAnterior(proximo.competencia));
       deslocado = !!publicado && publicado <= dataInicio;
     }
   }
