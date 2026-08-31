@@ -5,6 +5,7 @@ import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { calcularRendaFixaDiario, DailyRow } from "@/lib/rendaFixaEngine";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
+import { carregarSeriesIpca, fatoresIpcaDoTitulo, fatoresIpcaSeNecessario, algumIndexadoAoIpca, type SeriesIpca } from "@/lib/ipcaSeries";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -139,13 +140,15 @@ export default function CalculadoraPage() {
               .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data"),
           ]);
 
+          const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
+
           const result = calcularRendaFixaDiario({
             dataInicio: product.data_inicio,
             dataCalculo: dataFim,
             taxa: product.taxa || 0,
             modalidade: product.modalidade || "",
             puInicial: product.preco_unitario || 1000,
-            calendario: (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util })),
+            calendario,
             movimentacoes: (movRes.data || []).map((m: any) => ({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) })),
             dataResgateTotal: product.resgate_total,
             pagamento: product.pagamento,
@@ -153,6 +156,9 @@ export default function CalculadoraPage() {
             indexador: product.indexador,
             cdiRecords: (cdiRes.data || []).map((c: any) => ({ data: c.data, taxa_anual: Number(c.taxa_anual) })),
             dataLimite: product.data_limite,
+            // Sem isto o papel indexado ao IPCA fica parado no PU de emissao na tela.
+            ipcaFatores: await fatoresIpcaSeNecessario(
+              product.indexador, product.vencimento, calendario, product.data_inicio),
           });
           setRows(result);
         }
@@ -227,6 +233,11 @@ export default function CalculadoraPage() {
         movByCodigo.get(code)!.push({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) });
       }
 
+      // As series de IPCA sao as mesmas para todos os titulos; carrega uma vez so.
+      const seriesIpca: SeriesIpca | null = algumIndexadoAoIpca(rfProducts as any[])
+        ? await carregarSeriesIpca()
+        : null;
+
       const allProductRows = rfProducts.map((product) => {
         const dataFim = product.resgate_total || product.vencimento || dataCalculo;
         return calcularRendaFixaDiario({
@@ -245,6 +256,8 @@ export default function CalculadoraPage() {
           dataLimite: product.data_limite,
           precomputedCdiMap: cdiMap,
           calendarioSorted: true,
+          ipcaFatores: fatoresIpcaDoTitulo(
+            seriesIpca, product.indexador, product.vencimento, calendario, product.data_inicio),
         });
       });
 
