@@ -164,28 +164,74 @@ function gerarAniversarios(
 }
 
 /**
- * O `dut` (denominador do pro rata) inclui o dia do aniversario INICIAL quando o papel
- * vence no dia 31 - o unico cujo aniversario e sempre o ultimo dia do mes. Nos demais o
- * ciclo e simplesmente (aniversario, proximo aniversario].
+ * O `dut` (denominador do pro rata) NAO e simplesmente o numero de dias uteis do ciclo.
+ * Quando um aniversario cai em dia nao util, o Gorila as vezes desloca a fronteira para
+ * o proximo dia util - e o criterio e diferente conforme o aniversario esteja abrindo ou
+ * fechando o ciclo. Os dias que RECEBEM o fator continuam sendo os de (aniversario,
+ * proximo aniversario], sempre nominais: so o divisor muda.
  *
- * Medido no Gorila em 31/08/2026, invertendo o expoente de cada ciclo do CDB de
- * vencimento 31/03/2029 a partir dos valores da tela:
+ * As duas regras abaixo saem de 157 medicoes (17 CDBs de teste no Gorila, jan/2025 a
+ * abr/2026). O `dut` de cada ciclo foi lido invertendo o expoente a partir da serie
+ * diaria do proprio Gorila (`positions/overview`), o que da numeros inteiros exatos.
+ * As duas juntas acertam 157/157.
  *
- *   ciclo 30/04/2025 a 31/05/2025 -> dut 22, e (30/04, 31/05] tem 21 dias uteis
- *   ciclo 31/10/2025 a 30/11/2025 -> dut 20, e (31/10, 30/11] tem 19
- *
- * Os dois batem com [aniversario, proximo aniversario), que inclui o dia do aniversario
- * inicial. O Daniel confirmou as duas janelas (22 e 20) na planilha dele, que fecha com
- * o Gorila. Os dias que RECEBEM fator continuam sendo (aniversario, proximo] - os dois
- * conjuntos so tem tamanhos diferentes quando um extremo e dia util e o outro nao.
- *
- * Aplicar isso a todos os papeis piora o conjunto; restrito ao dia 31, a soma dos erros
- * sobre 85 medicoes cai de 54,09 para 37,19, o pior caso de 2,80 para 1,93, e os pontos
- * exatos sobem de 28 para 43. A serie inteira do 31/03/2029 (23 datas, de janeiro/2025 a
- * agosto/2026) passa a bater no centavo.
+ * Consequencia pratica: quando a fronteira anda, o ciclo nao fecha exatamente 1 no seu
+ * ultimo dia util - ele aplica n/dut. O Gorila realmente vaza (ou dobra) um dia de
+ * correcao nessas viradas; nao e arredondamento nosso.
  */
-function janelaIncluiOAniversario(diaDoVencimento: number): boolean {
-  return diaDoVencimento === 31;
+
+/**
+ * Abertura do ciclo em que o papel NASCE (a compra caiu no meio do ciclo): o Gorila
+ * empurra a abertura para o proximo dia util quando ela cai em SABADO ou DOMINGO, e nao
+ * empurra quando cai em feriado. Medido nos 9 papeis comprados em 02/01/2025, cujos
+ * ciclos de nascimento abrem em dezembro/2024:
+ *
+ *   08/12 dom -> dut 20 (a janela nominal tem 21)   25/12 feriado -> dut 21 = a nominal
+ *   15/12 dom -> dut 20                             20/12, 27/12, 30/12, 31/12 uteis -> nominal
+ *   28/12 sab -> dut 20
+ *   29/12 dom -> dut 21 (a nominal tem 22)
+ *
+ * 9/9. A distincao entre fim de semana e feriado e a assinatura de um codigo que rola o
+ * fim de semana pelo dia da semana e so usa o calendario de feriados para contar.
+ * Nos ciclos seguintes essa rolagem nao acontece - la vale `corteInicio`.
+ */
+function corteInicioNascimento(data: string, proximoUtil: (d: string) => string): string {
+  const diaDaSemana = new Date(`${data}T00:00:00Z`).getUTCDay();
+  return diaDaSemana === 0 || diaDaSemana === 6 ? proximoUtil(data) : data;
+}
+
+/** Abertura do ciclo: adia so quando o proximo dia util cai em outro mes. 41/41. */
+function corteInicio(data: string, ehDiaUtil: (d: string) => boolean, proximoUtil: (d: string) => string): string {
+  if (ehDiaUtil(data)) return data;
+  const p = proximoUtil(data);
+  return p.slice(0, 7) !== data.slice(0, 7) ? p : data;
+}
+
+/**
+ * Fechamento do ciclo: adia para o proximo dia util quando o ciclo ABRE no fim do mes,
+ * isto e, quando nao sobra nenhum dia util no mes da abertura depois dela. Nao depende do
+ * dia do vencimento nem de o fechamento ser fim de mes.
+ *
+ *   abre 30/04/2025 (ultimo util de abril)  -> fecha 31/05, sab  -> dut conta ate 02/06
+ *   abre 28/11/2025 (ultimo util de novembro) -> fecha 28/12, dom -> dut conta ate 29/12
+ *   abre 30/07/2025 (ainda ha 31/07 em julho) -> fecha 30/08, sab -> dut para em 29/08
+ *
+ * Esse terceiro caso e o que derruba qualquer regra baseada no formato do calendario do
+ * fechamento: 30/08/2025 e 30/05/2026 sao sabados identicos (dia 31 no domingo, proximo
+ * util no mes seguinte) e o Gorila trata os dois de forma diferente. O que os separa e a
+ * abertura: 30/04/2026 e o ultimo dia util de abril, 30/07/2025 nao e o de julho.
+ *
+ * 157/157 ciclos medidos.
+ */
+function corteFim(
+  data: string,
+  inicioDoCiclo: string,
+  ehDiaUtil: (d: string) => boolean,
+  proximoUtil: (d: string) => string,
+  haUtilDepoisNoMes: (d: string) => boolean
+): string {
+  if (ehDiaUtil(data)) return data;
+  return haUtilDepoisNoMes(inicioDoCiclo) ? data : proximoUtil(data);
 }
 
 export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string, number> {
@@ -218,6 +264,12 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     if (c.data_publicacao) publicacao.set(c.competencia, c.data_publicacao);
   }
   const diasUteis = calendario.filter((c) => c.dia_util).map((c) => c.data).sort();
+  const setUteis = new Set(diasUteis);
+  const ehDiaUtil = (d: string) => setUteis.has(d);
+  const proximoUtil = (d: string) => diasUteis.find((u) => u >= d) ?? d;
+  const haUtilDepoisNoMes = (d: string) =>
+    diasUteis.some((u) => u > d && u.slice(0, 7) === d.slice(0, 7));
+
   const aniversarios = gerarAniversarios(diaAniversario, diasUteis);
 
   const out = new Map<string, number>();
@@ -249,14 +301,19 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     // divisor do pro rata, senao o ciclo aplicaria mais ou menos que a variacao do mes.
     const doCiclo = diasUteis.filter((d) => d > inicio.data && d <= fim);
     if (doCiclo.length === 0) continue;
-    // O denominador pode incluir o dia do aniversario inicial; os dias que recebem o
-    // fator, nao. Ver `janelaIncluiOAniversario`.
-    // No ciclo em que o papel nasce, o dia do aniversario e a data da compra: nao ha
-    // ciclo anterior para emendar, entao ele nao entra no denominador.
+    // O divisor usa as fronteiras deslocadas (ver `corteInicio` / `corteFim`); os dias
+    // que recebem o fator, nao. No ciclo em que o papel nasce em cima do aniversario o
+    // fechamento nao anda: nao ha ciclo anterior para emendar.
     const cicloDaCompra = dataInicio != null && inicio.data === dataInicio;
-    const dut = janelaIncluiOAniversario(diaAniversario) && !cicloDaCompra
-      ? diasUteis.filter((d) => d >= inicio.data && d < fim).length
-      : doCiclo.length;
+    const cicloDeNascimento =
+      dataInicio != null && inicio.data <= dataInicio && dataInicio <= fim;
+    const abre = cicloDeNascimento
+      ? corteInicioNascimento(inicio.data, proximoUtil)
+      : corteInicio(inicio.data, ehDiaUtil, proximoUtil);
+    const fecha = cicloDaCompra
+      ? fim
+      : corteFim(fim, inicio.data, ehDiaUtil, proximoUtil, haUtilDepoisNoMes);
+    const dut = diasUteis.filter((d) => d > abre && d <= fecha).length;
     if (dut === 0) continue;
 
     // O indice pode trocar no meio do ciclo (revisao da projecao, saida do oficial) e,
@@ -264,9 +321,9 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     // cada dia e recalculado com o indice vigente naquele dia, e o fator diario e a
     // razao entre acumulados: no dia da troca ele carrega o ajuste inteiro de uma vez.
     let acumuladoAnterior = 1;
-    // Percorre os dias que RECEBEM o fator (doCiclo). Quando o dut inclui o dia do
-    // aniversario inicial, esse conjunto tem um dia a mais que o denominador e o ultimo
-    // dia fecha com expoente maior que 1 - e o que o Gorila faz.
+    // Percorre os dias que RECEBEM o fator (doCiclo). Quando o divisor difere desse
+    // total, o ultimo dia do ciclo fecha com expoente diferente de 1 - e o que o Gorila
+    // faz nas viradas em que a fronteira anda.
     for (let n = 1; n <= doCiclo.length; n++) {
       const d = doCiclo[n - 1];
       const fator = fatorVigente(competenciaDoCiclo, d);

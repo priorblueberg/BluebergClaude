@@ -202,23 +202,23 @@ describe("fator de IPCA na convencao do Gorila", () => {
     const CASOS: [number, string, number, number][] = [
       [20, "2025-01-02", 1086.069, 0.001],   // exato
       [25, "2025-01-02", 1086.465, 0.001],   // exato
-      [10, "2025-02-10", 1078.066, 0.001],   // exato: compra no proprio aniversario
-      [8,  "2025-01-02", 1084.568, 0.05],
-      [15, "2025-01-02", 1085.443, 0.10],
-      [31, "2025-01-02", 1086.708, 0.01],    // exato desde a janela do dia 31
+      [10, "2025-02-10", 1078.066, 0.001],
+      [8,  "2025-01-02", 1084.568, 0.001],
+      [15, "2025-01-02", 1085.443, 0.001],
+      [31, "2025-01-02", 1086.708, 0.001],
       // Comprados no proprio dia do aniversario, em maio/2025. Abril foi divulgado em
       // 09/05: o de dia 8 comprou na vespera e corrige o primeiro ciclo; o de dia 15
       // comprou depois, com o indice ja publico, e nao corrige.
-      [8,  "2025-05-08", 1056.560, 0.001],   // exato
-      [15, "2025-05-15", 1051.784, 0.01],   // exato depois da projecao por dia
+      [8,  "2025-05-08", 1056.560, 0.001],
+      [15, "2025-05-15", 1051.784, 0.001],
       // Comprados em cima do aniversario de julho/2025, com junho ja divulgado desde
       // 10/07: os tres ficam deslocados um mes.
-      [29, "2025-07-29", 1047.110, 0.20],
-      [30, "2025-07-30", 1047.197, 0.25],
-      [31, "2025-07-31", 1047.118, 0.01],   // exato
+      [29, "2025-07-29", 1047.110, 0.001],
+      [30, "2025-07-30", 1047.197, 0.001],
+      [31, "2025-07-31", 1047.118, 0.001],
       // Aniversario 11, comprado no proprio aniversario um dia DEPOIS de o IPCA de maio
       // sair (10/06/2025): nao desloca, porque o corte e o dia 15.
-      [11, "2025-06-11", 1051.951, 0.01],   // exato
+      [11, "2025-06-11", 1051.951, 0.001],
     ];
 
     it.each(CASOS)("vencimento dia %i comprado em %s", (dia, compra, alvo, folga) => {
