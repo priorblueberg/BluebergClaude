@@ -293,3 +293,57 @@ describe("fator de IPCA na convencao do Gorila", () => {
     });
   });
 });
+
+/**
+ * Quando o papel entra no MEIO de um ciclo, o acumulado tem de ser contado a partir da
+ * COMPRA. Se for contado da abertura do ciclo, o fator do dia em que o indice troca
+ * (revisao da projecao ou saida do oficial) desfaz a projecao tambem dos dias em que o
+ * papel ainda nao existia, e sobra um residuo permanente.
+ *
+ * Assinatura no Gorila: o papel bate no centavo ate a vespera da divulgacao, da um degrau
+ * unico no dia dela e congela. Medido em quatro CDBs, com residuos de R$ 0,10 a R$ 0,44
+ * numa posicao de R$ 10.000. Exemplo do IPCA+2,50% comprado em 05/05/2025, cujo ciclo
+ * abre em 01/05: exato ate 08/05, degrau em 09/05 (divulgacao do IPCA de abril).
+ */
+describe("entrada no meio do ciclo", () => {
+  const CICLO_ABRE = "2025-05-01", COMPRA = "2025-05-05";
+  const fatores = construirFatoresIpcaDiarios({
+    diaAniversario: 1, calendario: CAL, competencias: COMPETENCIAS, projecao: PROJECAO,
+    dataInicio: COMPRA,
+  });
+  const doCiclo = DIAS_UTEIS.filter((d) => d > CICLO_ABRE && d <= "2025-06-01");
+  const acum = (ate: string) =>
+    doCiclo.filter((d) => d > COMPRA && d <= ate).reduce((a, d) => a * (fatores.get(d) ?? 1), 1);
+
+  it("no fim do ciclo o papel aplica exatamente a fracao dele, nao a do ciclo inteiro", () => {
+    // abril/2025 = 7276,54 / 7245,38. Divulgado em 09/05, dentro do ciclo.
+    const fatorAbril = 7276.54 / 7245.38;
+    const nDoPapel = doCiclo.filter((d) => d > COMPRA).length;
+    const dut = doCiclo.length;
+    expect(acum("2025-06-01")).toBeCloseTo(Math.pow(fatorAbril, nDoPapel / dut), 12);
+  });
+
+  it("o degrau da divulgacao nao carrega os dias anteriores a compra", () => {
+    // 09/05/2025 e o dia da divulgacao de abril. O salto do dia tem de valer so para o
+    // pedaco do papel; antes da correcao ele desfazia a projecao desde 01/05.
+    const antes = acum("2025-05-08");
+    const depois = acum("2025-05-09");
+    const fatorAbril = 7276.54 / 7245.38;
+    const dut = doCiclo.length;
+    const n8 = doCiclo.filter((d) => d > COMPRA && d <= "2025-05-08").length;
+    const n9 = n8 + 1;
+    // No dia da divulgacao o acumulado inteiro do papel passa a valer pelo indice oficial
+    expect(depois).toBeCloseTo(Math.pow(fatorAbril, n9 / dut), 12);
+    expect(depois).toBeGreaterThan(antes);
+  });
+
+  it("papel comprado no proprio aniversario nao muda de comportamento", () => {
+    const f = construirFatoresIpcaDiarios({
+      diaAniversario: 1, calendario: CAL, competencias: COMPETENCIAS, projecao: PROJECAO,
+      dataInicio: CICLO_ABRE,
+    });
+    const fatorAbril = 7276.54 / 7245.38;
+    const prod = doCiclo.reduce((a, d) => a * (f.get(d) ?? 1), 1);
+    expect(prod).toBeCloseTo(fatorAbril, 12);
+  });
+});

@@ -335,6 +335,20 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     // quando troca, o Gorila reprecifica o ciclo DESDE O INICIO. Por isso o acumulado de
     // cada dia e recalculado com o indice vigente naquele dia, e o fator diario e a
     // razao entre acumulados: no dia da troca ele carrega o ajuste inteiro de uma vez.
+    // Quando o papel entra no MEIO do ciclo, o acumulado que interessa e o dele, contado a
+    // partir da compra. Sem esse deslocamento o fator do dia em que o indice troca desfaz
+    // a projecao desde a ABERTURA do ciclo - inclusive dos dias em que o papel ainda nao
+    // existia - e sobra um residuo de (projecao/oficial)^(dias antes da compra / dut).
+    //
+    // Medido no CDB IPCA+2,50% comprado em 05/05/2025, cujo ciclo abre em 01/05: ele bate
+    // no centavo ate 08/05 e da um degrau unico de R$ 0,10 em 09/05, o dia em que o IPCA
+    // de abril foi divulgado. Nao e dut errado: o erro nao cresce dia a dia, aparece de
+    // uma vez e congela.
+    const jaCorridosNaCompra =
+      dataInicio != null && dataInicio > inicio.data && dataInicio <= fim
+        ? doCiclo.filter((d) => d <= dataInicio).length
+        : 0;
+
     let acumuladoAnterior = 1;
     // Percorre os dias que RECEBEM o fator (doCiclo). Quando o divisor difere desse
     // total, o ultimo dia do ciclo fecha com expoente diferente de 1 - e o que o Gorila
@@ -343,7 +357,7 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
       const d = doCiclo[n - 1];
       const fator = fatorVigente(competenciaDoCiclo, d);
       if (fator == null) continue;   // indice ainda desconhecido: dia sem correcao
-      const acumulado = Math.pow(fator, n / dut);
+      const acumulado = Math.pow(fator, (n - jaCorridosNaCompra) / dut);
       out.set(d, acumulado / acumuladoAnterior);
       acumuladoAnterior = acumulado;
     }
