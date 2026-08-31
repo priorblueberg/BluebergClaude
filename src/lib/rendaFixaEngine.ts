@@ -340,23 +340,26 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       dailyMult = diaUtil ? rawMultiplicador : 0;
     }
 
-    // No VENCIMENTO o papel nao rende o proprio dia: o preco ja esta no par quando o dia
-    // comeca. Venda antecipada, ao contrario, INCLUI o dia em que ocorre.
+    // O VENCIMENTO rende o proprio dia, como qualquer dia util. O que o Gorila faz e parar
+    // de PUBLICAR preco: no dia do vencimento a posicao ja aparece zerada (quantidade 0) e
+    // o `currentPrice` fica congelado no do dia util anterior. O dinheiro devolvido, esse,
+    // inclui o dia.
     //
-    // Medido no Gorila em 31/08/2026, em dois CDBs de IPCA que venceram dentro da janela
-    // observada. O valor entregue no vencimento e, no centavo, o do dia util ANTERIOR:
+    // Medido na API do Gorila em 31/08/2026 no CDB IPCA+3,80% venc. 15/06/2026 (10 cotas),
+    // pedindo a posicao com endDate variavel:
     //
-    //   IPCA+3,80% venc. 15/06/2026 -> Gorila 1080,4422 = nosso valor de 12/06 (sexta)
-    //   IPCA+4,90% venc. 31/03/2026 -> Gorila 1119,2972 = nosso valor de 30/03 (segunda)
+    //   12/06  q=10  pu=1080,4422  mv=10.804,42  pnl=804,42
+    //   15/06  q= 0  pu=1080,4422  mv=     0,00  pnl=809,15   <- +4,73 = 1 dia util
+    //   16/06  q= 0  pu=1080,4422  mv=     0,00  pnl=809,15
     //
-    // E a mesma convencao ja levantada no prefixado; nunca tinha sido exercitada no IPCA
-    // porque nenhum papel de teste vencia dentro do periodo medido.
-    if (isVencimentoDay) dailyMult = 0;
+    // O preco congelado em 1080,4422 foi o que antes nos levou a zerar o dia. Errado: o
+    // resgate saiu a 1080,9150. Os oito papeis vencidos da carteira de teste somavam
+    // R$ 50,41 a menos por causa disso, cada um exatamente um dia util curto.
 
     // VNA: o principal corrigido pelo indice, SEM o juro. So faz sentido no IPCA, o unico
     // indexador em que o principal e corrigido. E o valor para o qual o PU volta quando o
     // papel paga cupom - ver o bloco do `puJurosPeriodicos` mais abaixo.
-    if (isMistaIPCA && diaUtil && !isDataInicio && !isVencimentoDay) {
+    if (isMistaIPCA && diaUtil && !isDataInicio) {
       vnaAcumulado *= fatorIpcaDia;
     }
 
@@ -402,11 +405,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       // Antes o motor devolvia 1.000,00 nas quatro e jogava a correcao fora.
       precoUnitario = puDepoisDoCupom;
     } else {
-      // No vencimento o multiplicador do dia e zero (ver acima), inclusive na trilha que
-      // usa `rawMultiplicador` direto.
-      const puMult = isVencimentoDay
-        ? 0
-        : (isMistaCDI || isMistaIPCA || isPosFixadoCDI) ? dailyMult : rawMultiplicador;
+      const puMult = (isMistaCDI || isMistaIPCA || isPosFixadoCDI) ? dailyMult : rawMultiplicador;
       precoUnitario = prevPrecoUnitario * puMult + prevPrecoUnitario;
     }
 
@@ -463,7 +462,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     //   IPCA+4,00% anual     -> Gorila 20.890,83, nosso 20.002,16
     //
     // O PU ja batia no centavo nos tres; a diferenca inteira estava na quantidade.
-    const baseCorrigida = isMistaIPCA && diaUtil && !isDataInicio && !isVencimentoDay
+    const baseCorrigida = isMistaIPCA && diaUtil && !isDataInicio
       ? prevBaseEconomica * fatorIpcaDia
       : prevBaseEconomica;
 

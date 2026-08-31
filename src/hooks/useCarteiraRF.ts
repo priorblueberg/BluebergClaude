@@ -107,18 +107,28 @@ export function useCarteiraRF() {
     if (_cartRFCachedVersion === appliedVersion) return;
     (async () => {
       setLoading(true);
-      const [{ data: cartData }, { data: custodiaData }] = await Promise.all([
+      const [{ data: todasCarteiras }, { data: custodiaData }] = await Promise.all([
         supabase
           .from("controle_de_carteiras")
           .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
-          .eq("nome_carteira", "Renda Fixa")
-          .eq("user_id", user.id)
-          .maybeSingle(),
+          .eq("user_id", user.id),
         supabase
           .from("custodia")
           .select("id, codigo_custodia, nome, data_inicio, data_calculo, data_limite, taxa, modalidade, preco_unitario, resgate_total, pagamento, vencimento, indexador, valor_investido, estrategia, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome)")
           .eq("user_id", user.id),
       ]);
+
+      const cartData = (todasCarteiras || []).find((c: any) => c.nome_carteira === "Renda Fixa") ?? null;
+
+      // Series de mercado: o dashboard consolidado roda sobre a carteira "Investimentos",
+      // que comeca ANTES da renda fixa (os fundos nasceram primeiro). Buscar o CDI so a
+      // partir do inicio da renda fixa deixava o benchmark consolidado curto - dois dias
+      // uteis a menos, 38,16% no lugar de 38,28% do Gorila em 24/08/2026. Quem recorta a
+      // janela de cada lamina e o consumidor da serie, nao a busca.
+      const dataInicioMercado = (todasCarteiras || [])
+        .map((c: any) => c.data_inicio)
+        .filter(Boolean)
+        .sort()[0] ?? null;
 
       // Store all custodia for category allocation (active, no resgate_total)
       setAllCustodiaForCategoria((custodiaData || [])
@@ -185,6 +195,7 @@ export function useCarteiraRF() {
 
       const dataInicio = cartData.data_inicio;
       const dataCalculo = cartData.data_calculo;
+      const pisoSeries = dataInicioMercado && dataInicioMercado < dataInicio ? dataInicioMercado : dataInicio;
 
       const maxEndDate = rfProducts.reduce((max, p) => {
         const end = p.resgate_total || p.vencimento || dataCalculo;
@@ -198,13 +209,13 @@ export function useCarteiraRF() {
       // das 1000 linhas por requisicao do PostgREST, que corta em silencio.
       const [calRes, cdiRes, ibovRes, selicRes, trRes, poupRendRes] = await Promise.all([
         fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data").range(de, ate))
+          .gte("data", getDateMinus(pisoSeries, 5)).lte("data", maxEndDate).order("data").range(de, ate))
           .then((data) => ({ data })),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate))
+          .gte("data", pisoSeries).lte("data", dataCalculo).order("data").range(de, ate))
           .then((data) => ({ data })),
         fetchAllRows((de, ate) => supabase.from("historico_ibovespa").select("data, pontos")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate))
+          .gte("data", pisoSeries).lte("data", dataCalculo).order("data").range(de, ate))
           .then((data) => ({ data })),
         poupancaCodigos.length > 0
           ? supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data")

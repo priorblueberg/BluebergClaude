@@ -167,9 +167,12 @@ export function buildPrefixadoRentabilidadeRows(
 export function buildCdiSeries(cdiRecords: CdiRecord[], dataInicio: string, dataCalculo?: string): ChartPoint[] {
   if (cdiRecords.length === 0) return [];
 
-  const filtered = dataCalculo
-    ? cdiRecords.filter(r => r.data <= dataCalculo)
-    : cdiRecords;
+  // A serie de CDI e buscada uma vez so, na janela mais larga entre as carteiras. O
+  // recorte tem de ser pelos DOIS lados: sem o piso, uma lamina que comeca depois herda os
+  // dias de quem comecou antes. O benchmark, ao contrario do produto, RENDE o dia inicial.
+  const filtered = cdiRecords.filter(
+    r => r.data >= dataInicio && (!dataCalculo || r.data <= dataCalculo)
+  );
 
   if (filtered.length === 0) return [];
 
@@ -210,9 +213,12 @@ export function buildRentabilidadeRows(
 ): RentabilidadeRow[] {
   if (cdiRecords.length === 0) return [];
 
-  const filtered = dataCalculo
-    ? cdiRecords.filter(r => r.data <= dataCalculo)
-    : cdiRecords;
+  // A serie de CDI e buscada uma vez so, na janela mais larga entre as carteiras. O
+  // recorte tem de ser pelos DOIS lados: sem o piso, uma lamina que comeca depois herda os
+  // dias de quem comecou antes. O benchmark, ao contrario do produto, RENDE o dia inicial.
+  const filtered = cdiRecords.filter(
+    r => r.data >= dataInicio && (!dataCalculo || r.data <= dataCalculo)
+  );
 
   if (filtered.length === 0) return [];
 

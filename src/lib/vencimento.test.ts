@@ -2,17 +2,20 @@ import { describe, it, expect } from "vitest";
 import { calcularRendaFixaDiario } from "./rendaFixaEngine";
 
 /**
- * No VENCIMENTO o papel nao rende o proprio dia: quando o dia comeca o preco ja esta no
- * par. Venda antecipada, ao contrario, INCLUI o dia em que ocorre.
+ * O VENCIMENTO rende o proprio dia, como qualquer dia util. Venda antecipada tambem.
  *
- * Medido no Gorila em 31/08/2026 sobre dois CDBs de IPCA que venceram dentro da janela
- * observada. O valor entregue no vencimento e, no centavo, o do dia util ANTERIOR:
+ * O que confunde: o Gorila para de publicar preco no vencimento. Pedindo a posicao do CDB
+ * IPCA+3,80% venc. 15/06/2026 (10 cotas) com endDate variavel, em 31/08/2026:
  *
- *   IPCA+3,80% venc. 15/06/2026 (seg) -> 1080,4422 = o nosso valor de 12/06 (sex)
- *   IPCA+4,90% venc. 31/03/2026 (ter) -> 1119,2972 = o nosso valor de 30/03 (seg)
+ *   12/06  q=10  pu=1080,4422  mv=10.804,42  pnl=804,42
+ *   15/06  q= 0  pu=1080,4422  mv=     0,00  pnl=809,15   <- +4,73 = 1 dia util
  *
- * E a mesma convencao ja levantada no prefixado. Os testes abaixo usam prefixado porque
- * ele nao depende de serie de indice: a regra mora no motor, nao no indexador.
+ * A posicao ja nasce zerada no dia do vencimento e o `currentPrice` fica congelado no do
+ * dia anterior. Ler esse preco congelado como "valor resgatado" foi o erro que deixou os
+ * oito papeis vencidos da carteira de teste R$ 50,41 curtos, um dia util cada.
+ *
+ * Os testes abaixo usam prefixado porque ele nao depende de serie de indice: a regra mora
+ * no motor, nao no indexador.
  */
 
 function calendario(de: string, ate: string) {
@@ -41,16 +44,17 @@ function serie(vencimento: string, dataCalculo: string) {
 }
 
 describe("convencao do vencimento", () => {
-  it("no vencimento o PU nao anda: fica igual ao do dia util anterior", () => {
+  it("no vencimento o papel rende o proprio dia", () => {
     const m = serie("2025-03-14", "2025-03-14");
     const anterior = m.get("2025-03-13")!.puJurosPeriodicos;
     const noVencimento = m.get("2025-03-14")!.puJurosPeriodicos;
-    expect(noVencimento).toBeCloseTo(anterior, 8);
+    expect(noVencimento / anterior).toBeCloseTo(Math.pow(1.12, 1 / 252), 10);
   });
 
-  it("vencimento na segunda: iguala a sexta, sem render o fim de semana nem o proprio dia", () => {
+  it("vencimento na segunda: rende so a segunda, o fim de semana nao conta", () => {
     const m = serie("2025-03-17", "2025-03-17");
-    expect(m.get("2025-03-17")!.puJurosPeriodicos).toBeCloseTo(m.get("2025-03-14")!.puJurosPeriodicos, 8);
+    const sexta = m.get("2025-03-14")!.puJurosPeriodicos;
+    expect(m.get("2025-03-17")!.puJurosPeriodicos / sexta).toBeCloseTo(Math.pow(1.12, 1 / 252), 10);
   });
 
   it("dia util comum continua rendendo: a regra e so do vencimento", () => {
