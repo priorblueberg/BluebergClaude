@@ -339,6 +339,19 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       dailyMult = diaUtil ? rawMultiplicador : 0;
     }
 
+    // No VENCIMENTO o papel nao rende o proprio dia: o preco ja esta no par quando o dia
+    // comeca. Venda antecipada, ao contrario, INCLUI o dia em que ocorre.
+    //
+    // Medido no Gorila em 31/08/2026, em dois CDBs de IPCA que venceram dentro da janela
+    // observada. O valor entregue no vencimento e, no centavo, o do dia util ANTERIOR:
+    //
+    //   IPCA+3,80% venc. 15/06/2026 -> Gorila 1080,4422 = nosso valor de 12/06 (sexta)
+    //   IPCA+4,90% venc. 31/03/2026 -> Gorila 1119,2972 = nosso valor de 30/03 (segunda)
+    //
+    // E a mesma convencao ja levantada no prefixado; nunca tinha sido exercitada no IPCA
+    // porque nenhum papel de teste vencia dentro do periodo medido.
+    if (isVencimentoDay) dailyMult = 0;
+
     const mov = movMap.get(cal.data) || { aplicacoes: 0, resgates: 0 };
     const aplicacoes = mov.aplicacoes;
     const manualResgates = mov.resgates;
@@ -367,7 +380,11 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       // Reset to initial PU on payment days (including "No Vencimento" final day)
       precoUnitario = puInicialCustodia;
     } else {
-      const puMult = (isMistaCDI || isMistaIPCA || isPosFixadoCDI) ? dailyMult : rawMultiplicador;
+      // No vencimento o multiplicador do dia e zero (ver acima), inclusive na trilha que
+      // usa `rawMultiplicador` direto.
+      const puMult = isVencimentoDay
+        ? 0
+        : (isMistaCDI || isMistaIPCA || isPosFixadoCDI) ? dailyMult : rawMultiplicador;
       precoUnitario = prevPrecoUnitario * puMult + prevPrecoUnitario;
     }
 
