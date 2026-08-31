@@ -181,23 +181,35 @@ function gerarAniversarios(
  */
 
 /**
- * Abertura do ciclo em que o papel NASCE (a compra caiu no meio do ciclo): o Gorila
- * empurra a abertura para o proximo dia util quando ela cai em SABADO ou DOMINGO, e nao
- * empurra quando cai em feriado. Medido nos 9 papeis comprados em 02/01/2025, cujos
- * ciclos de nascimento abrem em dezembro/2024:
+ * No ciclo em que o papel NASCE (a compra caiu no meio dele), quando a compra esta num MES
+ * POSTERIOR ao da abertura o Gorila empurra AS DUAS PONTAS do ciclo para o proximo dia
+ * util. Se a compra e no mesmo mes da abertura, nada anda.
  *
- *   08/12 dom -> dut 20 (a janela nominal tem 21)   25/12 feriado -> dut 21 = a nominal
- *   15/12 dom -> dut 20                             20/12, 27/12, 30/12, 31/12 uteis -> nominal
- *   28/12 sab -> dut 20
- *   29/12 dom -> dut 21 (a nominal tem 22)
+ * O detalhe que custou caro: quando as duas pontas caem em dia nao util os dois
+ * deslocamentos se cancelam e o `dut` volta a ser o da janela nominal. Fevereiro e onde
+ * isso mais aparece, porque com 28 dias o mesmo dia do mes cai no MESMO dia da semana no
+ * mes seguinte:
  *
- * 9/9. A distincao entre fim de semana e feriado e a assinatura de um codigo que rola o
- * fim de semana pelo dia da semana e so usa o calendario de feriados para contar.
- * Nos ciclos seguintes essa rolagem nao acontece - la vale `corteInicio`.
+ *   abre 15/02/2025 sab -> fecha 15/03/2025 sab -> dut 18 = a janela nominal
+ *   abre 22/02/2025 sab -> fecha 22/03/2025 sab -> dut 18 = a janela nominal
+ *   abre 13/09/2025 sab -> fecha 13/10/2025 seg -> dut 20, a janela tem 21
+ *
+ * Que a data da COMPRA entre no divisor e estranho - o `dut` deveria ser propriedade do
+ * papel - mas esta medido em duas duplas independentes, dois papeis com o mesmo ciclo e
+ * duts diferentes so porque foram comprados em meses diferentes:
+ *
+ *   abre 13/09/2025, compra 16/09 -> dut 21     abre 21/04/2025, compra 23/04 -> dut 21
+ *   abre 13/09/2025, compra 06/10 -> dut 20     abre 21/04/2025, compra 05/05 -> dut 20
+ *
+ * 44 ciclos de nascimento medidos, 36 na amostra que gerou a regra e 8 cadastrados depois
+ * para conferir a previsao. 44/44. Cobre abertura em sabado, domingo e cinco feriados
+ * diferentes, fechamento em dia util e nao util, compra no mesmo mes e no mes seguinte.
+ *
+ * Uma versao anterior desta funcao dizia que fim de semana desloca e feriado nao. Era
+ * artefato: os 9 papeis que a geraram tinham todos a compra no mesmo mes.
  */
-function corteInicioNascimento(data: string, proximoUtil: (d: string) => string): string {
-  const diaDaSemana = new Date(`${data}T00:00:00Z`).getUTCDay();
-  return diaDaSemana === 0 || diaDaSemana === 6 ? proximoUtil(data) : data;
+function compraEmMesPosterior(aberturaDoCiclo: string, dataDaCompra: string): boolean {
+  return dataDaCompra.slice(0, 7) > aberturaDoCiclo.slice(0, 7);
 }
 
 /** Abertura do ciclo: adia so quando o proximo dia util cai em outro mes. 41/41. */
@@ -305,14 +317,17 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     // que recebem o fator, nao. No ciclo em que o papel nasce em cima do aniversario o
     // fechamento nao anda: nao ha ciclo anterior para emendar.
     const cicloDaCompra = dataInicio != null && inicio.data === dataInicio;
-    const cicloDeNascimento =
-      dataInicio != null && inicio.data <= dataInicio && dataInicio <= fim;
-    const abre = cicloDeNascimento
-      ? corteInicioNascimento(inicio.data, proximoUtil)
+    const nasceEmMesAnterior =
+      dataInicio != null && inicio.data <= dataInicio && dataInicio <= fim &&
+      compraEmMesPosterior(inicio.data, dataInicio);
+    const abre = nasceEmMesAnterior
+      ? proximoUtil(inicio.data)
       : corteInicio(inicio.data, ehDiaUtil, proximoUtil);
-    const fecha = cicloDaCompra
-      ? fim
-      : corteFim(fim, inicio.data, ehDiaUtil, proximoUtil, haUtilDepoisNoMes);
+    const fecha = nasceEmMesAnterior
+      ? proximoUtil(fim)
+      : cicloDaCompra
+        ? fim
+        : corteFim(fim, inicio.data, ehDiaUtil, proximoUtil, haUtilDepoisNoMes);
     const dut = diasUteis.filter((d) => d > abre && d <= fecha).length;
     if (dut === 0) continue;
 
