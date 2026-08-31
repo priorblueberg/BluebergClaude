@@ -83,3 +83,55 @@ describe("convencao do vencimento", () => {
     expect(noResgate / anterior).toBeCloseTo(Math.pow(1.12, 1 / 252), 10);
   });
 });
+
+/**
+ * O cupom paga o JURO e devolve o preco unitario ao PRINCIPAL. Em prefixado e em CDI o
+ * principal e o par; no IPCA ele vem corrigido, e a correcao monetaria fica no papel.
+ *
+ * Medido no Gorila em 31/08/2026 em tres CDBs de IPCA com cupom. Nos seis pagamentos o PU
+ * logo apos o cupom e, no centavo, o VNA daquele dia. O teste abaixo usa um IPCA sintetico
+ * de 1% ao mes para nao depender da serie real: o que importa e que o piso do cupom ande
+ * junto com o indice, e nao fique preso em 1.000.
+ */
+describe("cupom em papel indexado ao IPCA", () => {
+  const INI = "2025-01-02", VENC = "2025-04-15";
+  const cal = calendario("2024-12-20", "2025-05-30");
+
+  /** 0,05% por dia util, aplicado todo dia util depois da emissao */
+  const fatores = new Map<string, number>();
+  for (const c of cal) if (c.dia_util && c.data > INI) fatores.set(c.data, 1.0005);
+
+  const rows: any[] = calcularRendaFixaDiario({
+    dataInicio: INI, dataCalculo: VENC, taxa: 6, modalidade: "Mista", puInicial: 1000,
+    calendario: cal, movimentacoes: [{ data: INI, tipo_movimentacao: "Aplicação Inicial", valor: 10000 }],
+    pagamento: "Mensal", vencimento: VENC, indexador: "IPCA", ipcaFatores: fatores,
+  });
+  const m = new Map(rows.map((r) => [r.data, r]));
+  const uteis = cal.filter((c) => c.dia_util).map((c) => c.data);
+  const vna = (ate: string) => 1000 * Math.pow(1.0005, uteis.filter((d) => d > INI && d <= ate).length);
+
+  it("no cupom o PU volta ao VNA corrigido, nao ao par", () => {
+    for (const cupom of ["2025-02-14", "2025-03-14"]) {
+      const pu = m.get(cupom)!.puJurosPeriodicos;
+      expect(pu).toBeCloseTo(vna(cupom), 6);
+      expect(pu).toBeGreaterThan(1000);
+    }
+  });
+
+  it("entre cupons o PU acumula indice e juro sobre o VNA do ultimo cupom", () => {
+    const base = m.get("2025-02-14")!.puJurosPeriodicos;
+    const depois = m.get("2025-02-21")!.puJurosPeriodicos;
+    const du = uteis.filter((d) => d > "2025-02-14" && d <= "2025-02-21").length;
+    expect(depois).toBeCloseTo(base * Math.pow(1.0005, du) * Math.pow(1.06, du / 252), 6);
+  });
+
+  it("sem indexador de correcao o cupom continua devolvendo ao par", () => {
+    const semIpca: any[] = calcularRendaFixaDiario({
+      dataInicio: INI, dataCalculo: VENC, taxa: 12, modalidade: "Prefixado", puInicial: 1000,
+      calendario: cal, movimentacoes: [{ data: INI, tipo_movimentacao: "Aplicação Inicial", valor: 10000 }],
+      pagamento: "Mensal", vencimento: VENC,
+    });
+    const mm = new Map(semIpca.map((r) => [r.data, r]));
+    expect(mm.get("2025-02-14")!.puJurosPeriodicos).toBeCloseTo(1000, 8);
+  });
+});

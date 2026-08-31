@@ -280,6 +280,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
   let cupomAcumuladoAcum = 0;
   let prevPrecoUnitario = puInicial > 0 ? puInicial : 1000;
   let prevPuJurosPeriodicos = puInicial > 0 ? puInicial : 1000;
+  let vnaAcumulado = puInicial > 0 ? puInicial : 1000;
   const puInicialCustodia = puInicial > 0 ? puInicial : 1000;
   const effectiveDataLimite = dataLimite || vencimento || null;
   let prevBaseEconomica = 0;
@@ -320,12 +321,12 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     const cdiDiarioVal = diaUtil && cdiAnual > 0 ? calcCdiDiario(cdiAnual) : prevCdiDiarioVal;
 
     // Multiplicador
+    const fatorIpcaDia = isMistaIPCA ? (ipcaFatores?.get(cal.data) ?? 1) : 1;
     let dailyMult: number;
     if (isMistaIPCA) {
       // (1 + IPCA do dia) * (1 + spread)^(1/252) - 1. Diferente do CDI, o fator do
       // IPCA e do proprio dia: nao ha defasagem de um dia, porque a variacao do ciclo
       // ja e conhecida quando o ciclo comeca.
-      const fatorIpcaDia = ipcaFatores?.get(cal.data) ?? 1;
       dailyMult = diaUtil ? fatorIpcaDia * mistaSpreadFactor - 1 : 0;
     } else if (isMistaCDI) {
       // Mista: (1 + CDI Diário anterior) * (1 + Taxa)^(1/252) - 1
@@ -352,6 +353,13 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     // porque nenhum papel de teste vencia dentro do periodo medido.
     if (isVencimentoDay) dailyMult = 0;
 
+    // VNA: o principal corrigido pelo indice, SEM o juro. So faz sentido no IPCA, o unico
+    // indexador em que o principal e corrigido. E o valor para o qual o PU volta quando o
+    // papel paga cupom - ver o bloco do `puJurosPeriodicos` mais abaixo.
+    if (isMistaIPCA && diaUtil && !isDataInicio && !isVencimentoDay) {
+      vnaAcumulado *= fatorIpcaDia;
+    }
+
     const mov = movMap.get(cal.data) || { aplicacoes: 0, resgates: 0 };
     const aplicacoes = mov.aplicacoes;
     const manualResgates = mov.resgates;
@@ -369,6 +377,10 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     // Q: Is this a payment date?
     const isPagamento = datasPagamento.has(cal.data);
 
+    // Para onde o PU volta quando ha pagamento de juros: o principal. No IPCA o principal
+    // e o VNA corrigido; nos demais indexadores e o par.
+    const puDepoisDoCupom = isMistaIPCA ? vnaAcumulado : puInicialCustodia;
+
     // W: Preço Unitário — compute BEFORE jurosPago
     let precoUnitario: number;
     const isNoVencimentoFinal = pagamento === "No Vencimento" && isFinalDay;
@@ -377,8 +389,18 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     } else if (!diaUtil) {
       precoUnitario = prevPrecoUnitario;
     } else if (isPagamento || isNoVencimentoFinal) {
-      // Reset to initial PU on payment days (including "No Vencimento" final day)
-      precoUnitario = puInicialCustodia;
+      // O cupom paga o JURO e devolve o PU ao principal. Em prefixado e CDI o principal e
+      // o par; em IPCA ele vem corrigido, e a correcao monetaria FICA no papel.
+      //
+      // Medido no Gorila em 31/08/2026, CDB IPCA+5,00% semestral emitido em 02/01/2025 e
+      // vencendo em 15/01/2031. Nos quatro cupons o PU logo apos o pagamento e, no
+      // centavo, o VNA daquele dia:
+      //
+      //   15/01/2025 -> 1001,7530     15/01/2026 -> 1046,4490
+      //   15/07/2025 -> 1034,6103     15/07/2026 -> 1083,4927
+      //
+      // Antes o motor devolvia 1.000,00 nas quatro e jogava a correcao fora.
+      precoUnitario = puDepoisDoCupom;
     } else {
       // No vencimento o multiplicador do dia e zero (ver acima), inclusive na trilha que
       // usa `rawMultiplicador` direto.
@@ -552,7 +574,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     } else if (!diaUtil) {
       puJurosPeriodicos = prevPuJurosPeriodicos;
     } else if (isPagamento && effectiveDataLimite && cal.data !== effectiveDataLimite) {
-      puJurosPeriodicos = puInicialCustodia;
+      puJurosPeriodicos = puDepoisDoCupom;
     } else {
       puJurosPeriodicos = prevPuJurosPeriodicos * dailyMult + prevPuJurosPeriodicos;
     }
