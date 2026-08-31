@@ -135,3 +135,52 @@ describe("cupom em papel indexado ao IPCA", () => {
     expect(mm.get("2025-02-14")!.puJurosPeriodicos).toBeCloseTo(1000, 8);
   });
 });
+
+/**
+ * O cupom nao pode baixar COTAS. O Gorila mantem a quantidade fixa e deixa so o preco
+ * unitario cair no pagamento, entao o valor da posicao e sempre quantidade x PU.
+ *
+ * A causa do bug era a base economica: ela guardava o principal AO PAR (cotas x 1.000).
+ * Como o cupom e "valor acumulado menos principal", num papel de IPCA ele pagava tambem a
+ * correcao monetaria acumulada e derrubava a posicao. Medido no Gorila em 31/08/2026 nos
+ * tres CDBs de IPCA com cupom: IPCA+5,00% semestral valia 21.851,65 la e 20.167,78 aqui,
+ * com o PU identico ao centavo nos dois lados.
+ */
+describe("cupom nao consome cotas", () => {
+  const INI = "2025-01-02", VENC = "2025-04-15";
+  const cal = calendario("2024-12-20", "2025-05-30");
+  const fatores = new Map<string, number>();
+  for (const c of cal) if (c.dia_util && c.data > INI) fatores.set(c.data, 1.0005);
+
+  const rows: any[] = calcularRendaFixaDiario({
+    dataInicio: INI, dataCalculo: "2025-04-14", taxa: 6, modalidade: "Mista", puInicial: 1000,
+    calendario: cal, movimentacoes: [{ data: INI, tipo_movimentacao: "Aplicação Inicial", valor: 10000 }],
+    pagamento: "Mensal", vencimento: VENC, indexador: "IPCA", ipcaFatores: fatores,
+  });
+  const m = new Map(rows.map((r) => [r.data, r]));
+
+  it("depois de tres cupons a posicao ainda vale 10 cotas vezes o PU", () => {
+    const r = m.get("2025-04-14")!;
+    expect(r.liquido).toBeCloseTo(10 * r.puJurosPeriodicos, 4);
+  });
+
+  it("o cupom paga so o juro: o principal corrigido fica no papel", () => {
+    const cupom = m.get("2025-02-14")!;
+    const vespera = m.get("2025-02-13")!;
+    // o que saiu e a queda do PU vezes as cotas, nada alem disso
+    expect(cupom.jurosPago).toBeCloseTo(10 * (vespera.puJurosPeriodicos * 1.0005 * Math.pow(1.06, 1 / 252) - cupom.puJurosPeriodicos), 4);
+    expect(cupom.jurosPago).toBeGreaterThan(0);
+  });
+
+  it("sem indexador de correcao o comportamento nao muda", () => {
+    const pre: any[] = calcularRendaFixaDiario({
+      dataInicio: INI, dataCalculo: "2025-04-14", taxa: 12, modalidade: "Prefixado", puInicial: 1000,
+      calendario: cal, movimentacoes: [{ data: INI, tipo_movimentacao: "Aplicação Inicial", valor: 10000 }],
+      pagamento: "Mensal", vencimento: VENC,
+    });
+    const mm = new Map(pre.map((r) => [r.data, r]));
+    const r = mm.get("2025-04-14")!;
+    expect(r.liquido).toBeCloseTo(10 * r.puJurosPeriodicos, 4);
+    expect(mm.get("2025-02-14")!.puJurosPeriodicos).toBeCloseTo(1000, 8);
+  });
+});

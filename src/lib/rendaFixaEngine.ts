@@ -444,11 +444,31 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     // X: Quantidade Aplicação = Aplicações / Preço Unitário
     const qtdAplicacaoPU = precoUnitario > 0 && aplicacoes > 0 ? aplicacoes / precoUnitario : 0;
 
-    // Aplicação Ex Cupom = qtdAplicacaoPU * puInicialCustodia
-    const aplicacaoExCupom = qtdAplicacaoPU * puInicialCustodia;
+    // Aplicação Ex Cupom: o PRINCIPAL que entrou, na mesma regua da base economica. Em
+    // prefixado e CDI o principal e o par; no IPCA ele vem corrigido, entao a regua e o VNA.
+    const aplicacaoExCupom = isMistaIPCA
+      ? (precoUnitario > 0 ? aplicacoes * (vnaAcumulado / precoUnitario) : aplicacoes)
+      : qtdAplicacaoPU * puInicialCustodia;
+
+    // A base economica e o principal do papel. No IPCA ela e corrigida todo dia util pelo
+    // indice, senao o cupom - que e "valor acumulado menos principal" - paga tambem a
+    // correcao monetaria e derruba a posicao.
+    //
+    // Medido no Gorila em 31/08/2026 nos tres CDBs de IPCA com cupom: ele mantem a
+    // QUANTIDADE fixa e deixa so o PU cair no pagamento, entao o valor da posicao e sempre
+    // quantidade x PU. Antes desta correcao o nosso motor baixava cotas no cupom:
+    //
+    //   IPCA+5,00% semestral -> Gorila 21.851,65 (20 cotas), nosso 20.167,78 (18,46 cotas)
+    //   IPCA+6,00% semestral -> Gorila 21.384,48, nosso 20.484,89
+    //   IPCA+4,00% anual     -> Gorila 20.890,83, nosso 20.002,16
+    //
+    // O PU ja batia no centavo nos tres; a diferenca inteira estava na quantidade.
+    const baseCorrigida = isMistaIPCA && diaUtil && !isDataInicio && !isVencimentoDay
+      ? prevBaseEconomica * fatorIpcaDia
+      : prevBaseEconomica;
 
     // Temp Base Econômica (before resgate ex cupom)
-    const tempBaseEconomica = prevBaseEconomica + aplicacaoExCupom;
+    const tempBaseEconomica = baseCorrigida + aplicacaoExCupom;
 
     // T: Juros Pago — now uses baseEconômica instead of valorInvestido
     let jurosPago: number;
