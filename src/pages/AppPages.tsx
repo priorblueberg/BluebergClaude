@@ -8,6 +8,7 @@ import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
 import { useCarteiraMoedas } from "@/hooks/useCarteiraMoedas";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { buildCdiSeries } from "@/lib/cdiCalculations";
+import { ancorarNoMercado, carregarHorizonteDeMercado } from "@/lib/horizonteDeMercado";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
@@ -272,14 +273,17 @@ export const CarteiraVisaoGeral = () => {
     if (!user) return;
     (async () => {
       setInfoLoading(true);
-      const { data } = await supabase
-        .from("controle_de_carteiras")
-        .select("nome_carteira, status, data_inicio, data_calculo")
-        .eq("nome_carteira", "Investimentos")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      const [{ data }, horizonte] = await Promise.all([
+        supabase
+          .from("controle_de_carteiras")
+          .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
+          .eq("nome_carteira", "Investimentos")
+          .eq("user_id", user.id)
+          .maybeSingle(),
+        carregarHorizonteDeMercado(user.id),
+      ]);
 
-      setCarteiraInfo(data ?? null);
+      setCarteiraInfo(ancorarNoMercado(data as any, horizonte));
       setNotFound(!data);
       setInfoLoading(false);
     })();

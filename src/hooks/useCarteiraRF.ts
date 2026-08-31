@@ -16,6 +16,7 @@ import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFix
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { CdiRecord } from "@/lib/cdiCalculations";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { ancorarNoMercado, carregarHorizonteDeMercado } from "@/lib/horizonteDeMercado";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 
 export interface CarteiraInfo {
@@ -107,7 +108,7 @@ export function useCarteiraRF() {
     if (_cartRFCachedVersion === appliedVersion) return;
     (async () => {
       setLoading(true);
-      const [{ data: todasCarteiras }, { data: custodiaData }] = await Promise.all([
+      const [{ data: todasCarteiras }, { data: custodiaData }, horizonte] = await Promise.all([
         supabase
           .from("controle_de_carteiras")
           .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
@@ -116,9 +117,13 @@ export function useCarteiraRF() {
           .from("custodia")
           .select("id, codigo_custodia, nome, data_inicio, data_calculo, data_limite, taxa, modalidade, preco_unitario, resgate_total, pagamento, vencimento, indexador, valor_investido, estrategia, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome)")
           .eq("user_id", user.id),
+        carregarHorizonteDeMercado(user.id),
       ]);
 
-      const cartData = (todasCarteiras || []).find((c: any) => c.nome_carteira === "Renda Fixa") ?? null;
+      const cartData = ancorarNoMercado(
+        (todasCarteiras || []).find((c: any) => c.nome_carteira === "Renda Fixa") as any,
+        horizonte,
+      );
 
       // Series de mercado: o dashboard consolidado roda sobre a carteira "Investimentos",
       // que comeca ANTES da renda fixa (os fundos nasceram primeiro). Buscar o CDI so a

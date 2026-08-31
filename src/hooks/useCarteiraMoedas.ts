@@ -15,6 +15,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { CarteiraInfo, ProductListItem } from "@/hooks/useCarteiraRF";
+import { ancorarNoMercado, carregarHorizonteDeMercado } from "@/lib/horizonteDeMercado";
 
 export interface PosicaoMoeda {
   codigo_custodia: string;
@@ -62,7 +63,7 @@ export function useCarteiraMoedas() {
     (async () => {
       setLoading(true);
 
-      const [{ data: cartData }, { data: custodiaData }] = await Promise.all([
+      const [{ data: cartBruto }, { data: custodiaData }, horizonte] = await Promise.all([
         supabase
           .from("controle_de_carteiras")
           .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
@@ -74,7 +75,10 @@ export function useCarteiraMoedas() {
           .select("id, codigo_custodia, nome, moeda, data_inicio, data_calculo, resgate_total, valor_investido, instituicoes(nome)")
           .eq("user_id", user.id)
           .not("moeda", "is", null),
+        carregarHorizonteDeMercado(user.id),
       ]);
+
+      const cartData = ancorarNoMercado(cartBruto as any, horizonte);
 
       const posicoesCustodia = (custodiaData || []).map((r: any) => ({
         codigo_custodia: String(r.codigo_custodia),
