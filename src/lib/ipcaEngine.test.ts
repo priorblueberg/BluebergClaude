@@ -62,7 +62,36 @@ const COMPETENCIAS = [
 }));
 
 
-const PROJECAO = [{ competencia: "2026-08", variacao_projetada: -0.28 }];
+/**
+ * Projecoes ANBIMA, pela data de COLETA (a ANBIMA marca "validade" no dia util
+ * seguinte, mas o Gorila ja usa a projecao no dia da coleta - ver secao 22 do vault).
+ * A coleta acontece duas vezes ao mes: na divulgacao do IPCA fechado, por volta do dia
+ * 10, e na do IPCA-15, por volta do dia 26.
+ */
+const PROJECAO = [
+  ["2024-11", 0.33, "2024-11-26"], ["2024-12", 0.54, "2024-12-27"],
+  ["2025-01", 0.16, "2025-01-24"], ["2025-02", 1.29, "2025-02-25"],
+  ["2025-03", 0.55, "2025-03-27"], ["2025-04", 0.42, "2025-04-25"],
+  ["2025-05", 0.34, "2025-05-27"], ["2025-06", 0.19, "2025-06-26"],
+  ["2025-07", 0.36, "2025-07-25"],
+  ["2025-08", -0.12, "2025-08-12"], ["2025-08", -0.13, "2025-08-26"],
+  ["2025-09", 0.61, "2025-09-10"], ["2025-09", 0.54, "2025-09-25"],
+  ["2025-10", 0.21, "2025-10-09"], ["2025-10", 0.15, "2025-10-24"],
+  ["2025-11", 0.23, "2025-11-11"], ["2025-11", 0.20, "2025-11-26"],
+  ["2025-12", 0.43, "2025-12-10"], ["2025-12", 0.34, "2025-12-23"],
+  ["2026-01", 0.36, "2026-01-09"], ["2026-01", 0.33, "2026-01-27"],
+  ["2026-02", 0.45, "2026-02-10"], ["2026-02", 0.64, "2026-02-27"],
+  ["2026-03", 0.30, "2026-03-12"], ["2026-03", 0.71, "2026-03-26"],
+  ["2026-04", 0.68, "2026-04-10"], ["2026-04", 0.67, "2026-04-28"],
+  ["2026-05", 0.50, "2026-05-12"], ["2026-05", 0.50, "2026-05-27"],
+  ["2026-06", 0.34, "2026-06-12"], ["2026-06", 0.33, "2026-06-25"],
+  ["2026-07", 0.23, "2026-07-10"], ["2026-07", 0.05, "2026-07-28"],
+  ["2026-08", -0.20, "2026-08-11"], ["2026-08", -0.28, "2026-08-26"],
+].map(([competencia, variacao_projetada, data_referencia]) => ({
+  competencia: competencia as string,
+  variacao_projetada: variacao_projetada as number,
+  data_referencia: data_referencia as string,
+}));
 
 const CAL = calendario("2024-11-01", "2026-10-31");
 const DIAS_UTEIS = CAL.filter((c) => c.dia_util).map((c) => c.data);
@@ -154,7 +183,7 @@ describe("fator de IPCA na convencao do Gorila", () => {
    * juros. Seis papeis, cinco deles variando so o dia do vencimento (logo, a posicao
    * da compra dentro do ciclo inicial) e um comprado no proprio dia do aniversario.
    *
-   * Tres batem exato. Os tres que sobram sao o residuo conhecido: aniversario 8 e 15
+   * Cinco batem exato. Os que sobram sao o residuo conhecido: aniversario 8 e 15
    * (cujo aniversario de dezembro/2024 caiu num domingo) e o 31, que ainda esbarra
    * nos meses curtos. Ver a secao 15 de `_knowledge/ipca-metodologia-gorila.md`.
    */
@@ -181,7 +210,15 @@ describe("fator de IPCA na convencao do Gorila", () => {
       // 09/05: o de dia 8 comprou na vespera e corrige o primeiro ciclo; o de dia 15
       // comprou depois, com o indice ja publico, e nao corrige.
       [8,  "2025-05-08", 1056.560, 0.001],   // exato
-      [15, "2025-05-15", 1051.784, 0.10],
+      [15, "2025-05-15", 1051.784, 0.01],   // exato depois da projecao por dia
+      // Comprados em cima do aniversario de julho/2025, com junho ja divulgado desde
+      // 10/07: os tres ficam deslocados um mes.
+      [29, "2025-07-29", 1047.110, 0.20],
+      [30, "2025-07-30", 1047.197, 0.25],
+      [31, "2025-07-31", 1047.118, 0.20],
+      // Aniversario 11, comprado no proprio aniversario um dia DEPOIS de o IPCA de maio
+      // sair (10/06/2025): nao desloca, porque o corte e o dia 15.
+      [11, "2025-06-11", 1051.951, 0.01],   // exato
     ];
 
     it.each(CASOS)("vencimento dia %i comprado em %s", (dia, compra, alvo, folga) => {
@@ -194,10 +231,65 @@ describe("fator de IPCA na convencao do Gorila", () => {
       expect(vna(8, "2025-05-08", "2026-08-24")).toBeCloseTo(1056.560, 2);
     });
 
-    it("nao corrige o primeiro ciclo quando o indice ja era publico na compra", () => {
-      // Comprado em 15/05/2025, com o IPCA de abril divulgado desde 09/05. Sem a
-      // regra o erro seria de 4,60 no PU; com ela, 0,08.
-      expect(Math.abs(vna(15, "2025-05-15", "2026-08-24") - 1051.784)).toBeLessThan(0.1);
+    /**
+     * O corte do deslocamento e o DIA 15, nao a data de divulgacao do IPCA.
+     *
+     * Este papel foi cadastrado no Gorila em 30/08/2026 para separar as duas
+     * explicacoes: aniversario 11, comprado em 11/06/2025 - um dia depois de o IPCA de
+     * maio ser divulgado (10/06). Pela regra da divulgacao ele deveria deslocar; pela
+     * regra do dia 15, nao. Medido no Gorila em tres datas, e o Gorila nao deslocou.
+     */
+    it("nao desloca quando o aniversario e antes do dia 15", () => {
+      // 11/08/2025: dois ciclos cheios, maio (0,26%) e junho (0,24%). Com deslocamento
+      // seriam junho e julho - que dao quase o mesmo, entao esta data nao separa.
+      expect(vna(11, "2025-06-11", "2025-08-11") * 10).toBeCloseTo(10050.07, 2);
+      // 11/09/2025 separa: sem deslocamento 10.076,19, com deslocamento 10.038,99.
+      expect(vna(11, "2025-06-11", "2025-09-11") * 10).toBeCloseTo(10076.19, 2);
+      // e 14 meses depois continua batendo no centavo
+      expect(vna(11, "2025-06-11", "2026-08-24") * 10).toBeCloseTo(10519.51, 2);
+    });
+
+    /**
+     * A serie historica de um ciclo aberto segue a projecao ANBIMA vigente em cada dia,
+     * e o Gorila reprecifica o ciclo inteiro quando ela muda. Medido no Gorila em
+     * 30/08/2026 sobre o CDB de vencimento 15/12/2025 - o ponto que o Daniel achou
+     * investigando dia a dia. Ver a secao 22 do vault.
+     *
+     * Papel de aniversario 15 comprado em 15/05/2025: deslocado, entao o ciclo que
+     * comeca em 15/11/2025 carrega a competencia de novembro/2025.
+     */
+    it("segue a projecao vigente em cada dia do ciclo aberto", () => {
+      const fatores = construirFatoresIpcaDiarios({
+        diaAniversario: 15, calendario: CAL, competencias: COMPETENCIAS,
+        projecao: PROJECAO, dataInicio: "2025-05-15",
+      });
+      const doCiclo = DIAS_UTEIS.filter((d) => d > "2025-11-15" && d <= "2025-12-15");
+      const implicita = (ate: string) => {
+        const ate_ = doCiclo.filter((d) => d <= ate);
+        const acumulado = ate_.reduce((a, d) => a * (fatores.get(d) ?? 1), 1);
+        return (Math.pow(acumulado, doCiclo.length / ate_.length) - 1) * 100;
+      };
+      expect(implicita("2025-11-25")).toBeCloseTo(0.23, 3);   // projecao coletada em 11/11
+      expect(implicita("2025-11-26")).toBeCloseTo(0.20, 3);   // revisada no dia do IPCA-15
+      expect(implicita("2025-12-09")).toBeCloseTo(0.20, 3);   // vespera do IPCA fechado
+      expect(implicita("2025-12-12")).toBeCloseTo(0.18, 3);   // oficial, divulgado em 10/12
+    });
+
+    /**
+     * O teste que fixa a regra do deslocamento. Em 29/08/2025, um mes depois da
+     * compra, os tres papeis comprados em 29, 30 e 31 de julho de 2025 marcam
+     * 1.002,599 no Gorila - a variacao de JULHO cheia (0,2599%). A convencao normal
+     * (mes M-1) daria a de junho, 0,2400%, ou seja 1.002,400.
+     */
+    it("desloca um mes quando a compra cai num aniversario ja divulgado", () => {
+      for (const [dia, compra] of [[29, "2025-07-29"], [30, "2025-07-30"], [31, "2025-07-31"]] as const) {
+        expect(vna(dia, compra, "2025-08-29")).toBeCloseTo(1002.599, 2);
+      }
+      // 30/08/2025 e sabado e 31/08/2025 e domingo. Os tres so batem cheio porque o
+      // aniversario que fecha o ciclo da compra nao adia (secao 31 do vault).
+      // e os que compraram na vespera da divulgacao seguem na convencao normal
+      expect(vna(8, "2025-05-08", "2025-08-29")).toBeCloseTo(1011.202, 2);
+      expect(vna(10, "2025-02-10", "2025-08-29")).toBeCloseTo(1031.669, 2);
     });
   });
 });

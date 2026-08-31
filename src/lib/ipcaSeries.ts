@@ -27,19 +27,21 @@ export async function carregarSeriesIpca() {
       .range(de, ate)),
     fetchAllRows((de, ate) => supabase
       .from("historico_ipca_projecao")
-      .select("competencia, variacao_projetada, data_referencia")
-      .order("data_referencia")
+      .select("competencia, variacao_projetada, data_referencia, data_coleta")
+      .order("competencia")
       .range(de, ate)),
   ]);
 
-  // Da projecao vale a leitura mais recente de cada competencia.
-  const maisRecente = new Map<string, IpcaProjecao>();
-  for (const p of (proj as any[])) {
-    maisRecente.set(p.competencia, {
-      competencia: p.competencia,
-      variacao_projetada: Number(p.variacao_projetada),
-    });
-  }
+  // Todas as leituras entram, com a data em que passaram a vigorar: o motor escolhe a
+  // que valia em cada dia. A ANBIMA revisa a projecao na saida do IPCA-15 (por volta do
+  // dia 26) e o Gorila reprecifica o ciclo corrente na hora - ver a secao 21 do vault.
+  const leituras: IpcaProjecao[] = (proj as any[]).map((p) => ({
+    competencia: p.competencia,
+    variacao_projetada: Number(p.variacao_projetada),
+    // A data de COLETA, nao a de validade: a ANBIMA marca validade no dia util
+    // seguinte, mas o Gorila ja usa a projecao no dia em que ela foi coletada.
+    data_referencia: p.data_coleta ?? p.data_referencia ?? null,
+  }));
 
   _cache = {
     competencias: (comp as any[]).map((c) => ({
@@ -48,7 +50,7 @@ export async function carregarSeriesIpca() {
       variacao_mensal: c.variacao_mensal == null ? null : Number(c.variacao_mensal),
       data_publicacao: c.data_publicacao ?? null,
     })),
-    projecao: [...maisRecente.values()],
+    projecao: leituras,
   };
   return _cache;
 }
