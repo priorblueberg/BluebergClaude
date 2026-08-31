@@ -125,95 +125,27 @@ function montarProjecoes(
   return out;
 }
 
-/**
- * A partir deste dia do mes o papel segue a convencao de fim de mes: o aniversario que
- * cai em dia nao util e adiado. Sao os dias que podem nao existir no mes.
- */
-const DIA_DE_FIM_DE_MES = 28;
-
 function ultimoDiaDoMes(ano: number, mes: number): number {
   return new Date(Date.UTC(ano, mes, 0)).getUTCDate();
 }
 
 /**
- * Datas de aniversario que cobrem o calendario: o dia do vencimento em cada mes. Meses
- * mais curtos que o dia do vencimento usam o ultimo dia do mes (um papel que vence dia
- * 31 faz aniversario em 28 de fevereiro).
+ * Datas de aniversario NOMINAIS: o dia do vencimento em cada mes, sem adiar para dia
+ * util. Meses mais curtos que o dia do vencimento usam o ultimo dia do mes (um papel
+ * que vence dia 31 faz aniversario em 28 de fevereiro).
  *
- * A data e NOMINAL - nao se adia para dia util - EXCETO para os papeis cujo dia de
- * vencimento e 28, 29, 30 ou 31. Nesses, o aniversario que cai em dia nao util vai para o
- * proximo dia util, e isso encurta o `dut` do ciclo que termina nele. A competencia
- * continua sendo a do mes nominal, mesmo quando a data escorrega para o mes seguinte.
- *
- * Sao justamente os dias que podem SER o ultimo dia do mes - 28 e o menor deles, por
- * causa de fevereiro. E a convencao de fim de mes que o mercado usa para papeis com
- * vencimento na virada. Medido no Gorila em
- * 30/08/2026 sobre 14 CDB IPCA+0%:
- *
- *   dia 29: 29/12/2024 (domingo) -> 30/12. O ciclo tem 21 dias uteis, nao 22. Em
- *   28/02/2025 o Gorila marca R$ 10.087,46; com dut 21 da 10.087,46, com dut 22 da
- *   10.085,85.
- *
- *   dia 29 e 30: 29/03/2025 (sabado) e 30/03/2025 (domingo) -> 31/03. Em 28/03/2025 o
- *   Gorila marca 10.102,75 e 10.102,92; sem adiar dariam 10.103,60 e 10.103,77.
- *
- *   dia 31: 31/05/2025 (sabado) -> 02/06. Em 30/05/2025 o Gorila marca R$ 10.292,67,
- *   que e 0,56%^(21/22); com a data nominal daria 10.295,28.
- *
- * E os papeis de dia 8, 10, 15, 20 e 25 NAO adiam - batem no centavo com a data nominal
- * mesmo quando o aniversario cai em fim de semana (20/04/2025 e 25/05/2025 sao
- * domingos). Adiar esses quebra oito casos que hoje sao exatos.
- *
- * O corte foi medido pelos dois lados, com papeis de vencimento 27/04/2029 e
- * 28/04/2029 comprados em 02/01/2025:
- *
- *   dia 27 NAO adia: 27/04/2025 e domingo e em 25/04/2025 o Gorila marca R$ 10.233,78,
- *   o valor sem adiamento (adiando daria 10.227,12).
- *
- *   dia 28 ADIA: 28/06/2025 e sabado e em 29/08/2025 o Gorila marca R$ 10.390,40,
- *   contra 10.390,34 adiando e 10.388,67 sem adiar.
- *
- * O mes do vencimento nao entra: dois papeis de vencimento 29/04/2029 e 29/09/2029,
- * comprados no mesmo dia, marcam exatamente o mesmo valor no Gorila.
- *
- * Sobre as 66 medicoes, esta regra tem a menor soma de erros (45,15 contra 49,21 da
- * regra do fim de mes e 63,57 de nunca adiar) e o maior numero de pontos exatos (22).
- * Ver as secoes 24 a 28 de `_knowledge/ipca-metodologia-gorila.md`.
+ * Nao ha adiamento. A versao anterior adiava o aniversario de papeis com vencimento do
+ * dia 28 em diante, o que era um artefato: a regra tinha sido inferida de medicoes onde
+ * compensava a contagem errada da janela (ver `janelaIncluiOAniversario`). Com a janela
+ * certa, o adiamento some.
  */
 function gerarAniversarios(
   dia: number,
-  diasUteis: string[],
-  dataInicio?: string | null
+  diasUteis: string[]
 ): { data: string; competencia: string }[] {
   if (diasUteis.length === 0) return [];
   const primeiro = diasUteis[0];
   const ultimo = diasUteis[diasUteis.length - 1];
-  const ehUtil = new Set(diasUteis);
-
-  /**
-   * Quando a compra cai em cima de um aniversario, o aniversario que FECHA esse
-   * primeiro ciclo nao adia. Medido no CDB de vencimento 31/10/2029, comprado em
-   * 31/07/2025: 31/08/2025 e domingo, e mesmo assim em 29/08/2025 o Gorila marca
-   * R$ 10.025,99, o fator de julho cheio - o que so acontece sem adiamento. Em
-   * 01/09/2025 ele marca 10.025,37, contra 10.025,40 sem adiar e 10.025,99 adiando.
-   * Ja os aniversarios seguintes do mesmo papel adiam normalmente (31/01/2026 e
-   * 28/02/2026, ambos sabados). O papel de vencimento 31/03/2029, comprado em
-   * 02/01/2025 - fora de aniversario -, adia esse mesmo 31/08/2025.
-   *
-   * A regra e empirica: reduz a soma dos erros nos tres papeis deslocados de 16,15
-   * para 13,25 e nao piora nenhum ponto, mas nao temos uma leitura de mercado que a
-   * explique. Nao muda o valor de hoje, so a serie dos primeiros meses.
-   */
-  let semAdiamento: string | null = null;
-  if (dataInicio) {
-    const a0 = Number(dataInicio.slice(0, 4)), m0 = Number(dataInicio.slice(5, 7));
-    const nominal0 = `${a0}-${String(m0).padStart(2, "0")}-${String(Math.min(dia, ultimoDiaDoMes(a0, m0))).padStart(2, "0")}`;
-    if (nominal0 === dataInicio) {
-      let a1 = a0, m1 = m0 + 1;
-      if (m1 === 13) { m1 = 1; a1 += 1; }
-      semAdiamento = `${a1}-${String(m1).padStart(2, "0")}-${String(Math.min(dia, ultimoDiaDoMes(a1, m1))).padStart(2, "0")}`;
-    }
-  }
 
   let ano = Number(primeiro.slice(0, 4));
   let mes = Number(primeiro.slice(5, 7)) - 1; // comeca um mes antes para cobrir a ponta
@@ -222,12 +154,7 @@ function gerarAniversarios(
   const out: { data: string; competencia: string }[] = [];
   for (let i = 0; i < 480; i++) {
     const diaEfetivo = Math.min(dia, ultimoDiaDoMes(ano, mes));
-    let iso = `${ano}-${String(mes).padStart(2, "0")}-${String(diaEfetivo).padStart(2, "0")}`;
-    if (dia >= DIA_DE_FIM_DE_MES && iso !== semAdiamento) {
-      for (let k = 0; k < 15 && !ehUtil.has(iso); k++) {
-        iso = new Date(Date.parse(iso + "T00:00:00Z") + 86400000).toISOString().slice(0, 10);
-      }
-    }
+    const iso = `${ano}-${String(mes).padStart(2, "0")}-${String(diaEfetivo).padStart(2, "0")}`;
     out.push({ data: iso, competencia: `${ano}-${String(mes).padStart(2, "0")}` });
     mes += 1;
     if (mes > 12) { mes = 1; ano += 1; }
@@ -237,9 +164,30 @@ function gerarAniversarios(
 }
 
 /**
- * Fator de IPCA por dia util. Dias nao uteis nao aparecem no mapa (o motor ja os
- * trata como dias sem rendimento).
+ * O `dut` (denominador do pro rata) inclui o dia do aniversario INICIAL quando o papel
+ * vence no dia 31 - o unico cujo aniversario e sempre o ultimo dia do mes. Nos demais o
+ * ciclo e simplesmente (aniversario, proximo aniversario].
+ *
+ * Medido no Gorila em 31/08/2026, invertendo o expoente de cada ciclo do CDB de
+ * vencimento 31/03/2029 a partir dos valores da tela:
+ *
+ *   ciclo 30/04/2025 a 31/05/2025 -> dut 22, e (30/04, 31/05] tem 21 dias uteis
+ *   ciclo 31/10/2025 a 30/11/2025 -> dut 20, e (31/10, 30/11] tem 19
+ *
+ * Os dois batem com [aniversario, proximo aniversario), que inclui o dia do aniversario
+ * inicial. O Daniel confirmou as duas janelas (22 e 20) na planilha dele, que fecha com
+ * o Gorila. Os dias que RECEBEM fator continuam sendo (aniversario, proximo] - os dois
+ * conjuntos so tem tamanhos diferentes quando um extremo e dia util e o outro nao.
+ *
+ * Aplicar isso a todos os papeis piora o conjunto; restrito ao dia 31, a soma dos erros
+ * sobre 85 medicoes cai de 54,09 para 37,19, o pior caso de 2,80 para 1,93, e os pontos
+ * exatos sobem de 28 para 43. A serie inteira do 31/03/2029 (23 datas, de janeiro/2025 a
+ * agosto/2026) passa a bater no centavo.
  */
+function janelaIncluiOAniversario(diaDoVencimento: number): boolean {
+  return diaDoVencimento === 31;
+}
+
 export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string, number> {
   const { diaAniversario, calendario, competencias, projecao, dataInicio } = input;
   const oficiais = montarOficiais(competencias);
@@ -270,7 +218,7 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     if (c.data_publicacao) publicacao.set(c.competencia, c.data_publicacao);
   }
   const diasUteis = calendario.filter((c) => c.dia_util).map((c) => c.data).sort();
-  const aniversarios = gerarAniversarios(diaAniversario, diasUteis, dataInicio);
+  const aniversarios = gerarAniversarios(diaAniversario, diasUteis);
 
   const out = new Map<string, number>();
   if (aniversarios.length < 2) return out;
@@ -301,14 +249,22 @@ export function construirFatoresIpcaDiarios(input: FatoresIpcaInput): Map<string
     // divisor do pro rata, senao o ciclo aplicaria mais ou menos que a variacao do mes.
     const doCiclo = diasUteis.filter((d) => d > inicio.data && d <= fim);
     if (doCiclo.length === 0) continue;
-    const dut = doCiclo.length;
+    // O denominador pode incluir o dia do aniversario inicial; os dias que recebem o
+    // fator, nao. Ver `janelaIncluiOAniversario`.
+    const dut = janelaIncluiOAniversario(diaAniversario)
+      ? diasUteis.filter((d) => d >= inicio.data && d < fim).length
+      : doCiclo.length;
+    if (dut === 0) continue;
 
     // O indice pode trocar no meio do ciclo (revisao da projecao, saida do oficial) e,
     // quando troca, o Gorila reprecifica o ciclo DESDE O INICIO. Por isso o acumulado de
     // cada dia e recalculado com o indice vigente naquele dia, e o fator diario e a
     // razao entre acumulados: no dia da troca ele carrega o ajuste inteiro de uma vez.
     let acumuladoAnterior = 1;
-    for (let n = 1; n <= dut; n++) {
+    // Percorre os dias que RECEBEM o fator (doCiclo). Quando o dut inclui o dia do
+    // aniversario inicial, esse conjunto tem um dia a mais que o denominador e o ultimo
+    // dia fecha com expoente maior que 1 - e o que o Gorila faz.
+    for (let n = 1; n <= doCiclo.length; n++) {
       const d = doCiclo[n - 1];
       const fator = fatorVigente(competenciaDoCiclo, d);
       if (fator == null) continue;   // indice ainda desconhecido: dia sem correcao
