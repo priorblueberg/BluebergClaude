@@ -259,13 +259,18 @@ export default function PosicaoConsolidadaPage() {
         if (lastRow) {
           const usePeriodic = product.pagamento && product.pagamento !== "No Vencimento";
           const rentPct = usePeriodic ? lastRow.rentAcumulada2 : lastRow.rentabilidadeAcumuladaPct;
+          // "Encerrado" vem do SALDO, nao so do cadastro: `custodia.resgate_total` guarda o
+          // vencimento quando o papel foi zerado por um "Resgate" parcial em vez de um
+          // "Resgate Total" (`resgateTotalDeMovs` so enxerga o segundo). O bloco de
+          // poupanca logo abaixo ja fazia assim.
+          const encerrado = isEncerrado || lastRow.liquido < 0.005;
           posicaoRows.push({
             nome: product.nome || product.produto_nome,
-            valorAtualizado: isEncerrado ? 0 : lastRow.liquido,
+            valorAtualizado: encerrado ? 0 : lastRow.liquido,
             ganhoFinanceiro: lastRow.ganhoAcumulado,
             rentabilidade: (rentPct ?? 0) * 100,
             custodiante: product.instituicao_nome,
-            ativo: !isEncerrado,
+            ativo: !encerrado,
             product,
           });
         }
@@ -329,7 +334,8 @@ export default function PosicaoConsolidadaPage() {
         allProductRows.push(fundoRowsToDailyRows(rowsFundo));
 
         const ult = rowsFundo[rowsFundo.length - 1];
-        const encerrado = !!product.resgate_total && product.resgate_total <= dataReferenciaISO;
+        const encerrado = (!!product.resgate_total && product.resgate_total <= dataReferenciaISO)
+          || ult.saldoBruto < 0.005;
         posicaoRows.push({
           nome: product.nome || product.produto_nome,
           valorAtualizado: encerrado ? 0 : ult.saldoBruto,
@@ -358,7 +364,8 @@ export default function PosicaoConsolidadaPage() {
         allProductRows.push(cambioRowsToDailyRows(rowsMoeda));
 
         const ult = rowsMoeda[rowsMoeda.length - 1];
-        const encerrado = !!product.resgate_total && product.resgate_total <= dataReferenciaISO;
+        const encerrado = (!!product.resgate_total && product.resgate_total <= dataReferenciaISO)
+          || ult.saldoReais < 0.005;
         posicaoRows.push({
           nome: product.nome || product.produto_nome,
           valorAtualizado: encerrado ? 0 : ult.saldoReais,
