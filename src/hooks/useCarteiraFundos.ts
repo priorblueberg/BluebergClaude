@@ -17,7 +17,6 @@ import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { ProductListItem, CarteiraInfo } from "@/hooks/useCarteiraRF";
 import { aplicarJanela } from "@/lib/periodo";
-import { completarSerieCdi } from "@/lib/cdiCalculations";
 
 interface FundoCustodia {
   id: string;
@@ -223,7 +222,7 @@ export function useCarteiraFundos() {
       setAllProductRows(prodRows);
       setProductList(pList);
       setCarteiraRows(result);
-      setCdiRecords(completarSerieCdi(mergedCdi, calendario, dataCalculo));
+      setCdiRecords(mergedCdi);
       setCalendario(calendario);
       _fundosCachedVersion = appliedVersion;
       _fundosCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, productList: pList, cdiRecords: mergedCdi, calendario };

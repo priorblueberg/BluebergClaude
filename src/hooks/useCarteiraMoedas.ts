@@ -16,7 +16,6 @@ import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { CarteiraInfo, ProductListItem } from "@/hooks/useCarteiraRF";
 import { aplicarJanela } from "@/lib/periodo";
-import { completarSerieCdi } from "@/lib/cdiCalculations";
 
 export interface PosicaoMoeda {
   codigo_custodia: string;
@@ -221,7 +220,7 @@ export function useCarteiraMoedas() {
       setPosicoes(lista);
       setProductList(pList);
       setCarteiraRows(result);
-      setCdiRecords(completarSerieCdi(mergedCdi, calendario, dataCalculo));
+      setCdiRecords(mergedCdi);
       _moedasCachedVersion = appliedVersion;
       _moedasCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi };
       setLoading(false);
