@@ -30,7 +30,21 @@ export function metricasDoProdutoNaJanela(
   dataInicio: string,
   dataCalculo: string,
 ): MetricasNaJanela {
-  const existiuNaJanela = rows.some((r) => r.data >= dataInicio && r.data <= dataCalculo);
+  // Ter LINHA na janela nao basta. O motor do produto continua emitindo linhas zeradas
+  // depois do resgate, porque `custodia.resgate_total` guarda o vencimento e nao a data em
+  // que o dinheiro saiu - quatro papeis resgatados antes de agosto apareciam na lista de
+  // "Mes anterior" com tudo zero. O que conta e ter tido patrimonio ou movimentado dinheiro
+  // dentro da janela. Assim o papel que venceu DENTRO dela continua (o IPCA+5,60% de
+  // 10/08/2026, que o Gorila tambem lista, com ganho de R$ 19,81) e os mortos antes somem.
+  const existiuNaJanela = rows.some(
+    (r) =>
+      r.data >= dataInicio &&
+      r.data <= dataCalculo &&
+      (r.liquido > 0.005 ||
+        r.liquido2 > 0.005 ||
+        r.aplicacoes > 0.005 ||
+        Math.abs(r.ganhoDiario) > 0.005),
+  );
   if (!existiuNaJanela) {
     return { patrimonio: 0, ganho: 0, rentabilidade: 0, existiuNaJanela: false };
   }
