@@ -15,7 +15,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { CarteiraInfo, ProductListItem } from "@/hooks/useCarteiraRF";
-import { aplicarJanela } from "@/lib/periodo";
+import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 
 export interface PosicaoMoeda {
@@ -51,7 +51,7 @@ const TABELA_POR_MOEDA: Record<string, string> = {
 
 export function useCarteiraMoedas() {
   const { user } = useAuth();
-  const { appliedVersion, periodo } = useDataReferencia();
+  const { appliedVersion, dataReferenciaISO } = useDataReferencia();
   const [carteiraInfo, setCarteiraInfo] = useState<CarteiraInfo | null>(_moedasCached?.carteiraInfo ?? null);
   const [carteiraRows, setCarteiraRows] = useState<CarteiraRFRow[]>(_moedasCached?.carteiraRows ?? []);
   const [allProductRows, setAllProductRows] = useState<DailyRow[][]>(_moedasCached?.allProductRows ?? []);
@@ -80,7 +80,7 @@ export function useCarteiraMoedas() {
           .not("moeda", "is", null),
       ]);
 
-      const cartData = aplicarJanela(cartBruto as any, periodo);
+      const cartData = ateAData(cartBruto as any, dataReferenciaISO);
 
       const posicoesCustodia = (custodiaData || []).map((r: any) => ({
         codigo_custodia: String(r.codigo_custodia),

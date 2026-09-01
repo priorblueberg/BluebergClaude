@@ -16,7 +16,7 @@ import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFix
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { CdiRecord } from "@/lib/cdiCalculations";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { aplicarJanela } from "@/lib/periodo";
+import { ateAData } from "@/lib/janelaDaCarteira";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 
@@ -95,7 +95,7 @@ let _cartRFCached: {
 
 export function useCarteiraRF() {
   const { user } = useAuth();
-  const { appliedVersion, periodo } = useDataReferencia();
+  const { appliedVersion, dataReferenciaISO } = useDataReferencia();
   const [carteiraInfo, setCarteiraInfo] = useState<CarteiraInfo | null>(_cartRFCached?.carteiraInfo ?? null);
   const [carteiraRows, setCarteiraRows] = useState<CarteiraRFRow[]>(_cartRFCached?.carteiraRows ?? []);
   const [allProductRows, setAllProductRows] = useState<DailyRow[][]>(_cartRFCached?.allProductRows ?? []);
@@ -124,9 +124,9 @@ export function useCarteiraRF() {
           .eq("user_id", user.id),
       ]);
 
-      const cartData = aplicarJanela(
+      const cartData = ateAData(
         (todasCarteiras || []).find((c: any) => c.nome_carteira === "Renda Fixa") as any,
-        periodo,
+        dataReferenciaISO,
       );
 
       // Series de mercado: o dashboard consolidado roda sobre a carteira "Investimentos",

@@ -16,7 +16,7 @@ import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFix
 import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { ProductListItem, CarteiraInfo } from "@/hooks/useCarteiraRF";
-import { aplicarJanela } from "@/lib/periodo";
+import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 
 interface FundoCustodia {
@@ -52,7 +52,7 @@ let _fundosCached: {
 
 export function useCarteiraFundos() {
   const { user } = useAuth();
-  const { appliedVersion, periodo } = useDataReferencia();
+  const { appliedVersion, dataReferenciaISO } = useDataReferencia();
   const [carteiraInfo, setCarteiraInfo] = useState<CarteiraInfo | null>(_fundosCached?.carteiraInfo ?? null);
   const [carteiraRows, setCarteiraRows] = useState<CarteiraRFRow[]>(_fundosCached?.carteiraRows ?? []);
   const [allProductRows, setAllProductRows] = useState<DailyRow[][]>(_fundosCached?.allProductRows ?? []);
@@ -81,7 +81,7 @@ export function useCarteiraFundos() {
           .not("fundo_id", "is", null),
       ]);
 
-      const cartData = aplicarJanela(cartBruto as any, periodo);
+      const cartData = ateAData(cartBruto as any, dataReferenciaISO);
 
       const fundos: FundoCustodia[] = (custodiaData || []).map((r: any) => ({
         id: r.id,

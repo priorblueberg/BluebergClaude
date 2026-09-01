@@ -8,7 +8,7 @@ import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
 import { useCarteiraMoedas } from "@/hooks/useCarteiraMoedas";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { buildCdiSeries, buildIbovespaSeries } from "@/lib/cdiCalculations";
-import { aplicarJanela } from "@/lib/periodo";
+import { ateAData } from "@/lib/janelaDaCarteira";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
@@ -221,7 +221,7 @@ export const CarteiraVisaoGeral = () => {
   const [activeSeries, setActiveSeries] = useState<Set<string>>(
     new Set(["carteira_acumulado", "cdi_acumulado"])
   );
-  const { appliedVersion, dataReferenciaISO, periodo } = useDataReferencia();
+  const { appliedVersion, dataReferenciaISO } = useDataReferencia();
   const navigate = useNavigate();
 
   // Números vêm dos mesmos hooks que alimentam as lâminas por categoria: uma
@@ -280,11 +280,11 @@ export const CarteiraVisaoGeral = () => {
         .eq("user_id", user.id)
         .maybeSingle();
 
-      setCarteiraInfo(aplicarJanela(data as any, periodo));
+      setCarteiraInfo(ateAData(data as any, dataReferenciaISO));
       setNotFound(!data);
       setInfoLoading(false);
     })();
-  }, [appliedVersion, user, periodo]);
+  }, [appliedVersion, user, dataReferenciaISO]);
 
   const chartData = useMemo(() => {
     if (!carteiraInfo?.data_inicio || carteiraRows.length === 0) return [];
