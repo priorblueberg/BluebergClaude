@@ -18,6 +18,7 @@ import { CdiRecord } from "@/lib/cdiCalculations";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { aplicarJanela } from "@/lib/periodo";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
+import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 
 export interface CarteiraInfo {
   nome_carteira: string;
@@ -53,8 +54,12 @@ interface CustodiaProduct {
 export interface ProductListItem {
   nome: string;
   valorAtualizado: number;
+  /** Ganho DENTRO da janela de análise, não desde a aplicação. */
   ganhoFinanceiro: number;
+  /** Rentabilidade DENTRO da janela de análise. */
   rentabilidade: number;
+  /** false quando o papel nao teve nenhum dia dentro da janela. Some da lista. */
+  existiuNaJanela?: boolean;
   custodiante: string;
   ativo: boolean;
   estrategia: string | null;
@@ -325,19 +330,19 @@ export function useCarteiraRF() {
 
       const pList = prodRowProducts.map((product, idx) => {
         const rows = allProdRows[idx];
-        const lastRow = rows.length > 0 ? rows[rows.length - 1] : null;
         const isEncerradoNaDataCalculo = product.resgate_total
           ? product.resgate_total <= dataCalculo
           : product.vencimento
             ? product.vencimento <= dataCalculo
             : false;
-        const usePeriodic = product.pagamento && product.pagamento !== "No Vencimento";
-        const rentPct = lastRow ? ((usePeriodic ? lastRow.rentAcumulada2 : lastRow.rentabilidadeAcumuladaPct) * 100) : 0;
+        // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
+        const m = metricasDoProdutoNaJanela(rows, calendario, dataInicio, dataCalculo);
         return {
           nome: product.nome || product.produto_nome,
-          valorAtualizado: isEncerradoNaDataCalculo ? 0 : (lastRow?.liquido ?? 0),
-          ganhoFinanceiro: lastRow?.ganhoAcumulado ?? 0,
-          rentabilidade: rentPct,
+          valorAtualizado: isEncerradoNaDataCalculo ? 0 : m.patrimonio,
+          ganhoFinanceiro: m.ganho,
+          rentabilidade: m.rentabilidade,
+          existiuNaJanela: m.existiuNaJanela,
           custodiante: product.instituicao_nome,
           ativo: !isEncerradoNaDataCalculo,
           estrategia: product.estrategia,

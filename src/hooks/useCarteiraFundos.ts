@@ -17,6 +17,7 @@ import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { ProductListItem, CarteiraInfo } from "@/hooks/useCarteiraRF";
 import { aplicarJanela } from "@/lib/periodo";
+import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 
 interface FundoCustodia {
   id: string;
@@ -184,13 +185,14 @@ export function useCarteiraFundos() {
 
         const ult = rows.length ? rows[rows.length - 1] : null;
         const encerrado = !!f.resgate_total && f.resgate_total <= dataCalculo;
+        // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
+        const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, dataCalculo);
         pList.push({
           nome: f.nome || f.fundo?.nome_curto || f.produto_nome,
-          valorAtualizado: encerrado ? 0 : (ult?.saldoBruto ?? 0),
-          ganhoFinanceiro: ult?.ganhoAcumulado ?? 0,
-          // Headline do fundo e money-weighted (decisao do vault): o aporte entra
-          // na base do dia, entao nao infla o mes em que o dinheiro chegou.
-          rentabilidade: (ult?.rentabilidadeAcumuladaMWPct ?? 0) * 100,
+          valorAtualizado: encerrado ? 0 : m.patrimonio,
+          ganhoFinanceiro: m.ganho,
+          rentabilidade: m.rentabilidade,
+          existiuNaJanela: m.existiuNaJanela,
           custodiante: f.instituicao_nome,
           ativo: !encerrado,
           estrategia: null,

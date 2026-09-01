@@ -16,6 +16,7 @@ import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { CarteiraInfo, ProductListItem } from "@/hooks/useCarteiraRF";
 import { aplicarJanela } from "@/lib/periodo";
+import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 
 export interface PosicaoMoeda {
   codigo_custodia: string;
@@ -29,6 +30,8 @@ export interface PosicaoMoeda {
   saldoFormatado: string;
   cotacao: number | null;
   ativo: boolean;
+  /** false quando a posicao nao teve nenhum dia dentro da janela. */
+  existiuNaJanela?: boolean;
 }
 
 let _moedasCachedVersion: number | null = null;
@@ -169,25 +172,29 @@ export function useCarteiraMoedas() {
         const ult = rows.length ? rows[rows.length - 1] : null;
         const encerrado = !!p.resgate_total && p.resgate_total <= dataCalculo;
         const infoMoeda = moedaPorCodigo(p.moeda);
+        // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
+        const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, dataCalculo);
         lista.push({
           codigo_custodia: p.codigo_custodia,
           nome: p.nome,
           moeda: p.moeda,
           custodiante: p.custodiante,
-          patrimonio: encerrado ? 0 : (ult?.saldoReais ?? 0),
-          ganho: ult?.ganhoAcumulado ?? 0,
-          rentabilidade: (ult?.rentabilidadeAcumuladaMWPct ?? 0) * 100,
+          patrimonio: encerrado ? 0 : m.patrimonio,
+          ganho: m.ganho,
+          rentabilidade: m.rentabilidade,
           saldoMoeda: encerrado ? 0 : (ult?.saldoMoeda ?? 0),
           saldoFormatado: `${infoMoeda?.simbolo ?? p.moeda} ${(ult?.saldoMoeda ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
           cotacao: ult?.cotacao ?? null,
           ativo: !encerrado,
+          existiuNaJanela: m.existiuNaJanela,
         });
 
         pList.push({
           nome: p.nome,
-          valorAtualizado: encerrado ? 0 : (ult?.saldoReais ?? 0),
-          ganhoFinanceiro: ult?.ganhoAcumulado ?? 0,
-          rentabilidade: (ult?.rentabilidadeAcumuladaMWPct ?? 0) * 100,
+          valorAtualizado: encerrado ? 0 : m.patrimonio,
+          ganhoFinanceiro: m.ganho,
+          rentabilidade: m.rentabilidade,
+          existiuNaJanela: m.existiuNaJanela,
           custodiante: p.custodiante,
           ativo: !encerrado,
           estrategia: null,

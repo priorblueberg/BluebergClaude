@@ -4,7 +4,7 @@ import CarteiraCategoriaView, { type LinhaCarteira } from "@/components/Carteira
 export default function CarteiraFundosPage() {
   const { carteiraInfo, carteiraRows, allProductRows, productList, cdiRecords, loading } = useCarteiraFundos();
 
-  const linhas: LinhaCarteira[] = productList.map((p) => ({
+  const linhas: LinhaCarteira[] = productList.filter((p) => p.existiuNaJanela !== false).map((p) => ({
     chave: String(p.analysisProduct.codigo_custodia),
     nome: p.nome,
     custodiante: p.custodiante,

@@ -74,6 +74,13 @@ export default function CarteiraRendaFixaPage() {
   const [seriesVisibility, setSeriesVisibility] = useState({ cdi: true, ibovespa: false });
 
   // Chart: Rentabilidade vs CDI vs Ibovespa
+  /** O Gorila nao lista posicao que nao existiu na janela; aqui tambem nao. Papel que morreu
+   *  DENTRO dela continua, com patrimonio zero e o ganho do periodo. */
+  const posicoesDaJanela = useMemo(
+    () => productList.filter((p) => p.existiuNaJanela !== false),
+    [productList],
+  );
+
   const chartData = useMemo(() => {
     if (!carteiraInfo?.data_inicio || carteiraRows.length === 0) return [];
 
@@ -361,7 +368,7 @@ export default function CarteiraRendaFixaPage() {
           </div>
 
           {/* Posição Consolidada */}
-          {productList.length > 0 && (
+          {posicoesDaJanela.length > 0 && (
             <div className="space-y-1">
               <h2 className="text-sm font-semibold text-foreground">Posição Consolidada</h2>
               <div className="rounded-lg border bg-card">
@@ -377,7 +384,7 @@ export default function CarteiraRendaFixaPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {productList.map((row, i) => (
+                    {posicoesDaJanela.map((row, i) => (
                       <TableRow key={i} className="cursor-pointer hover:bg-accent/50" onClick={() => setSelectedProduct(row.analysisProduct)}>
                         <TableCell>
                           <Badge

@@ -4,7 +4,7 @@ import CarteiraCategoriaView, { type LinhaCarteira } from "@/components/Carteira
 export default function CarteiraMoedasPage() {
   const { carteiraInfo, carteiraRows, allProductRows, posicoes, cdiRecords, loading } = useCarteiraMoedas();
 
-  const linhas: LinhaCarteira[] = posicoes.map((p) => ({
+  const linhas: LinhaCarteira[] = posicoes.filter((p) => p.existiuNaJanela !== false).map((p) => ({
     chave: p.codigo_custodia,
     nome: p.nome,
     detalhe: p.ativo ? p.saldoFormatado : null,
