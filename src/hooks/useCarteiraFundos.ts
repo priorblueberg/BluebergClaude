@@ -16,7 +16,7 @@ import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFix
 import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { ProductListItem, CarteiraInfo } from "@/hooks/useCarteiraRF";
-import { ancorarNoMercado, carregarHorizonteDeMercado } from "@/lib/horizonteDeMercado";
+import { aplicarJanela } from "@/lib/periodo";
 
 interface FundoCustodia {
   id: string;
@@ -51,7 +51,7 @@ let _fundosCached: {
 
 export function useCarteiraFundos() {
   const { user } = useAuth();
-  const { appliedVersion } = useDataReferencia();
+  const { appliedVersion, periodo } = useDataReferencia();
   const [carteiraInfo, setCarteiraInfo] = useState<CarteiraInfo | null>(_fundosCached?.carteiraInfo ?? null);
   const [carteiraRows, setCarteiraRows] = useState<CarteiraRFRow[]>(_fundosCached?.carteiraRows ?? []);
   const [allProductRows, setAllProductRows] = useState<DailyRow[][]>(_fundosCached?.allProductRows ?? []);
@@ -66,7 +66,7 @@ export function useCarteiraFundos() {
     (async () => {
       setLoading(true);
 
-      const [{ data: cartBruto }, { data: custodiaData }, horizonte] = await Promise.all([
+      const [{ data: cartBruto }, { data: custodiaData }] = await Promise.all([
         supabase
           .from("controle_de_carteiras")
           .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
@@ -78,10 +78,9 @@ export function useCarteiraFundos() {
           .select("id, codigo_custodia, nome, fundo_id, data_inicio, data_calculo, resgate_total, valor_investido, categorias(nome), produtos(nome), instituicoes(nome), cadastro_de_fundos(nome_curto, cnpj_classe, benchmark, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
           .eq("user_id", user.id)
           .not("fundo_id", "is", null),
-        carregarHorizonteDeMercado(user.id),
       ]);
 
-      const cartData = ancorarNoMercado(cartBruto as any, horizonte);
+      const cartData = aplicarJanela(cartBruto as any, periodo);
 
       const fundos: FundoCustodia[] = (custodiaData || []).map((r: any) => ({
         id: r.id,

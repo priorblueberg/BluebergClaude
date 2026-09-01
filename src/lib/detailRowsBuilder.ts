@@ -40,6 +40,7 @@ export function buildDetailRowsFromEngine(
 
   let cdiFatorMensal = 1;
   let cdiFatorAnual = 1;
+  let ultimaTaxaCdi: number | null = null;
   let currentMonth = -1;
   let currentYear = -1;
 
@@ -137,9 +138,15 @@ export function buildDetailRowsFromEngine(
 
     prevRowLiquido = row.liquido;
 
+    // Dia util sem CDI publicado repete a ultima taxa conhecida, em vez de nao render. O
+    // BCB publica o CDI de D na noite de D+1, entao a ponta da serie vive um ou dois dias
+    // atrasada; sem isso o benchmark ficava parado enquanto a carteira andava. E o que o
+    // Gorila faz: medido em 2026-09-01, um CDB de 100% do CDI seguiu rendendo em 28/08,
+    // 31/08 e 01/09, dias em que o CDI ainda nao tinha saido.
     const cdiRec = cdiMap.get(row.data);
-    if (cdiRec && row.diaUtil) {
-      const fd = calcFatorDiarioCdi(cdiRec.taxa_anual);
+    if (cdiRec) ultimaTaxaCdi = cdiRec.taxa_anual;
+    if (ultimaTaxaCdi != null && row.diaUtil) {
+      const fd = calcFatorDiarioCdi(ultimaTaxaCdi);
       cdiFatorMensal *= 1 + fd;
       cdiFatorAnual *= 1 + fd;
     }

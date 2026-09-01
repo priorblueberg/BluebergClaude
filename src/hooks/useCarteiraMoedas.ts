@@ -15,7 +15,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { CarteiraInfo, ProductListItem } from "@/hooks/useCarteiraRF";
-import { ancorarNoMercado, carregarHorizonteDeMercado } from "@/lib/horizonteDeMercado";
+import { aplicarJanela } from "@/lib/periodo";
 
 export interface PosicaoMoeda {
   codigo_custodia: string;
@@ -48,7 +48,7 @@ const TABELA_POR_MOEDA: Record<string, string> = {
 
 export function useCarteiraMoedas() {
   const { user } = useAuth();
-  const { appliedVersion } = useDataReferencia();
+  const { appliedVersion, periodo } = useDataReferencia();
   const [carteiraInfo, setCarteiraInfo] = useState<CarteiraInfo | null>(_moedasCached?.carteiraInfo ?? null);
   const [carteiraRows, setCarteiraRows] = useState<CarteiraRFRow[]>(_moedasCached?.carteiraRows ?? []);
   const [allProductRows, setAllProductRows] = useState<DailyRow[][]>(_moedasCached?.allProductRows ?? []);
@@ -63,7 +63,7 @@ export function useCarteiraMoedas() {
     (async () => {
       setLoading(true);
 
-      const [{ data: cartBruto }, { data: custodiaData }, horizonte] = await Promise.all([
+      const [{ data: cartBruto }, { data: custodiaData }] = await Promise.all([
         supabase
           .from("controle_de_carteiras")
           .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
@@ -75,10 +75,9 @@ export function useCarteiraMoedas() {
           .select("id, codigo_custodia, nome, moeda, data_inicio, data_calculo, resgate_total, valor_investido, instituicoes(nome)")
           .eq("user_id", user.id)
           .not("moeda", "is", null),
-        carregarHorizonteDeMercado(user.id),
       ]);
 
-      const cartData = ancorarNoMercado(cartBruto as any, horizonte);
+      const cartData = aplicarJanela(cartBruto as any, periodo);
 
       const posicoesCustodia = (custodiaData || []).map((r: any) => ({
         codigo_custodia: String(r.codigo_custodia),

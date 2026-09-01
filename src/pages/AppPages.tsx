@@ -8,7 +8,7 @@ import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
 import { useCarteiraMoedas } from "@/hooks/useCarteiraMoedas";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { buildCdiSeries } from "@/lib/cdiCalculations";
-import { ancorarNoMercado, carregarHorizonteDeMercado } from "@/lib/horizonteDeMercado";
+import { aplicarJanela } from "@/lib/periodo";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
@@ -221,7 +221,7 @@ export const CarteiraVisaoGeral = () => {
   const [activeSeries, setActiveSeries] = useState<Set<string>>(
     new Set(["carteira_acumulado", "cdi_acumulado"])
   );
-  const { appliedVersion, dataReferenciaISO } = useDataReferencia();
+  const { appliedVersion, dataReferenciaISO, periodo } = useDataReferencia();
   const navigate = useNavigate();
 
   // Números vêm dos mesmos hooks que alimentam as lâminas por categoria: uma
@@ -273,21 +273,18 @@ export const CarteiraVisaoGeral = () => {
     if (!user) return;
     (async () => {
       setInfoLoading(true);
-      const [{ data }, horizonte] = await Promise.all([
-        supabase
-          .from("controle_de_carteiras")
-          .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
-          .eq("nome_carteira", "Investimentos")
-          .eq("user_id", user.id)
-          .maybeSingle(),
-        carregarHorizonteDeMercado(user.id),
-      ]);
+      const { data } = await supabase
+        .from("controle_de_carteiras")
+        .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
+        .eq("nome_carteira", "Investimentos")
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-      setCarteiraInfo(ancorarNoMercado(data as any, horizonte));
+      setCarteiraInfo(aplicarJanela(data as any, periodo));
       setNotFound(!data);
       setInfoLoading(false);
     })();
-  }, [appliedVersion, user]);
+  }, [appliedVersion, user, periodo]);
 
   const chartData = useMemo(() => {
     if (!carteiraInfo?.data_inicio || carteiraRows.length === 0) return [];
