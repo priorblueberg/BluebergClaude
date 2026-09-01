@@ -161,3 +161,28 @@ export function aplicarJanela<T extends CarteiraComJanela>(
   if (!j) return { ...cart, data_calculo: null };
   return { ...cart, data_inicio: j.inicio, data_calculo: j.fim };
 }
+
+/**
+ * O período vai na URL para sobreviver a um reload e poder ser compartilhado.
+ *
+ * `p` guarda o atalho e `de`/`ate` as datas resolvidas. Ao ler de volta: se o atalho ainda
+ * resolve nas MESMAS datas (mesmo dia), volta como atalho, e o botão mostra "Mês anterior";
+ * se não resolve (link aberto noutro dia), as datas mandam e vira "Personalizado". Assim uma
+ * URL sempre reproduz o período que estava na tela de quem a gerou.
+ */
+export function periodoParaQuery(p: Periodo): { p: string; de?: string; ate: string } {
+  return { p: p.preset, ...(p.inicio ? { de: p.inicio } : {}), ate: p.fim };
+}
+
+export function periodoDeQuery(params: URLSearchParams, hoje = new Date()): Periodo | null {
+  const preset = params.get("p");
+  const de = params.get("de");
+  const ate = params.get("ate");
+  if (!ate) return null;
+  if (!preset || preset === "custom" || !PRESETS.includes(preset as PresetPeriodo)) {
+    return de ? { inicio: de, fim: ate, preset: "custom" } : null;
+  }
+  const resolvido = periodoDoPreset(preset as PresetPeriodo, hoje);
+  const mesmasDatas = resolvido.fim === ate && (resolvido.inicio ?? "") === (de ?? "");
+  return mesmasDatas ? resolvido : { inicio: de ?? null, fim: ate, preset: "custom" };
+}

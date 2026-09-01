@@ -1,5 +1,9 @@
-import { createContext, useContext, useState, useCallback, ReactNode, useMemo } from "react";
-import { Periodo, PresetPeriodo, periodoDoPreset, periodoPadrao, limiteISO } from "@/lib/periodo";
+import { createContext, useContext, useState, useCallback, ReactNode, useMemo, useEffect } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
+import {
+  Periodo, PresetPeriodo, periodoDoPreset, periodoPadrao, limiteISO,
+  periodoDeQuery, periodoParaQuery,
+} from "@/lib/periodo";
 
 interface DataReferenciaContextType {
   /** Período de análise aplicado (o que as lâminas estão mostrando). */
@@ -31,12 +35,33 @@ interface DataReferenciaContextType {
 const DataReferenciaContext = createContext<DataReferenciaContextType | null>(null);
 
 export function DataReferenciaProvider({ children }: { children: ReactNode }) {
-  const [periodo, setPeriodo] = useState<Periodo>(() => periodoPadrao());
-  const [periodoStaged, setPeriodoStaged] = useState<Periodo>(() => periodoPadrao());
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { pathname } = useLocation();
+  const daUrl = useMemo(() => periodoDeQuery(searchParams), []); // só na montagem
+
+  const [periodo, setPeriodo] = useState<Periodo>(() => daUrl ?? periodoPadrao());
+  const [periodoStaged, setPeriodoStaged] = useState<Periodo>(() => daUrl ?? periodoPadrao());
   const [appliedVersion, setAppliedVersion] = useState(0);
   const [isRecalculating, setIsRecalculating] = useState(false);
 
   const limite = useMemo(() => limiteISO(), []);
+
+  /** Espelha o período na URL. Também roda ao trocar de lâmina, senão a navegação entre
+   *  abas apagaria a query e o link deixaria de reproduzir o que está na tela. */
+  useEffect(() => {
+    const alvo = periodoParaQuery(periodo);
+    const atual = new URLSearchParams(searchParams);
+    let mudou = false;
+    for (const chave of ["p", "de", "ate"] as const) {
+      const valor = (alvo as Record<string, string | undefined>)[chave];
+      if ((atual.get(chave) ?? undefined) === valor) continue;
+      mudou = true;
+      if (valor) atual.set(chave, valor);
+      else atual.delete(chave);
+    }
+    if (mudou) setSearchParams(atual, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodo, pathname]);
 
   const applyDataReferencia = useCallback(() => {
     setPeriodo(periodoStaged);

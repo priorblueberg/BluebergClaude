@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   limiteISO, periodoDoPreset, janelaDaLamina, aplicarJanela, deBR, fmtBR,
+  periodoParaQuery, periodoDeQuery,
 } from "./periodo";
 import { buildCdiSeries, buildIbovespaSeries } from "./cdiCalculations";
 
@@ -174,5 +175,46 @@ describe("benchmark de CDI em dia sem publicacao", () => {
     const ate31 = buildCdiSeries(registros, "2026-08-27", "2026-08-31");
     const ate01 = buildCdiSeries(registros, "2026-08-27", "2026-09-01");
     expect(ate01[ate01.length - 1].cdi_acumulado).toBe(ate31[ate31.length - 1].cdi_acumulado);
+  });
+});
+
+describe("periodo na URL", () => {
+  const HOJE2 = new Date(2026, 8, 1, 12, 0, 0);
+  const q = (s: string) => new URLSearchParams(s);
+
+  it("atalho vai e volta como atalho quando as datas ainda batem", () => {
+    const p = periodoDoPreset("mesAnterior", HOJE2);
+    const url = new URLSearchParams(periodoParaQuery(p) as Record<string, string>).toString();
+    expect(url).toBe("p=mesAnterior&de=2026-08-01&ate=2026-08-31");
+    expect(periodoDeQuery(q(url), HOJE2)).toEqual(p);
+  });
+
+  it("desde o inicio nao leva data inicial", () => {
+    const p = periodoDoPreset("inicio", HOJE2);
+    const url = new URLSearchParams(periodoParaQuery(p) as Record<string, string>).toString();
+    expect(url).toBe("p=inicio&ate=2026-09-01");
+    expect(periodoDeQuery(q(url), HOJE2)).toEqual(p);
+  });
+
+  it("link aberto noutro dia mantem as DATAS, nao o atalho", () => {
+    // Gerado em 01/09 com "Mes anterior" (agosto). Aberto em 15/10, "mes anterior" seria
+    // setembro; o link tem de continuar mostrando agosto, que e o que o autor via.
+    const url = "p=mesAnterior&de=2026-08-01&ate=2026-08-31";
+    expect(periodoDeQuery(q(url), new Date(2026, 9, 15, 12))).toEqual({
+      inicio: "2026-08-01", fim: "2026-08-31", preset: "custom",
+    });
+  });
+
+  it("intervalo livre volta exatamente igual", () => {
+    const p = { inicio: "2025-03-10", fim: "2025-07-04", preset: "custom" as const };
+    const url = new URLSearchParams(periodoParaQuery(p) as Record<string, string>).toString();
+    expect(periodoDeQuery(q(url), HOJE2)).toEqual(p);
+  });
+
+  it("URL sem periodo ou pela metade nao inventa nada", () => {
+    expect(periodoDeQuery(q(""), HOJE2)).toBeNull();
+    expect(periodoDeQuery(q("p=mesAnterior"), HOJE2)).toBeNull();
+    expect(periodoDeQuery(q("ate=2026-08-31"), HOJE2)).toBeNull();
+    expect(periodoDeQuery(q("p=abacaxi&ate=2026-08-31"), HOJE2)).toBeNull();
   });
 });
