@@ -337,14 +337,19 @@ export function useCarteiraRF() {
             : false;
         // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
         const m = metricasDoProdutoNaJanela(rows, calendario, dataInicio, dataCalculo);
+        // "Encerrado" vem do SALDO calculado, nao so do cadastro. `custodia.resgate_total`
+        // guarda o vencimento quando o papel foi zerado por uma movimentacao do tipo
+        // "Resgate" (parcial que zerou) em vez de "Resgate Total" - `resgateTotalDeMovs` so
+        // enxerga a segunda. Quatro CDBs apareciam como "Em custodia" com valor R$ 0,00.
+        const encerrado = isEncerradoNaDataCalculo || (m.existiuNaJanela && m.patrimonio <= 0.005);
         return {
           nome: product.nome || product.produto_nome,
-          valorAtualizado: isEncerradoNaDataCalculo ? 0 : m.patrimonio,
+          valorAtualizado: encerrado ? 0 : m.patrimonio,
           ganhoFinanceiro: m.ganho,
           rentabilidade: m.rentabilidade,
           existiuNaJanela: m.existiuNaJanela,
           custodiante: product.instituicao_nome,
-          ativo: !isEncerradoNaDataCalculo,
+          ativo: !encerrado,
           estrategia: product.estrategia,
           emissor_nome: product.emissor_nome,
           analysisProduct: {

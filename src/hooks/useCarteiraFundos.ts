@@ -184,9 +184,14 @@ export function useCarteiraFundos() {
         prodRows.push(fundoRowsToDailyRows(rows));
 
         const ult = rows.length ? rows[rows.length - 1] : null;
-        const encerrado = !!f.resgate_total && f.resgate_total <= dataCalculo;
         // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
         const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, dataCalculo);
+        // "Encerrado" vem do SALDO calculado, nao so do cadastro. `custodia.resgate_total`
+        // guarda o vencimento quando o papel foi zerado por uma movimentacao do tipo
+        // "Resgate" (parcial que zerou) em vez de "Resgate Total" - `resgateTotalDeMovs` so
+        // enxerga a segunda. Quatro CDBs apareciam como "Em custodia" com valor R$ 0,00.
+        const encerrado = (!!f.resgate_total && f.resgate_total <= dataCalculo)
+          || (m.existiuNaJanela && m.patrimonio <= 0.005);
         pList.push({
           nome: f.nome || f.fundo?.nome_curto || f.produto_nome,
           valorAtualizado: encerrado ? 0 : m.patrimonio,

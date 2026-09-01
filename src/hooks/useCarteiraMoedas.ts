@@ -170,10 +170,15 @@ export function useCarteiraMoedas() {
         prodRows.push(cambioRowsToDailyRows(rows));
 
         const ult = rows.length ? rows[rows.length - 1] : null;
-        const encerrado = !!p.resgate_total && p.resgate_total <= dataCalculo;
         const infoMoeda = moedaPorCodigo(p.moeda);
         // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
         const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, dataCalculo);
+        // "Encerrado" vem do SALDO calculado, nao so do cadastro. `custodia.resgate_total`
+        // guarda o vencimento quando o papel foi zerado por uma movimentacao do tipo
+        // "Resgate" (parcial que zerou) em vez de "Resgate Total" - `resgateTotalDeMovs` so
+        // enxerga a segunda. Quatro CDBs apareciam como "Em custodia" com valor R$ 0,00.
+        const encerrado = (!!p.resgate_total && p.resgate_total <= dataCalculo)
+          || (m.existiuNaJanela && m.patrimonio <= 0.005);
         lista.push({
           codigo_custodia: p.codigo_custodia,
           nome: p.nome,
