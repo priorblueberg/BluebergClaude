@@ -114,6 +114,11 @@ export function useCarteiraFundos() {
       setCarteiraInfo(info);
       const dataInicio = info.data_inicio!;
       const dataCalculo = info.data_calculo!;
+      // As series de mercado e o calendario vao desde o inicio REAL da carteira, nao desde o
+      // comeco da janela: os motores por produto rodam a vida inteira do ativo (a quantidade
+      // vem das movimentacoes acumuladas) e so o motor de carteira recorta pelo periodo.
+      // Buscar a partir da janela apagava os fundos numa janela curta.
+      const inicioReal = ((cartBruto as any)?.data_inicio as string | null) ?? dataInicio;
 
       const fundoIds = fundos.map((f) => f.fundo_id);
       const codigos = fundos.map((f) => f.codigo_custodia);
@@ -122,14 +127,14 @@ export function useCarteiraFundos() {
       // por requisicao, e o corte e silencioso.
       const [calRaw, cotasRaw, movRaw, cdiRaw] = await Promise.all([
         fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate)),
+          .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("cotas_fundos").select("fundo_id, data, valor_cota")
           .in("fundo_id", fundoIds).lte("data", dataCalculo).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("movimentacoes")
           .select("codigo_custodia, data, data_cotizacao, tipo_movimentacao, valor, quantidade")
           .eq("user_id", user.id).in("codigo_custodia", codigos).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate)),
+          .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
       ]);
 
       const calendario = calRaw.map((c: any) => ({ data: c.data, dia_util: c.dia_util }));

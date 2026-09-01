@@ -105,21 +105,26 @@ export function useCarteiraMoedas() {
       const dataInicio = info.data_inicio!;
       const dataCalculo = info.data_calculo!;
       setCarteiraInfo(info);
+      // As series de mercado e o calendario vao desde o inicio REAL da carteira, nao desde o
+      // comeco da janela: os motores por produto rodam a vida inteira do ativo (a quantidade
+      // vem das movimentacoes acumuladas) e so o motor de carteira recorta pelo periodo.
+      // Buscar a partir da janela apagava os fundos numa janela curta.
+      const inicioReal = ((cartBruto as any)?.data_inicio as string | null) ?? dataInicio;
 
       const moedasUsadas = Array.from(new Set(posicoesCustodia.map((p) => p.moeda)));
       const codigos = posicoesCustodia.map((p) => p.codigo_custodia);
 
       const [calRaw, movRaw, cdiRaw, ...seriesRaw] = await Promise.all([
         fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate)),
+          .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("movimentacoes")
           .select("codigo_custodia, data, tipo_movimentacao, valor, quantidade, moeda")
           .eq("user_id", user.id).in("codigo_custodia", codigos).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
-          .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate)),
+          .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
         ...moedasUsadas.map((m) =>
           fetchAllRows((de, ate) => supabase.from(TABELA_POR_MOEDA[m] as any).select("data, cotacao_venda")
-            .gte("data", dataInicio).lte("data", dataCalculo).order("data").range(de, ate))),
+            .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate))),
       ]);
 
       const calendario = calRaw.map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
