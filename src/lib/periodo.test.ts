@@ -2,45 +2,40 @@ import { describe, it, expect } from "vitest";
 import {
   limiteISO, periodoDoPreset, janelaDaLamina, aplicarJanela, deBR, fmtBR,
 } from "./periodo";
+import { buildIbovespaSeries } from "./cdiCalculations";
 
-/** 01/09/2026, uma terça. D-1 = 31/08/2026, uma segunda. */
+/** 01/09/2026, uma terça. O teto é D0, o próprio dia. */
 const HOJE = new Date(2026, 8, 1, 12, 0, 0);
 
-describe("teto D-1", () => {
-  it("o limite e sempre o dia anterior", () => {
-    expect(limiteISO(HOJE)).toBe("2026-08-31");
+describe("teto D0", () => {
+  it("o limite e o proprio dia, como no Gorila", () => {
+    expect(limiteISO(HOJE)).toBe("2026-09-01");
   });
 
   it("nenhum atalho passa do limite", () => {
     for (const p of ["30d", "12m", "mesAtual", "anoAtual", "mesAnterior", "anoAnterior", "inicio"] as const) {
-      expect(periodoDoPreset(p, HOJE).fim <= "2026-08-31").toBe(true);
+      expect(periodoDoPreset(p, HOJE).fim <= "2026-09-01").toBe(true);
     }
   });
 });
 
 describe("atalhos, na convencao do Gorila", () => {
   it("30 dias conta 30 dias corridos para tras", () => {
-    // Medido no Gorila em 01/09/2026: "30 dias" = 02/08/2026 - 01/09/2026. Ele termina em
-    // D0 e nos em D-1, entao a janela inteira anda um dia.
-    expect(periodoDoPreset("30d", HOJE)).toMatchObject({ inicio: "2026-08-01", fim: "2026-08-31" });
+    // Batido com o Gorila em 01/09/2026: "30 dias" = 02/08/2026 - 01/09/2026.
+    expect(periodoDoPreset("30d", HOJE)).toMatchObject({ inicio: "2026-08-02", fim: "2026-09-01" });
   });
 
   it("12 meses volta um ano", () => {
-    expect(periodoDoPreset("12m", HOJE)).toMatchObject({ inicio: "2025-08-31", fim: "2026-08-31" });
+    expect(periodoDoPreset("12m", HOJE)).toMatchObject({ inicio: "2025-09-01", fim: "2026-09-01" });
   });
 
-  it("mes atual no dia 1o sai vazio: nenhum dia fechado ainda no mes", () => {
-    const p = periodoDoPreset("mesAtual", HOJE);
-    expect(p).toMatchObject({ inicio: "2026-09-01", fim: "2026-08-31" });
-    expect(janelaDaLamina(p, "2024-01-03")).toBeNull();
-  });
-
-  it("mes atual no meio do mes vai do dia 1 ate D-1", () => {
-    expect(periodoDoPreset("mesAtual", new Date(2026, 8, 15, 12))).toMatchObject({ inicio: "2026-09-01", fim: "2026-09-14" });
+  it("mes atual vai do dia 1 ate hoje", () => {
+    expect(periodoDoPreset("mesAtual", HOJE)).toMatchObject({ inicio: "2026-09-01", fim: "2026-09-01" });
+    expect(periodoDoPreset("mesAtual", new Date(2026, 8, 15, 12))).toMatchObject({ inicio: "2026-09-01", fim: "2026-09-15" });
   });
 
   it("ano atual comeca em 1o de janeiro", () => {
-    expect(periodoDoPreset("anoAtual", HOJE)).toMatchObject({ inicio: "2026-01-01", fim: "2026-08-31" });
+    expect(periodoDoPreset("anoAtual", HOJE)).toMatchObject({ inicio: "2026-01-01", fim: "2026-09-01" });
   });
 
   it("mes anterior e o mes fechado inteiro", () => {
@@ -53,7 +48,7 @@ describe("atalhos, na convencao do Gorila", () => {
   });
 
   it("desde o inicio deixa a ponta inicial em aberto", () => {
-    expect(periodoDoPreset("inicio", HOJE)).toMatchObject({ inicio: null, fim: "2026-08-31" });
+    expect(periodoDoPreset("inicio", HOJE)).toMatchObject({ inicio: null, fim: "2026-09-01" });
   });
 });
 
@@ -112,5 +107,41 @@ describe("datas em dd/mm/aaaa", () => {
     expect(deBR("31/02/2026")).toBeNull();
     expect(deBR("1/8/2026")).toBeNull();
     expect(deBR("abacaxi")).toBeNull();
+  });
+});
+
+describe("serie do Ibovespa recortada na janela", () => {
+  // A serie chega desde o inicio da carteira porque os motores por produto precisam dela
+  // inteira. O grafico, nao: pegar o primeiro ponto do array como base acumulava desde
+  // 2024 E injetava pontos anteriores a janela, esticando o eixo X de um periodo de
+  // agosto/2026 de volta ate 02/01/2024.
+  const pontos = [
+    { data: "2024-01-02", pontos: 100 },
+    { data: "2026-07-31", pontos: 180 },
+    { data: "2026-08-03", pontos: 200 },
+    { data: "2026-08-31", pontos: 220 },
+    { data: "2026-09-01", pontos: 240 },
+  ];
+
+  it("nao devolve ponto fora da janela", () => {
+    const s = buildIbovespaSeries(pontos, "2026-08-01", "2026-08-31");
+    expect([...s.keys()]).toEqual(["2026-08-03", "2026-08-31"]);
+  });
+
+  it("rebaseia no primeiro pregao DENTRO da janela", () => {
+    const s = buildIbovespaSeries(pontos, "2026-08-01", "2026-08-31");
+    expect(s.get("2026-08-03")).toBe(0);
+    expect(s.get("2026-08-31")).toBeCloseTo(10, 4); // 220/200
+  });
+
+  it("janela inteira usa o primeiro ponto de todos", () => {
+    const s = buildIbovespaSeries(pontos, "2024-01-01");
+    expect(s.get("2024-01-02")).toBe(0);
+    expect(s.get("2026-09-01")).toBeCloseTo(140, 4);
+  });
+
+  it("janela sem pregao devolve serie vazia em vez de dividir por nada", () => {
+    expect(buildIbovespaSeries(pontos, "2026-08-04", "2026-08-10").size).toBe(0);
+    expect(buildIbovespaSeries([], "2024-01-01").size).toBe(0);
   });
 });

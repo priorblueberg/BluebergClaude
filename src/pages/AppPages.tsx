@@ -7,7 +7,7 @@ import { useCarteiraRF } from "@/hooks/useCarteiraRF";
 import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
 import { useCarteiraMoedas } from "@/hooks/useCarteiraMoedas";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
-import { buildCdiSeries } from "@/lib/cdiCalculations";
+import { buildCdiSeries, buildIbovespaSeries } from "@/lib/cdiCalculations";
 import { aplicarJanela } from "@/lib/periodo";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
@@ -304,14 +304,12 @@ export const CarteiraVisaoGeral = () => {
       map.set(r.data, existing);
     }
 
-    if (ibovespaData.length > 0) {
-      const base = ibovespaData[0].pontos;
-      for (const item of ibovespaData) {
-        const label = new Date(item.data + "T00:00:00").toLocaleDateString("pt-BR");
-        const existing = map.get(item.data) || { data: item.data, label };
-        existing.ibovespa_acumulado = parseFloat(((item.pontos / base - 1) * 100).toFixed(4));
-        map.set(item.data, existing);
-      }
+    const ibov = buildIbovespaSeries(ibovespaData, carteiraInfo.data_inicio, carteiraInfo.data_calculo ?? undefined);
+    for (const [data, valor] of ibov) {
+      const label = new Date(data + "T00:00:00").toLocaleDateString("pt-BR");
+      const existing = map.get(data) || { data, label };
+      existing.ibovespa_acumulado = valor;
+      map.set(data, existing);
     }
 
     return Array.from(map.values()).sort((a: any, b: any) => a.data.localeCompare(b.data));

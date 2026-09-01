@@ -312,3 +312,33 @@ export function buildRentabilidadeRows(
 
   return rows;
 }
+
+export interface PontoIbovespa {
+  data: string;
+  pontos: number;
+}
+
+/**
+ * Ibovespa acumulado DENTRO da janela, rebaseado no primeiro pregão dela.
+ *
+ * A série é buscada desde o início da carteira (os motores por produto precisam disso),
+ * então usar o primeiro ponto do array como base fazia duas coisas erradas ao mesmo tempo
+ * num período curto: acumulava desde 2024 e, pior, injetava pontos anteriores à janela no
+ * gráfico, esticando o eixo X de volta para 02/01/2024 num período de agosto/2026.
+ */
+export function buildIbovespaSeries(
+  pontos: PontoIbovespa[],
+  dataInicio: string,
+  dataCalculo?: string,
+): Map<string, number> {
+  const naJanela = pontos.filter(
+    (p) => p.data >= dataInicio && (!dataCalculo || p.data <= dataCalculo),
+  );
+  const serie = new Map<string, number>();
+  const base = naJanela[0]?.pontos;
+  if (!base || base <= 0) return serie;
+  for (const p of naJanela) {
+    serie.set(p.data, parseFloat(((p.pontos / base - 1) * 100).toFixed(4)));
+  }
+  return serie;
+}

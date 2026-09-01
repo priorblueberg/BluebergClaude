@@ -6,8 +6,9 @@
  * atalhos (30 dias, 12 meses, mês/ano atual, mês/ano anterior, desde o início) mais um
  * intervalo livre.
  *
- * Diferença deliberada em relação ao Gorila: o teto aqui é **D-1**. Ele deixa pedir o dia
- * corrente; nós só mostramos dia fechado.
+ * O teto é **D0**, o dia corrente, igual ao Gorila. Já foi D-1; virou D0 para que os dois
+ * lados possam ser comparados na mesma data sem manobra. Quando falta cotação do dia, os
+ * motores repetem a do dia anterior, que é o que ele faz.
  */
 
 export type PresetPeriodo =
@@ -46,11 +47,9 @@ export const PRESETS: PresetPeriodo[] = [
 const iso = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-/** D-1: hoje mostramos o dia fechado de ontem. É o teto de qualquer seleção. */
+/** D0: o teto de qualquer seleção é o dia corrente, como no Gorila. */
 export function limiteISO(hoje = new Date()): string {
-  const d = new Date(hoje);
-  d.setDate(d.getDate() - 1);
-  return iso(d);
+  return iso(hoje);
 }
 
 export function paraDate(s: string): Date {
@@ -58,15 +57,10 @@ export function paraDate(s: string): Date {
 }
 
 /**
- * Resolve um atalho em intervalo, sempre terminando no máximo em D-1.
+ * Resolve um atalho em intervalo, sempre terminando no máximo em D0.
  *
- * Os atalhos de calendário (mês/ano) são ancorados em HOJE, não em D-1: medido no Gorila
- * em 01/09/2026, "Mês anterior" deu 01/08 - 31/08, o mês anterior a hoje. Ancorar em D-1
- * daria julho no dia 1º de setembro, que não é o que ninguém espera.
- *
- * Consequência no primeiro dia do mês: "Mês atual" fica com início depois do fim (nenhum
- * dia fechado ainda no mês). A janela sai vazia de propósito, e a lâmina diz que não há
- * dado no período, em vez de mostrar um número que não existe.
+ * Os atalhos de calendário (mês/ano) são ancorados em HOJE: medido no Gorila em
+ * 01/09/2026, "Mês anterior" deu 01/08 - 31/08 e "30 dias" deu 02/08 - 01/09.
  */
 export function periodoDoPreset(preset: PresetPeriodo, hoje = new Date()): Periodo {
   const teto = limiteISO(hoje);

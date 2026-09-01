@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import type { CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
-import { buildCdiSeries } from "@/lib/cdiCalculations";
+import { buildCdiSeries, buildIbovespaSeries } from "@/lib/cdiCalculations";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
 import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
@@ -87,14 +87,7 @@ export default function CarteiraRendaFixaPage() {
         titulo_acumulado: parseFloat((r.rentAcumuladaPct * 100).toFixed(4)),
       }));
 
-    // Build Ibovespa accumulated series
-    const ibovMap = new Map<string, number>();
-    if (ibovespaData.length > 0) {
-      const basePoints = ibovespaData[0].pontos;
-      for (const item of ibovespaData) {
-        ibovMap.set(item.data, parseFloat(((item.pontos / basePoints - 1) * 100).toFixed(4)));
-      }
-    }
+    const ibovMap = buildIbovespaSeries(ibovespaData, carteiraInfo.data_inicio, carteiraInfo.data_calculo ?? undefined);
 
     const map = new Map<string, any>();
     for (const p of cdiSeries) {
