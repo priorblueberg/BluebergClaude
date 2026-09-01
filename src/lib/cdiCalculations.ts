@@ -342,3 +342,42 @@ export function buildIbovespaSeries(
   }
   return serie;
 }
+
+/**
+ * Completa a serie de CDI ate `fim`, repetindo a ultima taxa nos dias uteis sem publicacao.
+ *
+ * O BCB publica o CDI do dia D durante o dia D+1, entao a ponta da serie vive um dia
+ * atrasada, e um dia util pode faltar no meio por falha de coleta. Sem completar, cada
+ * consumidor decidia sozinho o que fazer com o buraco: o card do total (via
+ * `detailRowsBuilder`) repetia a taxa, a tabela por categoria (via `alocacaoPorGrupo` ->
+ * `buildCdiSeries`) nao repetia, e os dois mostravam CDI diferente para a MESMA janela -
+ * fundos 38,64% contra total 38,71% em 01/09/2026.
+ *
+ * Resolver aqui, na origem, faz os cinco consumidores de `buildCdiSeries` herdarem o mesmo
+ * comportamento. E o que o Gorila faz: medido em 01/09/2026, um CDB de 100% do CDI seguiu
+ * rendendo em dias sem CDI publicado.
+ *
+ * Só dias uteis entram, como na tabela `historico_cdi`.
+ */
+export function completarSerieCdi(
+  registros: CdiRecord[],
+  calendario: { data: string; dia_util: boolean }[],
+  fim: string,
+): CdiRecord[] {
+  if (registros.length === 0) return registros;
+  const porData = new Map(registros.map((r) => [r.data, r]));
+  const inicio = registros[0].data;
+  const completa: CdiRecord[] = [];
+  let ultimaTaxa: number | null = null;
+  for (const c of calendario) {
+    if (!c.dia_util || c.data < inicio || c.data > fim) continue;
+    const r = porData.get(c.data);
+    if (r) {
+      ultimaTaxa = r.taxa_anual;
+      completa.push({ ...r, dia_util: true });
+    } else if (ultimaTaxa != null) {
+      completa.push({ data: c.data, taxa_anual: ultimaTaxa, dia_util: true });
+    }
+  }
+  return completa;
+}

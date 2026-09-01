@@ -18,6 +18,7 @@ import { CdiRecord } from "@/lib/cdiCalculations";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { aplicarJanela } from "@/lib/periodo";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
+import { completarSerieCdi } from "@/lib/cdiCalculations";
 
 export interface CarteiraInfo {
   nome_carteira: string;
@@ -244,7 +245,7 @@ export function useCarteiraRF() {
         ...r,
         dia_util: calMap.get(r.data) ?? false,
       }));
-      setCdiRecords(mergedCdi);
+      setCdiRecords(completarSerieCdi(mergedCdi, calendario, dataCalculo));
 
       const cdiMap = new Map<string, number>();
       for (const c of cdiRaw) cdiMap.set(c.data, c.taxa_anual);

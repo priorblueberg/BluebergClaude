@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   limiteISO, periodoDoPreset, janelaDaLamina, aplicarJanela, deBR, fmtBR,
 } from "./periodo";
-import { buildIbovespaSeries } from "./cdiCalculations";
+import { buildIbovespaSeries, completarSerieCdi } from "./cdiCalculations";
 
 /** 01/09/2026, uma terça. O teto é D0, o próprio dia. */
 const HOJE = new Date(2026, 8, 1, 12, 0, 0);
@@ -143,5 +143,55 @@ describe("serie do Ibovespa recortada na janela", () => {
   it("janela sem pregao devolve serie vazia em vez de dividir por nada", () => {
     expect(buildIbovespaSeries(pontos, "2026-08-04", "2026-08-10").size).toBe(0);
     expect(buildIbovespaSeries([], "2024-01-01").size).toBe(0);
+  });
+});
+
+describe("serie de CDI completada ate o fim da janela", () => {
+  // O BCB publica o CDI do dia D durante o dia D+1. Sem completar, cada consumidor decidia
+  // sozinho o que fazer com o buraco e a mesma janela dava CDI diferente em telas
+  // diferentes: fundos 38,64% contra total 38,71% em 01/09/2026.
+  const cal = [
+    { data: "2026-08-27", dia_util: true },
+    { data: "2026-08-28", dia_util: true },
+    { data: "2026-08-29", dia_util: false },
+    { data: "2026-08-30", dia_util: false },
+    { data: "2026-08-31", dia_util: true },
+    { data: "2026-09-01", dia_util: true },
+  ];
+  const registros = [
+    { data: "2026-08-27", taxa_anual: 13.9, dia_util: true },
+    { data: "2026-08-28", taxa_anual: 13.9, dia_util: true },
+  ];
+
+  it("repete a ultima taxa nos dias uteis sem publicacao", () => {
+    const s = completarSerieCdi(registros, cal, "2026-09-01");
+    expect(s.map((r) => r.data)).toEqual(["2026-08-27", "2026-08-28", "2026-08-31", "2026-09-01"]);
+    expect(s.every((r) => r.taxa_anual === 13.9)).toBe(true);
+  });
+
+  it("nao passa do fim da janela", () => {
+    expect(completarSerieCdi(registros, cal, "2026-08-31").map((r) => r.data))
+      .toEqual(["2026-08-27", "2026-08-28", "2026-08-31"]);
+  });
+
+  it("nao inventa dia nao util nem dia antes do primeiro registro", () => {
+    const s = completarSerieCdi(registros, cal, "2026-09-01");
+    expect(s.some((r) => r.data === "2026-08-29" || r.data === "2026-08-30")).toBe(false);
+    const comBuraco = completarSerieCdi(registros, [{ data: "2026-08-26", dia_util: true }, ...cal], "2026-09-01");
+    expect(comBuraco[0].data).toBe("2026-08-27");
+  });
+
+  it("preenche buraco no MEIO da serie, nao so na ponta", () => {
+    const furada = [
+      { data: "2026-08-27", taxa_anual: 13.9, dia_util: true },
+      { data: "2026-08-31", taxa_anual: 14.1, dia_util: true },
+    ];
+    const s = completarSerieCdi(furada, cal, "2026-09-01");
+    expect(s.find((r) => r.data === "2026-08-28")?.taxa_anual).toBe(13.9);
+    expect(s.find((r) => r.data === "2026-09-01")?.taxa_anual).toBe(14.1);
+  });
+
+  it("serie vazia continua vazia", () => {
+    expect(completarSerieCdi([], cal, "2026-09-01")).toEqual([]);
   });
 });
