@@ -44,21 +44,27 @@ export default function EventosPage() {
     const juros = naJanela.filter((e) => e.tipo === "Pagamento de juros").reduce((s, e) => s + e.valor, 0);
     const vencidos = naJanela.filter((e) => e.tipo === "Vencimento").reduce((s, e) => s + e.valor, 0);
 
-    // Uma barra por mês da janela, mesmo os meses sem evento — senão o gráfico mente
-    // sobre a regularidade dos pagamentos.
-    const barras: { chave: string; rotulo: string; valor: number }[] = [];
-    const cursor = new Date(fim.getFullYear(), fim.getMonth() - 11, 1);
-    for (let i = 0; i < 12; i++) {
-      const chave = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
-      barras.push({ chave, rotulo: `${MESES[cursor.getMonth()]}/${String(cursor.getFullYear()).slice(2)}`, valor: 0 });
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
-    const porChave = new Map(barras.map((b) => [b.chave, b]));
+    // Soma por competência primeiro, e só depois monta as barras. Montar com zero e mutar
+    // depois deixava o recharts desenhando o estado antigo: o eixo enxergava os valores
+    // certos e as barras saíam com 3% da altura.
+    const porMes = new Map<string, number>();
     for (const e of naJanela) {
       if (!RECEBIDOS.includes(e.tipo)) continue;
-      const b = porChave.get(e.data.slice(0, 7));
-      if (b) b.valor += e.valor;
+      const k = e.data.slice(0, 7);
+      porMes.set(k, (porMes.get(k) ?? 0) + e.valor);
     }
+
+    // Uma barra por mês da janela, mesmo os meses sem evento — senão o gráfico mente
+    // sobre a regularidade dos pagamentos.
+    const barras = Array.from({ length: 12 }, (_, i) => {
+      const d = new Date(fim.getFullYear(), fim.getMonth() - 11 + i, 1);
+      const chave = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      return {
+        chave,
+        rotulo: `${MESES[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`,
+        valor: porMes.get(chave) ?? 0,
+      };
+    });
 
     const mesesComAlgo = barras.filter((b) => b.valor > 0).length;
     const total = juros + vencidos;
@@ -109,7 +115,7 @@ export default function EventosPage() {
                       formatter={(v: number) => [fmtBrl(v), "Recebido"]}
                       contentStyle={{ fontSize: 12, borderRadius: 6, border: "1px solid hsl(var(--border))" }}
                     />
-                    <Bar dataKey="valor" fill="hsl(210, 100%, 45%)" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="valor" fill="hsl(210, 100%, 45%)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
