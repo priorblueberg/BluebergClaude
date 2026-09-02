@@ -235,14 +235,30 @@ export function useEventos() {
             const noVencimento = linhas.find((r) => r.data === p.vencimento) ?? linhas[linhas.length - 1];
             // `resgates` (K), nao `liquido` (E): no dia do encerramento o motor JA baixou a
             // posicao, entao `liquido` e zero por construcao e a pagina nao mostrava evento
-            // nenhum. O capital devolvido esta em `resgates`; o juro do dia, quando o papel
-            // paga cupom, sai separado logo acima - a mesma separacao que o Gorila faz entre
-            // CASH_AMORTIZATION e CASH_INCOME.
+            // nenhum. O capital devolvido esta em `resgates`.
             const devolvido = noVencimento?.resgates ?? 0;
-            if (devolvido > 0.01) {
+            // O Gorila quebra o vencimento em dois lancamentos: "Amortizacoes", que e o
+            // principal corrigido, e "Rendimentos", que e o juro. No CDB IPCA+5,6% de
+            // 10/08/2026 sao R$ 10.559,66 e R$ 744,28. Num papel "No Vencimento" o motor nao
+            // separa - devolve tudo em `resgates` - entao a separacao sai aqui, com o
+            // principal corrigido que o motor passou a expor.
+            const bruto = Math.min(noVencimento?.principalCorrigido ?? 0, devolvido);
+            // Resto de centavos entre a base economica e o liquido nao e rendimento: no CDB
+            // Inter, que ja tem o juro pago como cupom, sobravam R$ 0,07. Abaixo de um real
+            // o resto fica no principal em vez de virar um evento de troco.
+            const juroFinal = devolvido - bruto > 1 ? devolvido - bruto : 0;
+            const principal = devolvido - juroFinal;
+            if (principal > 0.01) {
               lista.push({
-                data: p.vencimento, tipo: "Vencimento", ativo: nomeDe(p), valor: devolvido,
-                valorUnitario: qtd && qtd > 0 ? devolvido / qtd : null,
+                data: p.vencimento, tipo: "Vencimento", ativo: nomeDe(p), valor: principal,
+                valorUnitario: qtd && qtd > 0 ? principal / qtd : null,
+                quantidade: qtd, custodiante: custodianteDe(p),
+              });
+            }
+            if (juroFinal > 0.01) {
+              lista.push({
+                data: p.vencimento, tipo: "Pagamento de juros", ativo: nomeDe(p), valor: juroFinal,
+                valorUnitario: qtd && qtd > 0 ? juroFinal / qtd : null,
                 quantidade: qtd, custodiante: custodianteDe(p),
               });
             }

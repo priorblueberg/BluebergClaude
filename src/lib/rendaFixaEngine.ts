@@ -67,6 +67,14 @@ export interface DailyRow {
   qtdResgate2: number;        // QTD Resgate (2)
   // Green columns
   baseEconomica: number;      // Base Econômica
+  /**
+   * O principal do papel ANTES de baixar o que saiu no dia - a base econômica já corrigida
+   * pelo índice, mas ainda sem o resgate. Só de leitura: nenhuma conta do motor usa este
+   * campo. É o que a tela de Eventos precisa para separar amortização de rendimento no
+   * vencimento, como o Gorila faz (CDB IPCA+5,6%: R$ 10.559,66 de amortização e R$ 744,28
+   * de rendimento). Em `baseEconomica` esse número já foi a zero no dia do encerramento.
+   */
+  principalCorrigido: number;
   aplicacaoExCupom: number;   // Aplicação Ex Cupom
   resgateExCupom: number;     // Resgate Ex Cupom
   // Legacy (kept for consumers like AnaliseIndividualPage)
@@ -672,6 +680,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
       qtdAplicacao2,
       qtdResgate2,
       baseEconomica,
+      principalCorrigido: tempBaseEconomica,
       aplicacaoExCupom,
       resgateExCupom,
       rentabilidadeDiaria: rentDiaria,
@@ -725,6 +734,7 @@ function makeZeroRow(data: string, diaUtil: boolean, cotaInicial: number): Daily
     qtdAplicacao2: 0,
     qtdResgate2: 0,
     baseEconomica: 0,
+    principalCorrigido: 0,
     aplicacaoExCupom: 0,
     resgateExCupom: 0,
     rentabilidadeDiaria: null,
