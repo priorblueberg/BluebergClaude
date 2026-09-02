@@ -87,13 +87,19 @@ export default function PatrimonioChart({
   );
 }
 
-/** Série diária de patrimônio a partir das linhas do motor de carteira. */
+/**
+ * Série de patrimônio a partir das linhas do motor de carteira, **só em dia útil**.
+ *
+ * O motor emite linha todo dia do calendário; fim de semana virava ponto repetido, o que
+ * inchava a série (978 pontos contra 673 de pregão no consolidado) sem acrescentar
+ * informação. Mesma regra do gráfico de rentabilidade.
+ */
 export function serieDePatrimonio(
-  carteiraRows: { data: string; liquido: number; liquido2: number }[],
+  carteiraRows: { data: string; diaUtil?: boolean; liquido: number; liquido2: number }[],
   ateData: string,
 ): PontoPatrimonio[] {
   return carteiraRows
-    .filter((r) => r.data <= ateData && (r.liquido > 0 || r.liquido2 > 0))
+    .filter((r) => r.diaUtil !== false && r.data <= ateData && (r.liquido > 0 || r.liquido2 > 0))
     .map((r) => ({
       data: r.data,
       label: new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR"),
