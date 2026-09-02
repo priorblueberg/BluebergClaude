@@ -124,20 +124,36 @@ export function useEventos() {
         });
       }
 
-      // --- cupons: precisam do motor ---
+      // --- o que precisa do motor: cupons e o valor devolvido no vencimento ---
       const comCupom = todos.filter(
         (c) => c.pagamento && c.pagamento !== "No Vencimento" && MODALIDADES_COM_CUPOM.includes(c.modalidade),
       );
 
-      if (comCupom.length > 0) {
-        const minData = comCupom.reduce((m, p) => (p.data_inicio < m ? p.data_inicio : m), comCupom[0].data_inicio);
+      /**
+       * Papel que venceu dentro da janela. Nao da para tirar isso das movimentacoes: so um
+       * dos sete vencidos tem "Resgate no Vencimento" cadastrado, o resto vence na curva,
+       * sem lancamento. Contando so pela movimentacao, a pagina mostrava R$ 40.577 de
+       * vencimento contra R$ 103.193 de amortizacao no Gorila.
+       */
+      const vencidos = todos.filter(
+        (c) =>
+          c.vencimento && c.vencimento <= dataReferenciaISO &&
+          !movs.some((m: any) => String(m.codigo_custodia) === String(c.codigo_custodia)
+            && m.tipo_movimentacao === "Resgate no Vencimento") &&
+          !(c.resgate_total && c.resgate_total < c.vencimento),
+      );
+
+      const precisamDoMotor = Array.from(new Set([...comCupom, ...vencidos]));
+
+      if (precisamDoMotor.length > 0) {
+        const minData = precisamDoMotor.reduce((m, p) => (p.data_inicio < m ? p.data_inicio : m), precisamDoMotor[0].data_inicio);
         // O calendario precisa alcancar o VENCIMENTO: e de la que o motor conta as datas de
         // cupom para tras. Truncar no dia de calculo dispara um cupom fantasma no ultimo dia.
-        const maxData = comCupom.reduce(
+        const maxData = precisamDoMotor.reduce(
           (m, p) => { const fim = p.vencimento || p.data_calculo || dataReferenciaISO; return fim > m ? fim : m; },
           dataReferenciaISO,
         );
-        const precisaCdi = comCupom.some((p) => (p.indexador || "").includes("CDI"));
+        const precisaCdi = precisamDoMotor.some((p) => (p.indexador || "").includes("CDI"));
 
         const [cal, cdi] = await Promise.all([
           fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
@@ -157,9 +173,9 @@ export function useEventos() {
           movPorCodigo.get(k)!.push({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) });
         }
 
-        const seriesIpca: SeriesIpca | null = algumIndexadoAoIpca(comCupom) ? await carregarSeriesIpca() : null;
+        const seriesIpca: SeriesIpca | null = algumIndexadoAoIpca(precisamDoMotor) ? await carregarSeriesIpca() : null;
 
-        for (const p of comCupom) {
+        for (const p of precisamDoMotor) {
           const fim = p.resgate_total || p.vencimento || dataReferenciaISO;
           const linhas = calcularRendaFixaDiario({
             dataInicio: p.data_inicio,
@@ -178,15 +194,30 @@ export function useEventos() {
             calendarioSorted: true,
           }) as any[];
 
-          for (const r of linhas) {
-            if ((r.pagamentoJuros ?? 0) <= 0.01) continue;
-            const qtd = Number(p.quantidade) || null;
-            lista.push({
-              data: r.data, tipo: "Pagamento de juros", ativo: nomeDe(p),
-              valor: r.pagamentoJuros,
-              valorUnitario: qtd && qtd > 0 ? r.pagamentoJuros / qtd : null,
-              quantidade: qtd, custodiante: custodianteDe(p),
-            });
+          const qtd = Number(p.quantidade) || null;
+
+          if (comCupom.includes(p)) {
+            for (const r of linhas) {
+              if ((r.pagamentoJuros ?? 0) <= 0.01) continue;
+              lista.push({
+                data: r.data, tipo: "Pagamento de juros", ativo: nomeDe(p),
+                valor: r.pagamentoJuros,
+                valorUnitario: qtd && qtd > 0 ? r.pagamentoJuros / qtd : null,
+                quantidade: qtd, custodiante: custodianteDe(p),
+              });
+            }
+          }
+
+          if (vencidos.includes(p)) {
+            const noVencimento = linhas.find((r) => r.data === p.vencimento) ?? linhas[linhas.length - 1];
+            const devolvido = noVencimento?.liquido ?? 0;
+            if (devolvido > 0.01) {
+              lista.push({
+                data: p.vencimento, tipo: "Vencimento", ativo: nomeDe(p), valor: devolvido,
+                valorUnitario: qtd && qtd > 0 ? devolvido / qtd : null,
+                quantidade: qtd, custodiante: custodianteDe(p),
+              });
+            }
           }
         }
       }
