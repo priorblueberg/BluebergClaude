@@ -210,7 +210,12 @@ export function useEventos() {
 
           if (vencidos.includes(p)) {
             const noVencimento = linhas.find((r) => r.data === p.vencimento) ?? linhas[linhas.length - 1];
-            const devolvido = noVencimento?.liquido ?? 0;
+            // `resgates` (K), nao `liquido` (E): no dia do encerramento o motor JA baixou a
+            // posicao, entao `liquido` e zero por construcao e a pagina nao mostrava evento
+            // nenhum. O capital devolvido esta em `resgates`; o juro do dia, quando o papel
+            // paga cupom, sai separado logo acima - a mesma separacao que o Gorila faz entre
+            // CASH_AMORTIZATION e CASH_INCOME.
+            const devolvido = noVencimento?.resgates ?? 0;
             if (devolvido > 0.01) {
               lista.push({
                 data: p.vencimento, tipo: "Vencimento", ativo: nomeDe(p), valor: devolvido,
