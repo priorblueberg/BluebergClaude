@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, gerarDatasPagamentoJuros } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaDoTitulo, carregarSeriesIpca, algumIndexadoAoIpca, type SeriesIpca } from "@/lib/ipcaSeries";
 
 /**
@@ -197,17 +197,24 @@ export function useEventos() {
           const qtd = Number(p.quantidade) || null;
 
           if (comCupom.includes(p)) {
-            // No dia em que a posicao e encerrada, o motor lanca `pagamentoJuros` para fechar
-            // a conta - nao e cupom pago. Quando o encerramento foi um RESGATE antecipado, esse
-            // dinheiro ja saiu inteiro pela movimentacao: o CDB Bradesco CDI+1,5% resgatado em
-            // 09/03/2026 tem "Resgate Total" de R$ 113.131,56 e a pagina ainda somava R$ 3.131,56
-            // de cupom no mesmo dia - a unica divergencia de cupom contra o Gorila, que num
-            // resgate antecipado nao lanca CASH_INCOME nenhum.
+            // No dia em que a posicao e encerrada, o motor lanca `pagamentoJuros` para fechar a
+            // conta, seja ou nao data de cupom. Num RESGATE antecipado esse dinheiro ja saiu
+            // inteiro pela movimentacao: o CDB Bradesco CDI+1,5% resgatado em 09/03/2026 tem
+            // "Resgate Total" de R$ 113.131,56 e a pagina ainda somava R$ 3.131,56 de cupom no
+            // mesmo dia. O Gorila nao lanca CASH_INCOME num resgate antecipado.
+            //
+            // O corte tem que ser pela AGENDA, nao pela data do resgate: o CDB Santander 12,5%
+            // foi resgatado em 27/03/2026, que por acaso era dia de cupom, e o Gorila lanca os
+            // R$ 6.016,45 normalmente. Cortando pela data do resgate, marco caia para
+            // R$ 29.557,15 contra R$ 36.217,52 dele.
             const encerradoPorResgate = p.resgate_total && (!p.vencimento || p.resgate_total < p.vencimento)
               ? p.resgate_total : null;
+            const agenda = encerradoPorResgate && p.vencimento
+              ? gerarDatasPagamentoJuros(p.data_inicio, p.vencimento, p.pagamento, calendario, encerradoPorResgate)
+              : null;
             for (const r of linhas) {
               if ((r.pagamentoJuros ?? 0) <= 0.01) continue;
-              if (encerradoPorResgate && r.data === encerradoPorResgate) continue;
+              if (encerradoPorResgate && r.data === encerradoPorResgate && !agenda?.has(r.data)) continue;
               lista.push({
                 data: r.data, tipo: "Pagamento de juros", ativo: nomeDe(p),
                 valor: r.pagamentoJuros,
