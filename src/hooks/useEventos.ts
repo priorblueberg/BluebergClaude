@@ -13,13 +13,16 @@ import { fatoresIpcaDoTitulo, carregarSeriesIpca, algumIndexadoAoIpca, type Seri
  * tipos: `CASH_INCOME`, que é cupom, e `CASH_AMORTIZATION`, que é o principal devolvido no
  * vencimento. Medido em 02/09/2026: 93 rendimentos e 7 amortizações.
  *
- * Aqui os tipos são os que o nosso motor sabe calcular sem inventar:
- *  - "Pagamento de juros": cupom, do próprio motor (`pagamentoJuros`)
- *  - "Vencimento" / "Resgate": o que voltou, das movimentações
- *  - "Come-cotas": a mordida semestral nos fundos
+ * Aqui os tipos são:
+ *  - "Pagamento de juros" = `CASH_INCOME` dele: cupom do motor (`pagamentoJuros`) mais o juro
+ *    do dia do vencimento
+ *  - "Vencimento" = `CASH_AMORTIZATION` dele: o principal corrigido devolvido no vencimento
+ *  - "Resgate" e "Come-cotas": das movimentações. O Gorila não tem esses dois - resgate lá é
+ *    transação, não evento - e por isso ficam fora dos cartões de total.
  *
- * Diferença conhecida em relação ao Gorila: no vencimento ele separa principal (amortização)
- * de juros (rendimento); aqui o vencimento entra como um evento só, pelo valor devolvido.
+ * Conferido contra a API dele na janela de 12 meses até 02/09/2026: 125 rendimentos somando
+ * R$ 434.295,37 contra R$ 434.295,44, e 7 amortizações somando R$ 103.193,61 dos dois lados,
+ * cada papel batendo no centavo.
  */
 export type TipoEvento = "Pagamento de juros" | "Vencimento" | "Resgate" | "Come-cotas";
 
