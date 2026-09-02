@@ -12,6 +12,7 @@ import {
   ClipboardList,
   ChevronsLeft,
   ChevronsRight,
+  CalendarClock,
 } from "lucide-react";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 
@@ -28,6 +29,7 @@ const menuItems: MenuItem[] = [
   { title: "Movimentações", url: "/movimentacoes", icon: ArrowLeftRight },
   { title: "Custódia", url: "/custodia", icon: Vault, adminOnly: true },
   { title: "Controle de Carteiras", url: "/controle-carteiras", icon: Briefcase, adminOnly: true },
+  { title: "Eventos", url: "/eventos", icon: CalendarClock },
   { title: "Proventos Recebidos", url: "/proventos", icon: DollarSign },
   
   { title: "Configurações", url: "/configuracoes", icon: Settings },
