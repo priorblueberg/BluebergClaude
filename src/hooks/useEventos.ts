@@ -104,6 +104,24 @@ export function useEventos() {
       const porCodigo = new Map<string, any>();
       for (const c of todos) porCodigo.set(String(c.codigo_custodia), c);
 
+      /**
+       * Papel que venceu dentro da janela. Todos passam pelo motor, inclusive os que tem
+       * "Resgate no Vencimento" cadastrado: o valor lancado na movimentacao e inconsistente
+       * entre papeis (o CDB Inter traz principal + juro, R$ 40.577,14; o CDB Santander traz
+       * so o principal, R$ 100.000,00) e o Gorila sempre separa os dois - no Inter ele mostra
+       * R$ 40.000 de amortizacao e R$ 577,14 de rendimento. Tirando do motor, o cupom final
+       * saia duas vezes.
+       *
+       * Tambem nao da para tirar isso so das movimentacoes: dos sete vencidos na janela, so um
+       * tem lancamento; o resto vence na curva.
+       */
+      const vencidos = todos.filter(
+        (c) =>
+          c.vencimento && c.vencimento <= dataReferenciaISO &&
+          !(c.resgate_total && c.resgate_total < c.vencimento),
+      );
+      const noMotorPorVencimento = new Set(vencidos.map((c) => String(c.codigo_custodia)));
+
       const lista: EventoRow[] = [];
       for (const m of movs as any[]) {
         if (m.data > dataReferenciaISO) continue;
@@ -112,7 +130,10 @@ export function useEventos() {
         const t = String(m.tipo_movimentacao);
         let tipo: TipoEvento | null = null;
         if (t === "Come-Cotas") tipo = "Come-cotas";
-        else if (t === "Resgate no Vencimento") tipo = "Vencimento";
+        else if (t === "Resgate no Vencimento") {
+          if (noMotorPorVencimento.has(String(m.codigo_custodia))) continue;
+          tipo = "Vencimento";
+        }
         else if (t === "Resgate" || t === "Resgate Total") tipo = "Resgate";
         if (!tipo) continue;
         const qtd = m.quantidade != null ? Number(m.quantidade) : null;
@@ -127,20 +148,6 @@ export function useEventos() {
       // --- o que precisa do motor: cupons e o valor devolvido no vencimento ---
       const comCupom = todos.filter(
         (c) => c.pagamento && c.pagamento !== "No Vencimento" && MODALIDADES_COM_CUPOM.includes(c.modalidade),
-      );
-
-      /**
-       * Papel que venceu dentro da janela. Nao da para tirar isso das movimentacoes: so um
-       * dos sete vencidos tem "Resgate no Vencimento" cadastrado, o resto vence na curva,
-       * sem lancamento. Contando so pela movimentacao, a pagina mostrava R$ 40.577 de
-       * vencimento contra R$ 103.193 de amortizacao no Gorila.
-       */
-      const vencidos = todos.filter(
-        (c) =>
-          c.vencimento && c.vencimento <= dataReferenciaISO &&
-          !movs.some((m: any) => String(m.codigo_custodia) === String(c.codigo_custodia)
-            && m.tipo_movimentacao === "Resgate no Vencimento") &&
-          !(c.resgate_total && c.resgate_total < c.vencimento),
       );
 
       const precisamDoMotor = Array.from(new Set([...comCupom, ...vencidos]));
