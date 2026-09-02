@@ -84,6 +84,8 @@ export default function CarteiraCategoriaView({
     const map = new Map<string, any>();
     for (const p of cdiSeries) map.set(p.data, { data: p.data, label: p.label, cdi_acumulado: p.cdi_acumulado });
     for (const r of carteiraRows) {
+      // So dia util no grafico (ver AppPages).
+      if (!r.diaUtil) continue;
       if (r.liquido <= 0 && r.liquido2 <= 0) continue;
       const label = new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR");
       const atual = map.get(r.data) || { data: r.data, label };

@@ -87,7 +87,8 @@ export default function CarteiraRendaFixaPage() {
     const cdiSeries = buildCdiSeries(cdiRecords, carteiraInfo.data_inicio, carteiraInfo.data_calculo ?? undefined);
 
     const enginePoints = carteiraRows
-      .filter(r => r.liquido > 0 || r.liquido2 > 0)
+      // So dia util no grafico (ver AppPages).
+      .filter(r => r.diaUtil && (r.liquido > 0 || r.liquido2 > 0))
       .map(r => ({
         data: r.data,
         label: new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR"),

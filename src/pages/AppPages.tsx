@@ -297,6 +297,9 @@ export const CarteiraVisaoGeral = () => {
     }
 
     for (const r of carteiraRows) {
+      // So dia util no grafico: o motor de carteira emite linha todo dia do calendario, e
+      // fim de semana virava ponto repetido.
+      if (!r.diaUtil) continue;
       if (r.liquido <= 0 && r.liquido2 <= 0) continue;
       const label = new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR");
       const existing = map.get(r.data) || { data: r.data, label };

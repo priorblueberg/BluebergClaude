@@ -55,20 +55,15 @@ export function buildPrefixadoSeries(
 
   const fatorDiario = calcFatorDiario(taxaAnual);
 
-  const dtInicio = new Date(dataInicio + "T00:00:00");
-  const dtAnterior = new Date(dtInicio);
-  dtAnterior.setDate(dtAnterior.getDate() - 1);
-  const anteriorISO = dtAnterior.toISOString().slice(0, 10);
-
-  const points: ChartPoint[] = [
-    { data: anteriorISO, label: dtAnterior.toLocaleDateString("pt-BR"), cdi_acumulado: 0 },
-  ];
-
+  // Comeca no dia da aplicacao (valendo 0%, porque o titulo nao rende D0) e so com dia
+  // util. Nao ha mais ponto ancora no dia anterior.
+  const points: ChartPoint[] = [];
   let fatorAcumulado = 1;
 
   for (const rec of filtered) {
+    if (!rec.dia_util || rec.data < dataInicio) continue;
     // Não há rentabilidade no dia da aplicação (D0); título rentabiliza a partir de D+1
-    if (rec.dia_util && rec.data !== dataInicio) {
+    if (rec.data !== dataInicio) {
       fatorAcumulado *= 1 + fatorDiario;
     }
     points.push({
@@ -176,26 +171,15 @@ export function buildCdiSeries(cdiRecords: CdiRecord[], dataInicio: string, data
 
   if (filtered.length === 0) return [];
 
-  const dtInicio = new Date(dataInicio + "T00:00:00");
-  const dtAnterior = new Date(dtInicio);
-  dtAnterior.setDate(dtAnterior.getDate() - 1);
-  const anteriorISO = dtAnterior.toISOString().slice(0, 10);
-
-  const points: ChartPoint[] = [
-    {
-      data: anteriorISO,
-      label: dtAnterior.toLocaleDateString("pt-BR"),
-      cdi_acumulado: 0,
-    },
-  ];
-
+  // Sem ponto ancora no dia ANTERIOR ao inicio: o grafico comeca no dia da primeira
+  // aplicacao da carteira. E so dia util entra - a serie de CDI ja e so de dia util, e o
+  // lado da carteira e filtrado por `diaUtil` na montagem do grafico.
+  const points: ChartPoint[] = [];
   let fatorAcumulado = 1;
 
   for (const rec of filtered) {
-    if (rec.dia_util) {
-      fatorAcumulado *= 1 + calcFatorDiario(rec.taxa_anual);
-    }
-
+    if (!rec.dia_util) continue;
+    fatorAcumulado *= 1 + calcFatorDiario(rec.taxa_anual);
     points.push({
       data: rec.data,
       label: new Date(rec.data + "T00:00:00").toLocaleDateString("pt-BR"),

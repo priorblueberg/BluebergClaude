@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildCdiSeries, buildIbovespaSeries } from "./cdiCalculations";
+import { buildCdiSeries, buildIbovespaSeries, buildPrefixadoSeries } from "./cdiCalculations";
 
 describe("serie do Ibovespa recortada na janela", () => {
   // A serie chega desde o inicio da carteira porque os motores por produto precisam dela
@@ -63,5 +63,45 @@ describe("benchmark de CDI em dia sem publicacao", () => {
     const ate31 = buildCdiSeries(registros, "2026-08-27", "2026-08-31");
     const ate01 = buildCdiSeries(registros, "2026-08-27", "2026-09-01");
     expect(ate01[ate01.length - 1].cdi_acumulado).toBe(ate31[ate31.length - 1].cdi_acumulado);
+  });
+});
+
+describe("primeiro ponto e granularidade do grafico de rentabilidade", () => {
+  // Pedido do Daniel em 2026-09-01: o grafico comeca no dia da primeira aplicacao da
+  // carteira, nao num ponto ancora no dia anterior, e so tem dia util.
+  const registros = [
+    { data: "2026-08-27", taxa_anual: 13.9, dia_util: true },
+    { data: "2026-08-28", taxa_anual: 13.9, dia_util: true },
+    { data: "2026-08-29", taxa_anual: 13.9, dia_util: false }, // sabado
+    { data: "2026-08-31", taxa_anual: 13.9, dia_util: true },
+  ];
+
+  it("o primeiro ponto e o proprio inicio, nao o dia anterior", () => {
+    const s = buildCdiSeries(registros, "2026-08-27", "2026-08-31");
+    expect(s[0].data).toBe("2026-08-27");
+    expect(s.some((p) => p.data < "2026-08-27")).toBe(false);
+  });
+
+  it("nao entra dia nao util", () => {
+    const s = buildCdiSeries(registros, "2026-08-27", "2026-08-31");
+    expect(s.map((p) => p.data)).toEqual(["2026-08-27", "2026-08-28", "2026-08-31"]);
+  });
+
+  it("o benchmark ja rende no primeiro dia (D0), diferente do produto", () => {
+    const s = buildCdiSeries(registros, "2026-08-27", "2026-08-31");
+    expect(s[0].cdi_acumulado).toBeCloseTo((Math.pow(1.139, 1 / 252) - 1) * 100, 4);
+  });
+
+  it("no prefixado o primeiro ponto vale 0%, porque o titulo nao rende D0", () => {
+    const dias = [
+      { data: "2026-08-27", dia_util: true },
+      { data: "2026-08-28", dia_util: true },
+      { data: "2026-08-29", dia_util: false },
+      { data: "2026-08-31", dia_util: true },
+    ];
+    const s = buildPrefixadoSeries(dias, 12, "2026-08-27", "2026-08-31");
+    expect(s.map((p) => p.data)).toEqual(["2026-08-27", "2026-08-28", "2026-08-31"]);
+    expect(s[0].cdi_acumulado).toBe(0);
+    expect(s[1].cdi_acumulado).toBeCloseTo((Math.pow(1.12, 1 / 252) - 1) * 100, 4);
   });
 });
