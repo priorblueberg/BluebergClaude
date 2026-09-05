@@ -1412,7 +1412,7 @@ export default function CadastrarTransacaoPage() {
                       ? cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
                       : ""
                   }
-                  placeholder={fundoId ? "Cota não divulgada" : "Selecione o fundo e a data"}
+                  placeholder={fundoId && data ? "Cota não divulgada" : "Selecione o fundo e a data"}
                 />
               </Field>
               <Field label="Quantidade de Cotas" required={ehComeCotas}>
