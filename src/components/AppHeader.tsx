@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { format, parse, isValid, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Bell, CalendarIcon, ChevronDown, RefreshCw, Plus } from "lucide-react";
@@ -17,19 +17,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-/** D0: o teto e o dia corrente, como no Gorila. Falta cotacao do dia? Os motores repetem a
- *  do dia anterior, entao o numero existe. */
-function getMaxDate() {
-  return startOfDay(new Date());
-}
-
-function clampDate(date: Date): Date {
-  const max = getMaxDate();
-  return date > max ? max : date;
-}
 
 export function AppHeader({ disableControls = false }: { disableControls?: boolean }) {
-  const { dataReferencia, setDataReferencia, applyDataReferencia, setIsRecalculating } = useDataReferencia();
+  const { dataReferencia, setDataReferencia, applyDataReferencia, setIsRecalculating, maxDate } = useDataReferencia();
   const [inputValue, setInputValue] = useState(format(dataReferencia, "dd/MM/yyyy"));
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [isForceRecalculating, setIsForceRecalculating] = useState(false);
@@ -41,6 +31,18 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
   const isAdmin = useIsAdmin();
 
   const isStagedSameAsApplied = format(stagedDate, "yyyy-MM-dd") === format(dataReferencia, "yyyy-MM-dd");
+
+  // O teto e D-1 dia util (ver DataReferenciaContext): digitar ou clicar em data posterior
+  // cai no teto em vez de ser ignorado.
+  const clampDate = (date: Date) => (date > maxDate ? maxDate : startOfDay(date));
+
+  // O teto chega do banco depois do primeiro render (o calendario e assincrono). Quando ele
+  // corrige a data de referencia, o campo e o staged precisam acompanhar, senao o header
+  // mostra uma data e a tela calcula outra.
+  useEffect(() => {
+    setStagedDate(dataReferencia);
+    setInputValue(format(dataReferencia, "dd/MM/yyyy"));
+  }, [dataReferencia]);
 
   /** Aba com build antigo nao pode recalcular: ela reescreve a carteira inteira
    *  com regras velhas. Melhor recarregar do que corromper os dados. */
@@ -133,7 +135,6 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
     navigate("/");
   };
 
-  const maxDate = getMaxDate();
 
   return (
     <div className="relative">
