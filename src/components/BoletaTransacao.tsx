@@ -23,7 +23,7 @@ import { MOEDAS } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, ehFutura, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -167,7 +167,14 @@ export default function BoletaTransacao({
 }) {
   const { user } = useAuth();
   const isAdmin = useIsAdmin();
-  const { dataReferenciaISO, applyDataReferencia } = useDataReferencia();
+  const { dataReferenciaISO, applyDataReferencia, maxDate } = useDataReferencia();
+  /**
+   * Janela em que uma operacao pode ser lancada: do inicio das carteiras ate a ultima data de
+   * calculo. Os campos de data ficam limitados a ela, e a validacao repete o limite porque o
+   * usuario pode digitar em vez de usar o seletor.
+   */
+  const maxDataISO = `${maxDate.getFullYear()}-${String(maxDate.getMonth() + 1).padStart(2, "0")}-${String(maxDate.getDate()).padStart(2, "0")}`;
+  const limitesData = { min: DATA_MINIMA_CARTEIRA, max: maxDataISO };
 
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -439,10 +446,9 @@ export default function BoletaTransacao({
     const dateISO = format(d, "yyyy-MM-dd");
     setData(dateISO);
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (d > today) {
-      setResgateDateError("A data não pode ser superior à data atual.");
+    const foraJanela = foraDaJanela(dateISO, maxDataISO);
+    if (foraJanela) {
+      setResgateDateError(foraJanela);
       return;
     }
 
@@ -770,8 +776,9 @@ export default function BoletaTransacao({
       }
       setValidationErrors(new Set());
 
-      if (ehFutura(data)) {
-        toast.error("A data da operação não pode ser no futuro.");
+      const foraJanela = foraDaJanela(data, maxDataISO);
+      if (foraJanela) {
+        toast.error(foraJanela);
         return;
       }
       if (!(await ehDiaUtil(data))) {
@@ -898,8 +905,9 @@ export default function BoletaTransacao({
       }
       setValidationErrors(new Set());
 
-      if (ehFutura(data)) {
-        toast.error("A data da operação não pode ser no futuro.");
+      const foraJanela = foraDaJanela(data, maxDataISO);
+      if (foraJanela) {
+        toast.error(foraJanela);
         return;
       }
       if (!(await ehDiaUtil(data))) {
@@ -1125,8 +1133,9 @@ export default function BoletaTransacao({
 
     // Aplicacao com data futura deixa a custodia depois da data de referencia e
     // a carteira aparece como "Nao Iniciada"; o resgate ja barrava isso.
-    if (ehFutura(data)) {
-      toast.error("A Data de Transação não pode ser no futuro.");
+    const foraJanela = foraDaJanela(data, maxDataISO);
+    if (foraJanela) {
+      toast.error(foraJanela);
       return;
     }
 
@@ -1374,7 +1383,7 @@ export default function BoletaTransacao({
           <>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Data da Transação" required>
-                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+                <Input type="date" value={data} min={limitesData.min} max={limitesData.max} onChange={(e) => setData(e.target.value)} />
               </Field>
               {/* Na venda so aparece moeda com saldo na data, por isso ela vem depois. */}
               <Field label="Moeda" required>
@@ -1463,7 +1472,7 @@ export default function BoletaTransacao({
           <>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Data da Transação" required>
-                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+                <Input type="date" value={data} min={limitesData.min} max={limitesData.max} onChange={(e) => setData(e.target.value)} />
               </Field>
               <Field label="Valor" required>
                 <Input
@@ -1622,6 +1631,8 @@ export default function BoletaTransacao({
                     <input
                       type="date"
                       value={data}
+                      min={limitesData.min}
+                      max={limitesData.max}
                       onChange={(e) => { setData(e.target.value); setValidationErrors((prev) => { const n = new Set(prev); n.delete("data"); return n; }); }}
                       className={`input-field ${validationErrors.has("data") ? "border-destructive ring-1 ring-destructive" : ""}`}
                     />
@@ -1807,6 +1818,8 @@ export default function BoletaTransacao({
                     <input
                       type="date"
                       value={data}
+                      min={limitesData.min}
+                      max={limitesData.max}
                       onChange={(e) => { setData(e.target.value); setValidationErrors((prev) => { const n = new Set(prev); n.delete("data"); return n; }); }}
                       className={`input-field ${validationErrors.has("data") ? "border-destructive ring-1 ring-destructive" : ""}`}
                     />
@@ -1889,6 +1902,11 @@ export default function BoletaTransacao({
                       mode="single"
                       selected={resgateDate}
                       onSelect={handleResgateCalendarSelect}
+                      // Fora da janela nem aparece clicavel: o resgate seria recusado depois.
+                      disabled={{
+                        before: new Date(limitesData.min + "T00:00:00"),
+                        after: new Date(limitesData.max + "T00:00:00"),
+                      }}
                       initialFocus
                       className="p-3 pointer-events-auto"
                     />

@@ -28,6 +28,27 @@ export async function ehDiaUtil(dataISO: string): Promise<boolean> {
   return !!data?.dia_util;
 }
 
+/**
+ * Primeiro dia em que uma carteira pode ter operacao. As series de mercado (CDI, calendario,
+ * cotacoes) comecam em 02/01/2024; antes disso o motor nao tem com o que calcular.
+ */
+export const DATA_MINIMA_CARTEIRA = "2024-01-02";
+
+/**
+ * Mensagem se a data da operacao estiver fora da janela permitida, ou null se estiver dentro.
+ *
+ * O teto e a ultima data de calculo (o penultimo dia util, ver DataReferenciaContext), nao
+ * "hoje": operacao lancada num dia que ainda nao fechou entra numa janela onde falta dado.
+ * Vale so para data de OPERACAO - vencimento de titulo e no futuro por definicao.
+ */
+export function foraDaJanela(dataISO: string, maxISO: string): string | null {
+  if (dataISO < DATA_MINIMA_CARTEIRA)
+    return `A data não pode ser anterior a ${fmtData(DATA_MINIMA_CARTEIRA)}, início das carteiras.`;
+  if (dataISO > maxISO)
+    return `A data não pode ser posterior a ${fmtData(maxISO)}, a última data com cálculo fechado.`;
+  return null;
+}
+
 export function ehFutura(dataISO: string): boolean {
   const hoje = new Date();
   hoje.setHours(0, 0, 0, 0);
