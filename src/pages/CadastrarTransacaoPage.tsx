@@ -635,6 +635,9 @@ export default function CadastrarTransacaoPage() {
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
   const showFundoFields = isFundo && !!tipoMovimentacao;
 
+  /** Come-cotas e a unica movimentacao de fundo com quantidade digitada (vem do extrato). */
+  const ehComeCotas = tipoMovimentacao === "Come-Cotas";
+
   /** Quantidade de cotas da operacao: valor / cota. Exibida, nunca digitada. */
   const qtdCotasDerivada = useMemo(() => {
     const v = parseCurrencyToNumber(valor);
@@ -812,6 +815,8 @@ export default function CadastrarTransacaoPage() {
       if (!data) faltando.add("data");
       if (!valor || parseCurrencyToNumber(valor) <= 0) faltando.add("valor");
       if (!instituicaoId) faltando.add("instituicaoId");
+      // So o come-cotas tem quantidade digitada; nos outros ela e derivada da cota.
+      if (ehComeCotas && parseQuantidade(qtdCotas) == null) faltando.add("qtdCotas");
       if (faltando.size > 0) {
         setValidationErrors(faltando);
         toast.error("Preencha todos os campos obrigatórios.");
@@ -835,22 +840,30 @@ export default function CadastrarTransacaoPage() {
         const valorNum = parseCurrencyToNumber(valor);
 
         const dataCotizacao = await dataCotizacaoFundo(fundoId, data, tipoMovimentacao);
-
-        // A quantidade nao e digitada: em fundo ela e exatamente valor / cota da data de
-        // cotizacao, sem spread nem taxa que justifiquem um numero diferente (ao contrario
-        // do cambio). Sem a cota divulgada nao da para saber quantas cotas a operacao
-        // comprou, e gravar um palpite corromperia a posicao - entao a boleta barra.
         const { naData: cotaDoDia, ultima: ultimaCota } = await cotaFundo(fundoId, dataCotizacao);
-        if (cotaDoDia == null) {
-          setSubmitting(false);
-          toast.error(
-            ultimaCota
-              ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)}. A última é de ${fmtData(ultimaCota.data)}: lance a operação quando a cota sair.`
-              : "Não há cota disponível para esse fundo nessa data.",
-          );
-          return;
+
+        // Em aplicacao e resgate a quantidade e exatamente valor / cota, sem spread nem taxa
+        // que justifiquem outro numero (ao contrario do cambio) - por isso ela nao e digitada,
+        // e sem a cota divulgada a operacao nao pode ser lancada.
+        //
+        // Come-cotas e o oposto: quem calcula quantas cotas cancelar e o administrador, a
+        // partir do ganho de cada cotista. Nos nao temos como derivar isso, entao a quantidade
+        // vem do extrato, digitada.
+        let qtd: number;
+        if (ehComeCotas) {
+          qtd = parseQuantidade(qtdCotas)!;
+        } else {
+          if (cotaDoDia == null) {
+            setSubmitting(false);
+            toast.error(
+              ultimaCota
+                ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)}. A última é de ${fmtData(ultimaCota.data)}: lance a operação quando a cota sair.`
+                : "Não há cota disponível para esse fundo nessa data.",
+            );
+            return;
+          }
+          qtd = valorNum / cotaDoDia;
         }
-        const qtd = valorNum / cotaDoDia;
 
         // Fundo que ja esta na carteira reaproveita o codigo de custodia.
         const { data: existentes } = await supabase
@@ -1402,17 +1415,26 @@ export default function CadastrarTransacaoPage() {
                   placeholder={fundoId ? "Cota não divulgada" : "Selecione o fundo e a data"}
                 />
               </Field>
-              <Field label="Quantidade de Cotas">
-                <Input
-                  readOnly
-                  className="bg-muted/50"
-                  value={
-                    qtdCotasDerivada != null
-                      ? qtdCotasDerivada.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
-                      : ""
-                  }
-                  placeholder="Valor ÷ cota"
-                />
+              <Field label="Quantidade de Cotas" required={ehComeCotas}>
+                {ehComeCotas ? (
+                  <Input
+                    value={qtdCotas}
+                    onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
+                    placeholder="Cotas canceladas, do extrato"
+                    className={validationErrors.has("qtdCotas") ? "border-destructive ring-1 ring-destructive" : ""}
+                  />
+                ) : (
+                  <Input
+                    readOnly
+                    className="bg-muted/50"
+                    value={
+                      qtdCotasDerivada != null
+                        ? qtdCotasDerivada.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
+                        : ""
+                    }
+                    placeholder="Valor ÷ cota"
+                  />
+                )}
               </Field>
             </div>
 
@@ -1429,7 +1451,7 @@ export default function CadastrarTransacaoPage() {
               </Field>
             </div>
 
-            {cotaOp && cotaOp.cota == null && (
+            {cotaOp && cotaOp.cota == null && !ehComeCotas && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertDescription className="text-xs">
@@ -1444,9 +1466,9 @@ export default function CadastrarTransacaoPage() {
               {cotaOp?.cota != null && cotaOp.dataCotizacao !== data
                 ? `Cota de ${fmtData(cotaOp.dataCotizacao)}, data em que a operação cotiza. `
                 : ""}
-              A cota vem da série da CVM e a quantidade é valor ÷ cota, por isso os dois campos são
-              somente leitura. Come-cotas entra como saída de cotas: reduz a posição sem dinheiro
-              saindo da carteira.
+              {ehComeCotas
+                ? "No come-cotas quem calcula as cotas canceladas é o administrador, a partir do ganho de cada cotista, então a quantidade vem do extrato. Entra como saída de cotas: reduz a posição sem dinheiro saindo da carteira."
+                : "A cota vem da série da CVM e a quantidade é valor ÷ cota, por isso os dois campos são somente leitura."}
             </p>
 
             <div className="flex gap-3">
