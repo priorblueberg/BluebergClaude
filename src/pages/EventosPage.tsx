@@ -33,13 +33,25 @@ export default function EventosPage() {
   const { dataReferenciaISO } = useDataReferencia();
   const [filtro, setFiltro] = useState<TipoEvento | "Todos">("Todos");
 
-  /** Janela de 12 meses terminando na data de referência, como no Gorila. */
+  /**
+   * Janela de 12 meses de CALENDARIO, terminando no mes corrente inteiro - a mesma do Gorila.
+   *
+   * Em 05/09/2026 ele soma de 01/10/2025 a 30/09/2026, nao de 05/09/2025 a 05/09/2026.
+   * Medido: R$ 412.368,83 em 187 eventos, contra R$ 441.000,54 em 203 que a janela movel
+   * produzia. Os R$ 28.631 de diferenca eram setembro de 2025, um mes que so entrava aqui.
+   *
+   * As barras ja usavam os meses certos (out/25 a set/26), entao os cartoes contradiziam a
+   * soma do proprio grafico logo abaixo deles.
+   */
   const doze = useMemo(() => {
     const fim = new Date(dataReferenciaISO + "T00:00:00");
-    const de = new Date(fim);
-    de.setFullYear(de.getFullYear() - 1);
-    const deISO = de.toISOString().slice(0, 10);
-    const naJanela = eventos.filter((e) => e.data > deISO && e.data <= dataReferenciaISO);
+    const primeiroMes = new Date(fim.getFullYear(), fim.getMonth() - 11, 1);
+    const ultimoDiaDoMes = new Date(fim.getFullYear(), fim.getMonth() + 1, 0);
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const deISO = iso(primeiroMes);
+    const ateISO = iso(ultimoDiaDoMes);
+    const naJanela = eventos.filter((e) => e.data >= deISO && e.data <= ateISO);
 
     const juros = naJanela.filter((e) => e.tipo === "Pagamento de juros").reduce((s, e) => s + e.valor, 0);
     const vencidos = naJanela.filter((e) => e.tipo === "Vencimento").reduce((s, e) => s + e.valor, 0);
