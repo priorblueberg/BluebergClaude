@@ -71,6 +71,45 @@ export async function cotaFundo(fundoId: string, dataISO: string) {
 }
 
 /**
+ * Data em que a operacao cotiza: D+n dias uteis a partir da data da operacao, com o n vindo do
+ * cadastro do fundo (aplicacao e resgate podem ter prazos diferentes).
+ *
+ * Mora aqui porque a boleta precisa dela duas vezes: para MOSTRAR a cota que sera usada e para
+ * GRAVAR a quantidade. Enquanto o calculo estava so no submit, a tela nao tinha como exibir a
+ * cota certa - e duas copias da regra divergiriam na primeira mudanca.
+ */
+export async function dataCotizacaoFundo(
+  fundoId: string,
+  dataISO: string,
+  tipoMovimentacao: string,
+): Promise<string> {
+  // Come-cotas nao pede resgate a ninguem: e retencao na fonte no ultimo dia util de maio e
+  // novembro, pela cota daquele proprio dia. Aplicar o prazo de resgate nele deslocaria o
+  // evento. Hoje todos os fundos cadastrados sao D+0 e isso nao aparece; num fundo D+1 sim.
+  if (tipoMovimentacao === "Come-Cotas") return dataISO;
+
+  const { data: cfg } = await supabase
+    .from("cadastro_de_fundos")
+    .select("dias_cotizacao_aplicacao, dias_cotizacao_resgate")
+    .eq("id", fundoId)
+    .maybeSingle();
+
+  const dias = tipoMovimentacao === "Aplicação"
+    ? ((cfg as any)?.dias_cotizacao_aplicacao ?? 0)
+    : ((cfg as any)?.dias_cotizacao_resgate ?? 0);
+
+  const { data: diasCal } = await supabase
+    .from("calendario_dias_uteis")
+    .select("data, dia_util")
+    .gte("data", dataISO)
+    .order("data")
+    .limit(60);
+
+  const uteis = ((diasCal || []) as any[]).filter((d) => d.dia_util).map((d) => d.data as string);
+  return uteis[dias] ?? uteis[0] ?? dataISO;
+}
+
+/**
  * Saldo em cotas (fundo) ou em moeda estrangeira (câmbio) até a data, somando as
  * entradas e subtraindo as saídas já lançadas.
  */

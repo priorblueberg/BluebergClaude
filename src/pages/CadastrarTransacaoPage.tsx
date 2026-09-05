@@ -19,12 +19,12 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
-import CadastrarFundoModal from "@/components/CadastrarFundoModal";
+import FundoSelect from "@/components/FundoSelect";
 import { MOEDAS } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, ehFutura, cotacaoMoeda, cotaFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, ehFutura, cotacaoMoeda, cotaFundo, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -198,7 +198,12 @@ export default function CadastrarTransacaoPage() {
   const [fundos, setFundos] = useState<{ id: string; nome: string; cnpj: string }[]>([]);
   const [fundoId, setFundoId] = useState("");
   const [qtdCotas, setQtdCotas] = useState("");
-  const [modalFundoOpen, setModalFundoOpen] = useState(false);
+  /** Cota que a operacao vai usar, ja na data de cotizacao. Alimenta o campo somente-leitura. */
+  const [cotaOp, setCotaOp] = useState<{
+    dataCotizacao: string;
+    cota: number | null;
+    ultima: { data: string; valor: number } | null;
+  } | null>(null);
   // Moedas
   const [moedaSel, setMoedaSel] = useState("");
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
@@ -266,7 +271,26 @@ export default function CadastrarTransacaoPage() {
       .then(({ data }) => {
         if (data) setFundos(data.map((f: any) => ({ id: f.id, nome: f.nome_curto, cnpj: f.cnpj_classe })));
       });
-  }, [isFundo, modalFundoOpen]);
+  }, [isFundo]);
+
+  // A cota mostrada e a MESMA que a gravacao vai usar: data de cotizacao pelo cadastro do
+  // fundo, cota da serie da CVM naquela data. Sem isso a tela mostraria a cota do dia da
+  // operacao e o registro sairia com outra.
+  useEffect(() => {
+    if (!isFundo || !fundoId || !data || !tipoMovimentacao) {
+      setCotaOp(null);
+      return;
+    }
+    let vivo = true;
+    (async () => {
+      const dataCotizacao = await dataCotizacaoFundo(fundoId, data, tipoMovimentacao);
+      const { naData, ultima } = await cotaFundo(fundoId, dataCotizacao);
+      if (vivo) setCotaOp({ dataCotizacao, cota: naData, ultima });
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [isFundo, fundoId, data, tipoMovimentacao]);
 
   // Load produtos when categoria changes (for Aplicação flow)
   useEffect(() => {
@@ -610,6 +634,14 @@ export default function CadastrarTransacaoPage() {
   const showAplicacaoFields = showTipoMovimentacao && isRendaFixa && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate));
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
   const showFundoFields = isFundo && !!tipoMovimentacao;
+
+  /** Quantidade de cotas da operacao: valor / cota. Exibida, nunca digitada. */
+  const qtdCotasDerivada = useMemo(() => {
+    const v = parseCurrencyToNumber(valor);
+    const c = cotaOp?.cota;
+    if (!c || !v) return null;
+    return v / c;
+  }, [valor, cotaOp]);
   const showMoedaFields = isMoeda && !!tipoMovimentacao;
   const showPoupancaFields = isPoupanca && isAplicacao;
 
@@ -801,41 +833,24 @@ export default function CadastrarTransacaoPage() {
       try {
         const fundo = fundos.find((f) => f.id === fundoId)!;
         const valorNum = parseCurrencyToNumber(valor);
-        const qtdInformada = parseQuantidade(qtdCotas);
 
-        // Cotizacao: o fundo pode cotizar D+n uteis, e o prazo da aplicacao pode
-        // ser diferente do resgate. Vem do cadastro da CVM.
-        const { data: cfg } = await supabase
-          .from("cadastro_de_fundos")
-          .select("dias_cotizacao_aplicacao, dias_cotizacao_resgate")
-          .eq("id", fundoId)
-          .single();
-        const dias = tipoMovimentacao === "Aplicação"
-          ? (cfg?.dias_cotizacao_aplicacao ?? 0)
-          : (cfg?.dias_cotizacao_resgate ?? 0);
+        const dataCotizacao = await dataCotizacaoFundo(fundoId, data, tipoMovimentacao);
 
-        const { data: diasCal } = await supabase
-          .from("calendario_dias_uteis")
-          .select("data, dia_util")
-          .gte("data", data)
-          .order("data")
-          .limit(60);
-        const uteis = (diasCal || []).filter((d: any) => d.dia_util).map((d: any) => d.data);
-        const dataCotizacao = uteis[dias] ?? uteis[0] ?? data;
-
-        // Sem quantidade informada, ela sai da cota da data de cotizacao. Se o
-        // fundo ainda nao divulgou, gravar produziria quantidade errada calada.
+        // A quantidade nao e digitada: em fundo ela e exatamente valor / cota da data de
+        // cotizacao, sem spread nem taxa que justifiquem um numero diferente (ao contrario
+        // do cambio). Sem a cota divulgada nao da para saber quantas cotas a operacao
+        // comprou, e gravar um palpite corromperia a posicao - entao a boleta barra.
         const { naData: cotaDoDia, ultima: ultimaCota } = await cotaFundo(fundoId, dataCotizacao);
-        if (qtdInformada == null && cotaDoDia == null) {
+        if (cotaDoDia == null) {
           setSubmitting(false);
           toast.error(
             ultimaCota
-              ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)} (a última é de ${fmtData(ultimaCota.data)}). Informe a quantidade de cotas para gravar.`
-              : "Não há cota disponível para esse fundo nessa data. Informe a quantidade de cotas.",
+              ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)}. A última é de ${fmtData(ultimaCota.data)}: lance a operação quando a cota sair.`
+              : "Não há cota disponível para esse fundo nessa data.",
           );
           return;
         }
-        const qtd = qtdInformada ?? (cotaDoDia ? valorNum / cotaDoDia : null);
+        const qtd = valorNum / cotaDoDia;
 
         // Fundo que ja esta na carteira reaproveita o codigo de custodia.
         const { data: existentes } = await supabase
@@ -857,7 +872,7 @@ export default function CadastrarTransacaoPage() {
 
         // Resgate e come-cotas nao podem passar do saldo de cotas: posicao
         // negativa segue rendendo e o erro so aparece semanas depois.
-        if (tipoMovimentacao !== "Aplicação" && qtd != null) {
+        if (tipoMovimentacao !== "Aplicação") {
           const saldo = await saldoEmQuantidade(codigoCustodia, user.id, dataCotizacao, editId);
           if (qtd > saldo + 1e-8) {
             setSubmitting(false);
@@ -1284,12 +1299,6 @@ export default function CadastrarTransacaoPage() {
           </Alert>
         )}
 
-        <CadastrarFundoModal
-          open={modalFundoOpen}
-          onOpenChange={setModalFundoOpen}
-          onCriado={(f) => setFundoId(f.id)}
-        />
-
         {/* ── Moedas ── */}
         {showMoedaFields && (
           <>
@@ -1357,24 +1366,13 @@ export default function CadastrarTransacaoPage() {
         {showFundoFields && (
           <>
             <Field label="Fundo" required>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <NativeSelect
-                    value={fundoId}
-                    onChange={setFundoId}
-                    placeholder="Selecione o fundo"
-                    disabled={isEditing}
-                    options={fundos.map((f) => ({ value: f.id, label: f.nome }))}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setModalFundoOpen(true)}
-                  className="whitespace-nowrap rounded-md border border-border px-3 text-xs text-muted-foreground hover:bg-muted"
-                >
-                  Cadastrar novo
-                </button>
-              </div>
+              <FundoSelect
+                fundos={fundos}
+                value={fundoId}
+                onChange={setFundoId}
+                disabled={isEditing}
+                hasError={validationErrors.has("fundoId")}
+              />
             </Field>
 
             <div className="grid grid-cols-2 gap-4">
@@ -1392,13 +1390,33 @@ export default function CadastrarTransacaoPage() {
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Quantidade de Cotas">
+              <Field label="Valor da Cota">
                 <Input
-                  value={qtdCotas}
-                  onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
-                  placeholder="Em branco, calcula pela cota do dia"
+                  readOnly
+                  className="bg-muted/50"
+                  value={
+                    cotaOp?.cota != null
+                      ? cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
+                      : ""
+                  }
+                  placeholder={fundoId ? "Cota não divulgada" : "Selecione o fundo e a data"}
                 />
               </Field>
+              <Field label="Quantidade de Cotas">
+                <Input
+                  readOnly
+                  className="bg-muted/50"
+                  value={
+                    qtdCotasDerivada != null
+                      ? qtdCotasDerivada.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
+                      : ""
+                  }
+                  placeholder="Valor ÷ cota"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
               <Field label="Instituição (custodiante)" required>
                 <EntidadeSelect
                   tipo="instituicao"
@@ -1411,9 +1429,24 @@ export default function CadastrarTransacaoPage() {
               </Field>
             </div>
 
+            {cotaOp && cotaOp.cota == null && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  {cotaOp.ultima
+                    ? `O fundo ainda não divulgou a cota de ${fmtData(cotaOp.dataCotizacao)}. A última é de ${fmtData(cotaOp.ultima.data)}. Como a quantidade de cotas vem de valor ÷ cota, a operação só pode ser lançada quando a cota sair.`
+                    : "Não há cota disponível para esse fundo nessa data."}
+                </AlertDescription>
+              </Alert>
+            )}
+
             <p className="text-xs text-muted-foreground">
-              A cota vem da série da CVM na data de cotização do fundo. Come-cotas entra como
-              saída de cotas: reduz a posição sem dinheiro saindo da carteira.
+              {cotaOp?.cota != null && cotaOp.dataCotizacao !== data
+                ? `Cota de ${fmtData(cotaOp.dataCotizacao)}, data em que a operação cotiza. `
+                : ""}
+              A cota vem da série da CVM e a quantidade é valor ÷ cota, por isso os dois campos são
+              somente leitura. Come-cotas entra como saída de cotas: reduz a posição sem dinheiro
+              saindo da carteira.
             </p>
 
             <div className="flex gap-3">
