@@ -71,7 +71,9 @@ export async function cotaFundo(fundoId: string, dataISO: string) {
 }
 
 /**
- * Fundos (ou moedas) que o usuario tinha em custodia NA DATA, isto e, com saldo positivo.
+ * Saldo por fundo (ou por moeda) que o usuario tinha NA DATA. So entra quem tem saldo
+ * positivo, entao a presenca da chave ja responde "estava em custodia?" e o valor responde
+ * "quanto?" - a boleta precisa das duas coisas: filtrar a lista e mostrar o disponivel.
  *
  * Serve para a boleta so oferecer, numa saida, o que existia naquele dia. Sem isso da para
  * escolher um fundo que so foi comprado depois, ou um ja zerado, e o erro so aparece na
@@ -80,11 +82,11 @@ export async function cotaFundo(fundoId: string, dataISO: string) {
  * A data que conta e a de cotizacao quando existe: e ela que define quando a cota entrou ou
  * saiu, nao a data da ordem.
  */
-export async function comSaldoNaData(
+export async function saldosNaData(
   userId: string,
   ateDataISO: string,
   chave: "fundo_id" | "moeda",
-): Promise<Set<string>> {
+): Promise<Map<string, number>> {
   const { data } = await supabase
     .from("movimentacoes")
     .select("fundo_id, moeda, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario")
@@ -105,7 +107,7 @@ export async function comSaldoNaData(
   }
   // 1e-8 e a mesma folga que a validacao de saldo usa, para posicao residual de arredondamento
   // nao aparecer como se ainda houvesse o que resgatar.
-  return new Set([...saldos].filter(([, v]) => v > 1e-8).map(([k]) => k));
+  return new Map([...saldos].filter(([, v]) => v > 1e-8));
 }
 
 /**

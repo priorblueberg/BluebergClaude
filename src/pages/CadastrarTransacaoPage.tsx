@@ -24,7 +24,7 @@ import { MOEDAS } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, ehFutura, cotacaoMoeda, cotaFundo, comSaldoNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, ehFutura, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -650,20 +650,41 @@ export default function CadastrarTransacaoPage() {
   /** Saida (resgate, come-cotas, venda) so pode incidir sobre o que existia na data. */
   const ehSaida = !!tipoMovimentacao && !["Aplicação", "Compra"].includes(tipoMovimentacao);
 
-  // Quem tinha saldo na data. Enquanto for null a lista fica travada, porque oferecer tudo
+  // Saldo por ativo na data. Enquanto for null a lista fica travada, porque oferecer tudo
   // enquanto carrega deixaria escolher um ativo que nao existia naquele dia.
-  const [comSaldo, setComSaldo] = useState<Set<string> | null>(null);
+  const [comSaldo, setComSaldo] = useState<Map<string, number> | null>(null);
   useEffect(() => {
     if (!user || !ehSaida || !data || !(isFundo || isMoeda)) {
       setComSaldo(null);
       return;
     }
     let vivo = true;
-    comSaldoNaData(user.id, data, isFundo ? "fundo_id" : "moeda").then((s) => {
+    saldosNaData(user.id, data, isFundo ? "fundo_id" : "moeda").then((s) => {
       if (vivo) setComSaldo(s);
     });
     return () => { vivo = false; };
   }, [user, ehSaida, data, isFundo, isMoeda]);
+
+  /** Cotacao da moeda na data, so para mostrar o saldo tambem em reais. */
+  const [cotacaoOp, setCotacaoOp] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isMoeda || !moedaSel || !data) {
+      setCotacaoOp(null);
+      return;
+    }
+    let vivo = true;
+    cotacaoMoeda(moedaSel, data).then(({ naData, ultima }) => {
+      if (vivo) setCotacaoOp(naData ?? ultima?.valor ?? null);
+    });
+    return () => { vivo = false; };
+  }, [isMoeda, moedaSel, data]);
+
+  /** Saldo do ativo escolhido na data: em cotas no fundo, na moeda estrangeira no cambio. */
+  const saldoDaSaida = useMemo(() => {
+    if (!ehSaida || !comSaldo) return null;
+    const chave = isFundo ? fundoId : moedaSel;
+    return chave ? comSaldo.get(chave) ?? null : null;
+  }, [ehSaida, comSaldo, isFundo, fundoId, moedaSel]);
 
   // Mudou a data numa saida: o ativo escolhido pode nao existir na nova data, entao sai.
   useEffect(() => {
@@ -1412,6 +1433,25 @@ export default function CadastrarTransacaoPage() {
               />
             </Field>
 
+            {ehSaida && data && (
+              <div className="rounded-md border border-border bg-muted/30 px-4 py-3">
+                <p className="text-xs text-muted-foreground">
+                  Saldo disponível para venda em {fmtData(data)}:
+                </p>
+                <p className="mt-0.5 text-sm font-semibold text-foreground">
+                  {!moedaSel
+                    ? "Selecione a moeda"
+                    : comSaldo == null
+                      ? "Calculando..."
+                      : saldoDaSaida == null
+                        ? "—"
+                        : `${MOEDAS.find((m) => m.codigo === moedaSel)?.simbolo ?? moedaSel} ` +
+                          saldoDaSaida.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
+                          (cotacaoOp != null ? ` (${fmtBrlDisplay(saldoDaSaida * cotacaoOp)})` : "")}
+                </p>
+              </div>
+            )}
+
             <p className="text-xs text-muted-foreground">
               A quantidade em branco é derivada pela cotação de venda do Banco Central na data.
               Informe a quantidade quando quiser registrar o câmbio efetivo da operação, com spread e IOF.
@@ -1515,6 +1555,26 @@ export default function CadastrarTransacaoPage() {
                 />
               </Field>
             </div>
+
+            {/* Numa saida o usuario precisa ver o que tem antes de digitar quanto tira. */}
+            {ehSaida && data && (
+              <div className="rounded-md border border-border bg-muted/30 px-4 py-3">
+                <p className="text-xs text-muted-foreground">
+                  {ehComeCotas ? "Cotas em custódia em " : "Saldo disponível para resgate em "}
+                  {fmtData(data)}:
+                </p>
+                <p className="mt-0.5 text-sm font-semibold text-foreground">
+                  {!fundoId
+                    ? "Selecione o fundo"
+                    : comSaldo == null
+                      ? "Calculando..."
+                      : saldoDaSaida == null
+                        ? "—"
+                        : `${saldoDaSaida.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })} cotas` +
+                          (cotaOp?.cota != null ? ` (${fmtBrlDisplay(saldoDaSaida * cotaOp.cota)})` : "")}
+                </p>
+              </div>
+            )}
 
             {cotaOp && cotaOp.cota == null && !ehComeCotas && (
               <Alert variant="destructive">
