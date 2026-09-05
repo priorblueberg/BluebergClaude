@@ -345,12 +345,22 @@ export default function MovimentacoesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
             <AlertDialogDescription>
+              {/*
+                A confirmacao nomeia a transacao (ativo, tipo e valor), como a do Gorila. A
+                anterior dizia so "esta movimentacao": numa lista de 232 linhas parecidas,
+                isso nao da como conferir se a linha certa foi clicada - e a exclusao nao
+                tem volta.
+              */}
               {(() => {
                 const row = rows.find((r) => r.id === deleteId);
-                if (row?.tipo_movimentacao === "Aplicação Inicial") {
-                  return "Ao excluir uma Aplicação Inicial, o título será removido da custódia e todas as movimentações deste código serão excluídas permanentemente.";
-                }
-                return "Tem certeza que deseja excluir esta movimentação? Esta ação não pode ser desfeita.";
+                if (!row) return "Tem certeza que deseja excluir esta movimentação? Esta ação não pode ser desfeita.";
+                const valor = row.valor != null
+                  ? row.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+                  : "valor não informado";
+                const alvo = `${row.tipo_movimentacao.toLowerCase()} de ${row.nome_ativo ?? "ativo sem nome"} em ${fmtDate(row.data)}, no valor de ${valor}`;
+                return row.tipo_movimentacao === "Aplicação Inicial"
+                  ? `A ${alvo} é a aplicação inicial do título. Excluí-la remove o título da custódia e apaga TODAS as movimentações desse código, permanentemente.`
+                  : `A ${alvo} será excluída. Esta ação não pode ser desfeita.`;
               })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
