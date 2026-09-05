@@ -1863,9 +1863,13 @@ export default function CadastrarTransacaoPage() {
                 placeholder={
                   !resgateDate || resgateDateError
                     ? "Informe a data da operação"
-                    : custodiasNaData.length === 0
-                      ? "Nenhum título em custódia nessa data"
-                      : "Selecione o título em custódia"
+                    : custodiasNaData.length > 0
+                      ? "Selecione o título em custódia"
+                      // Lista vazia tem duas causas diferentes, e dizer "nenhum título em
+                      // custódia" num sábado manda o usuário procurar o problema no lugar errado.
+                      : dataEhDiaUtil === false
+                        ? "Fora de dia útil, só a Poupança pode ser movimentada"
+                        : "Nenhum título em custódia nessa data"
                 }
                 options={custodiasNaData.map((c) => ({
                   value: c.id,
