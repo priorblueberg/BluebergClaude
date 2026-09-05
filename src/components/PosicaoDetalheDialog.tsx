@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useBoleta } from "@/contexts/BoletaContext";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -64,6 +65,7 @@ function fmtQty(v: number | null) {
 
 export default function PosicaoDetalheDialog({ open, onClose, data, userId, dataReferenciaISO, onDataChanged }: Props) {
   const navigate = useNavigate();
+  const { abrirBoleta } = useBoleta();
   const [movs, setMovs] = useState<Movimentacao[]>([]);
   const [loading, setLoading] = useState(false);
   const [deleteId, setDeleteId] = useState<Movimentacao | null>(null);
@@ -187,7 +189,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                                 <div className="flex justify-end gap-1">
                                   <Button
                                     variant="ghost" size="icon" className="h-7 w-7"
-                                    onClick={() => { onClose(); navigate(`/cadastrar-transacao?edit=${m.id}`); }}
+                                    onClick={() => { onClose(); abrirBoleta(m.id); }}
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </Button>

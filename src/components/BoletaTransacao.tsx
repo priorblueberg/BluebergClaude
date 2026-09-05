@@ -1,12 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { format, parse, isValid } from "date-fns";
-import { ArrowLeft, PlusCircle, AlertTriangle, HelpCircle, CalendarIcon } from "lucide-react";
+import { PlusCircle, AlertTriangle, HelpCircle, CalendarIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { toast } from "sonner";
-import { useSearchParams, useNavigate } from "react-router-dom";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
 import { calcularRendaFixaDiario, opcoesPagamentoDoProduto } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaSeNecessario } from "@/lib/ipcaSeries";
@@ -154,13 +153,21 @@ function parseCurrencyToNumber(value: string): number {
 }
 
 
-export default function CadastrarTransacaoPage() {
+/**
+ * A boleta. Era a pagina /cadastrar-transacao; virou conteudo de modal em 05/09/2026, aberta
+ * pelo `BoletaProvider`. Por isso ela nao navega mais: quem fecha e quem abriu, via `onFechar`.
+ */
+export default function BoletaTransacao({
+  editId = null,
+  onFechar,
+}: {
+  /** Id da movimentacao em edicao; nulo cadastra uma nova. */
+  editId?: string | null;
+  onFechar?: () => void;
+}) {
   const { user } = useAuth();
   const isAdmin = useIsAdmin();
   const { dataReferenciaISO, applyDataReferencia } = useDataReferencia();
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const editId = searchParams.get("edit");
 
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -595,7 +602,7 @@ export default function CadastrarTransacaoPage() {
 
       if (!mov) {
         toast.error("Movimentação não encontrada.");
-        navigate("/movimentacoes");
+        onFechar?.();
         return;
       }
 
@@ -739,7 +746,7 @@ export default function CadastrarTransacaoPage() {
     setFecharPosicao(false);
     setResgateCalendarOpen(false);
     if (isEditing) {
-      navigate("/movimentacoes");
+      onFechar?.();
     }
   };
 
@@ -838,7 +845,7 @@ export default function CadastrarTransacaoPage() {
           await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
           applyDataReferencia();
           toast.success("Operação de câmbio atualizada com sucesso!");
-          navigate("/movimentacoes");
+          onFechar?.();
           return;
         }
 
@@ -977,7 +984,7 @@ export default function CadastrarTransacaoPage() {
           await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
           applyDataReferencia();
           toast.success("Movimentação de fundo atualizada com sucesso!");
-          navigate("/movimentacoes");
+          onFechar?.();
           return;
         }
 
@@ -1211,7 +1218,7 @@ export default function CadastrarTransacaoPage() {
         applyDataReferencia();
 
         toast.success("Transação atualizada com sucesso!");
-        navigate("/movimentacoes");
+        onFechar?.();
       } else {
         // Texto, como a coluna: o codigo pode ser legado nao numerico.
         let codigoCustodia: string;
@@ -1301,23 +1308,6 @@ export default function CadastrarTransacaoPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={resetForm}
-          className="text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft size={20} />
-        </button>
-        <div>
-          <h1 className="text-lg font-semibold text-foreground">
-            {isEditing ? "Editar Transação" : "Nova Transação"}
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            {isEditing ? "Altere os dados da movimentação" : "Os campos com * são de preenchimento obrigatório"}
-          </p>
-        </div>
-      </div>
 
       {/* Form card */}
       <div className="rounded-md border border-border bg-card p-6 max-w-2xl space-y-5">
@@ -1461,7 +1451,7 @@ export default function CadastrarTransacaoPage() {
               <Button onClick={handleSubmit} disabled={submitting}>
                 {submitting ? "Salvando..." : isEditing ? "Salvar alterações" : "Cadastrar"}
               </Button>
-              <Button variant="outline" onClick={resetForm} disabled={submitting}>
+              <Button variant="outline" onClick={() => onFechar?.()} disabled={submitting}>
                 Cancelar
               </Button>
             </div>
@@ -1600,7 +1590,7 @@ export default function CadastrarTransacaoPage() {
               <Button onClick={handleSubmit} disabled={submitting}>
                 {submitting ? "Salvando..." : isEditing ? "Salvar alterações" : "Cadastrar"}
               </Button>
-              <Button variant="outline" onClick={resetForm} disabled={submitting}>
+              <Button variant="outline" onClick={() => onFechar?.()} disabled={submitting}>
                 Cancelar
               </Button>
             </div>
@@ -1784,7 +1774,7 @@ export default function CadastrarTransacaoPage() {
                 <div className="flex gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={resetForm}
+                    onClick={() => onFechar?.()}
                     className="rounded-md bg-destructive px-5 py-2.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
                   >
                     Cancelar
@@ -1857,7 +1847,7 @@ export default function CadastrarTransacaoPage() {
                 <div className="flex gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={resetForm}
+                    onClick={() => onFechar?.()}
                     className="rounded-md bg-destructive px-5 py-2.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
                   >
                     Cancelar
@@ -2075,7 +2065,7 @@ export default function CadastrarTransacaoPage() {
                     <div className="flex gap-3 pt-2">
                       <button
                         type="button"
-                        onClick={resetForm}
+                        onClick={() => onFechar?.()}
                         className="rounded-md bg-destructive px-5 py-2.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors"
                       >
                         Cancelar

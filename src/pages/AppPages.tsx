@@ -13,6 +13,7 @@ import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
 import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
+import { useBoleta } from "@/contexts/BoletaContext";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -209,6 +210,7 @@ function AlocacaoBloco({
 }
 
 export const CarteiraVisaoGeral = () => {
+  const { abrirBoleta } = useBoleta();
   const { user } = useAuth();
   const [carteiraInfo, setCarteiraInfo] = useState<{
     nome_carteira: string;
@@ -463,7 +465,7 @@ export const CarteiraVisaoGeral = () => {
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
           <p className="text-muted-foreground">Você ainda não possui investimentos cadastrados.</p>
           <button
-            onClick={() => navigate("/cadastrar-transacao")}
+            onClick={() => abrirBoleta()}
             className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
           >
             Cadastrar primeira operação
@@ -623,7 +625,6 @@ export const CarteiraTesouroDireto = () => <PageStub title="Tesouro Direto" />;
 export { default as CarteiraAnaliseIndividual } from "./AnaliseIndividualPage";
 export { default as Movimentacoes } from "./MovimentacoesPage";
 export { default as Eventos } from "./EventosPage";
-export { default as CadastrarTransacao } from "./CadastrarTransacaoPage";
 export { default as Configuracoes } from "./ConfiguracoesPage";
 export const Usuario = () => <PageStub title="Usuário" />;
 export { default as Admin } from "./AdminPage";

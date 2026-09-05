@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useBoleta } from "@/contexts/BoletaContext";
 import { ArrowUpDown, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { PaginaCabecalho, BarraDeFiltros, Contagem, TabelaCartao, LinhaMensagem } from "@/components/PaginaPadrao";
@@ -55,6 +56,7 @@ let _movCachedRows: Movimentacao[] = [];
 
 export default function MovimentacoesPage() {
   const navigate = useNavigate();
+  const { abrirBoleta } = useBoleta();
   const { dataReferenciaISO, applyDataReferencia, appliedVersion } = useDataReferencia();
   const [rows, setRows] = useState<Movimentacao[]>(_movCachedRows);
   const [loading, setLoading] = useState(_movCachedVersion === null);
@@ -203,7 +205,7 @@ export default function MovimentacoesPage() {
   };
 
   const handleEdit = (id: string) => {
-    navigate(`/cadastrar-transacao?edit=${id}`);
+    abrirBoleta(id);
   };
 
   const sortedRows = [...filteredRows].sort((a, b) => {

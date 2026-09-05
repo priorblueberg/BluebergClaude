@@ -4,6 +4,7 @@ import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
 import { SubTabs } from "./SubTabs";
 import { DataReferenciaProvider } from "@/contexts/DataReferenciaContext";
+import { BoletaProvider } from "@/contexts/BoletaContext";
 import { RecalculatingOverlay } from "./RecalculatingOverlay";
 
 function AppLayoutInner() {
@@ -35,7 +36,9 @@ function AppLayoutInner() {
 export function AppLayout() {
   return (
     <DataReferenciaProvider>
-      <AppLayoutInner />
+      <BoletaProvider>
+        <AppLayoutInner />
+      </BoletaProvider>
     </DataReferenciaProvider>
   );
 }

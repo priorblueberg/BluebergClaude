@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useBoleta } from "@/contexts/BoletaContext";
 import { format, parse, isValid, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Bell, CalendarIcon, ChevronDown, RefreshCw, Plus } from "lucide-react";
@@ -28,6 +29,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
   const inputRef = useRef<HTMLInputElement>(null);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const { abrirBoleta } = useBoleta();
   const isAdmin = useIsAdmin();
 
   const isStagedSameAsApplied = format(stagedDate, "yyyy-MM-dd") === format(dataReferencia, "yyyy-MM-dd");
@@ -156,7 +158,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
 
         <div className={`flex items-center gap-4${disableControls ? " pointer-events-none opacity-40" : ""}`}>
           <button
-            onClick={() => navigate("/cadastrar-transacao")}
+            onClick={() => abrirBoleta()}
             className="flex items-center gap-1 rounded-md border border-primary px-2 py-1 text-xs text-primary hover:bg-primary hover:text-primary-foreground bg-background"
             style={{ transition: "all 120ms linear" }}
           >
