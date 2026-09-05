@@ -6,7 +6,7 @@ interface DataReferenciaContextType {
   dataReferencia: Date;
   setDataReferencia: (date: Date) => void;
   dataReferenciaISO: string; // yyyy-MM-dd
-  /** Ultimo dia util anterior a hoje. Teto da data de referencia. */
+  /** Penultimo dia util. Teto da data de referencia. */
   maxDate: Date;
   /** Incremented each time the user applies the date — use as useEffect dep */
   appliedVersion: number;
@@ -20,27 +20,34 @@ interface DataReferenciaContextType {
 const DataReferenciaContext = createContext<DataReferenciaContextType | null>(null);
 
 /**
- * Aproximacao sincrona do ultimo dia util: volta um dia e pula fim de semana.
+ * Aproximacao sincrona do penultimo dia util, contando de hoje para tras e incluindo hoje
+ * quando hoje e dia util.
  *
  * Serve so para o primeiro render ter um valor plausivel. O calendario do banco
  * (`calendario_dias_uteis`, a mesma fonte que os motores usam) corrige em seguida, inclusive
  * feriado - duplicar a tabela de feriados aqui seria uma quarta copia, fadada a divergir.
  */
-function diaUtilAnteriorAprox(hoje: Date): Date {
+export function penultimoDiaUtilAprox(hoje: Date): Date {
   const d = startOfDay(hoje);
-  do {
+  let achados = 0;
+  for (;;) {
+    if (d.getDay() !== 0 && d.getDay() !== 6 && ++achados === 2) return d;
     d.setDate(d.getDate() - 1);
-  } while (d.getDay() === 0 || d.getDay() === 6);
-  return d;
+  }
 }
 
 export function DataReferenciaProvider({ children }: { children: ReactNode }) {
-  // D-1 dia util: e a ultima data em que o dado esta fechado dos dois lados. Em D0 nem o BCB
-  // nem a CVM publicaram o dia, entao comparar com o Gorila em D0 e comparar duas fotos
-  // incompletas - e incompletas de formas diferentes, porque a fonte de cota dele chega antes
-  // da nossa. Decisao do Daniel em 05/09/2026.
-  const [dataReferencia, setDataReferencia] = useState<Date>(() => diaUtilAnteriorAprox(new Date()));
-  const [maxDate, setMaxDate] = useState<Date>(() => diaUtilAnteriorAprox(new Date()));
+  // Penultimo dia util: e a data mais recente sem buraco em nenhuma fonte, e por isso o teto.
+  //
+  // O amarrador e a cota de fundo: a CVM publica a do dia D no dia util D+1. Entao no ultimo
+  // dia util a cota dele ainda nao saiu. Em 05/09/2026 (sabado) o ultimo dia util era 04/09 e
+  // a serie de cotas parava em 03/09 - era exatamente esse dia faltando que respondia pelos
+  // R$ 227,88 de divergencia contra o Gorila, cuja fonte de cota chega antes da nossa.
+  //
+  // Recuando mais um dia util, todas as fontes ja fecharam e os dois lados olham a mesma foto.
+  // Decisao do Daniel em 05/09/2026.
+  const [dataReferencia, setDataReferencia] = useState<Date>(() => penultimoDiaUtilAprox(new Date()));
+  const [maxDate, setMaxDate] = useState<Date>(() => penultimoDiaUtilAprox(new Date()));
   const [appliedVersion, setAppliedVersion] = useState(0);
   const [isRecalculating, setIsRecalculating] = useState(false);
   // Se o usuario ja escolheu uma data, a chegada do calendario nao pode puxar a escolha dele.
@@ -53,13 +60,14 @@ export function DataReferenciaProvider({ children }: { children: ReactNode }) {
       .from("calendario_dias_uteis")
       .select("data")
       .eq("dia_util", true)
-      .lt("data", hojeISO)
+      .lte("data", hojeISO)
       .order("data", { ascending: false })
-      .limit(1)
-      .maybeSingle()
+      .limit(2)
       .then(({ data }) => {
-        if (!vivo || !data?.data) return; // sem calendario, fica a aproximacao
-        const exato = startOfDay(parseISO(data.data));
+        // [0] e o ultimo dia util, [1] o penultimo - que e o teto.
+        const penultimo = data?.[1]?.data;
+        if (!vivo || !penultimo) return; // sem calendario, fica a aproximacao
+        const exato = startOfDay(parseISO(penultimo));
         setMaxDate(exato);
         if (!escolhidaPeloUsuario.current) setDataReferencia(exato);
       });
