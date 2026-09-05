@@ -71,6 +71,44 @@ export async function cotaFundo(fundoId: string, dataISO: string) {
 }
 
 /**
+ * Fundos (ou moedas) que o usuario tinha em custodia NA DATA, isto e, com saldo positivo.
+ *
+ * Serve para a boleta so oferecer, numa saida, o que existia naquele dia. Sem isso da para
+ * escolher um fundo que so foi comprado depois, ou um ja zerado, e o erro so aparece na
+ * validacao de saldo, depois de tudo preenchido.
+ *
+ * A data que conta e a de cotizacao quando existe: e ela que define quando a cota entrou ou
+ * saiu, nao a data da ordem.
+ */
+export async function comSaldoNaData(
+  userId: string,
+  ateDataISO: string,
+  chave: "fundo_id" | "moeda",
+): Promise<Set<string>> {
+  const { data } = await supabase
+    .from("movimentacoes")
+    .select("fundo_id, moeda, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario")
+    .eq("user_id", userId);
+
+  const saldos = new Map<string, number>();
+  for (const m of ((data || []) as any[])) {
+    const k = m[chave];
+    if (!k) continue;
+    const dataEfetiva = m.data_cotizacao || m.data;
+    if (dataEfetiva > ateDataISO) continue;
+
+    let qtd = m.quantidade != null ? Number(m.quantidade) : null;
+    if (qtd == null && Number(m.preco_unitario) > 0) qtd = Number(m.valor) / Number(m.preco_unitario);
+    if (qtd == null) continue;
+
+    saldos.set(k, (saldos.get(k) ?? 0) + (ENTRADAS.includes(m.tipo_movimentacao) ? qtd : -qtd));
+  }
+  // 1e-8 e a mesma folga que a validacao de saldo usa, para posicao residual de arredondamento
+  // nao aparecer como se ainda houvesse o que resgatar.
+  return new Set([...saldos].filter(([, v]) => v > 1e-8).map(([k]) => k));
+}
+
+/**
  * Data em que a operacao cotiza: D+n dias uteis a partir da data da operacao, com o n vindo do
  * cadastro do fundo (aplicacao e resgate podem ter prazos diferentes).
  *

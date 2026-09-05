@@ -24,7 +24,7 @@ import { MOEDAS } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, ehFutura, cotacaoMoeda, cotaFundo, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, ehFutura, cotacaoMoeda, cotaFundo, comSaldoNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -173,6 +173,8 @@ export default function CadastrarTransacaoPage() {
   const [resgateDateInput, setResgateDateInput] = useState("");
   const [resgateDateError, setResgateDateError] = useState<string | null>(null);
   const [resgateDate, setResgateDate] = useState<Date | undefined>();
+  /** Se a data do resgate e dia util. Filtra a lista: fora de dia util so a Poupanca rende. */
+  const [dataEhDiaUtil, setDataEhDiaUtil] = useState<boolean | null>(null);
   const [fecharPosicao, setFecharPosicao] = useState(false);
   const [resgateCalendarOpen, setResgateCalendarOpen] = useState(false);
 
@@ -227,6 +229,23 @@ export default function CadastrarTransacaoPage() {
   const isResgate = tipoMovimentacao === "Resgate";
   const isAplicacao = tipoMovimentacao === "Aplicação";
   const selectedCustodia = custodiaItems.find((c) => c.id === selectedCustodiaId);
+
+  /**
+   * Titulos que o cliente tinha em custodia NA DATA da operacao - os unicos que podem ser
+   * resgatados. Nao se resgata o que nao se tem: papel aplicado depois daquela data, ja
+   * vencido ou ja encerrado por resgate total nao entra, e fora de dia util sobra so a
+   * Poupanca, a unica que rende em dia nao util.
+   */
+  const custodiasNaData = useMemo(() => {
+    if (!data || resgateDateError) return [];
+    return custodiaItems.filter((c) => {
+      if (c.data_inicio > data) return false;
+      if (c.vencimento && c.vencimento < data) return false;
+      if (c.resgate_total && c.resgate_total <= data) return false;
+      if (dataEhDiaUtil === false && c.modalidade !== "Poupança") return false;
+      return true;
+    });
+  }, [custodiaItems, data, dataEhDiaUtil, resgateDateError]);
   // Etapa 1 do destravamento: a categoria escolhida já tem fluxo próprio na boleta?
   const categoriaImplementada = !categoriaSelecionada || CATEGORIAS_IMPLEMENTADAS.includes(categoriaSelecionada.nome);
 
@@ -393,26 +412,26 @@ export default function CadastrarTransacaoPage() {
     setResgateDateError(null);
   };
 
-  /** Validate and process a complete resgate date */
-  const processResgateDate = async (d: Date) => {
-    if (!selectedCustodia || !user) return;
+  /**
+   * Data do resgate: aqui ficam so as checagens que NAO dependem do titulo.
+   *
+   * As que dependiam (anterior a aplicacao, posterior ao vencimento, depois do resgate total,
+   * dia util) eram feitas depois de escolher o titulo, uma a uma, e o usuario so descobria o
+   * problema no fim. Agora a data vem antes e elas viraram filtro da lista: o titulo invalido
+   * naquela data simplesmente nao aparece.
+   */
+  const definirDataResgate = async (d: Date) => {
     setResgateDate(d);
+    setSelectedCustodiaId("");
     setSaldoDisponivel(null);
     setFecharPosicao(false);
     setValor("");
     setResgateDateError(null);
+    setDataEhDiaUtil(null);
 
     const dateISO = format(d, "yyyy-MM-dd");
     setData(dateISO);
 
-    // Validate: not before data_inicio
-    const inicioDate = new Date(selectedCustodia.data_inicio + "T00:00:00");
-    if (d < inicioDate) {
-      setResgateDateError("A data selecionada não pode ser anterior à aplicação inicial.");
-      return;
-    }
-
-    // Validate: not in the future
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     if (d > today) {
@@ -420,40 +439,22 @@ export default function CadastrarTransacaoPage() {
       return;
     }
 
-    // Validate: not after vencimento
-    if (selectedCustodia.vencimento) {
-      const vencDate = new Date(selectedCustodia.vencimento + "T00:00:00");
-      if (d > vencDate) {
-        setResgateDateError("A data não pode ser posterior ao vencimento do título.");
-        return;
-      }
+    const { data: cal } = await supabase
+      .from("calendario_dias_uteis")
+      .select("dia_util")
+      .eq("data", dateISO)
+      .maybeSingle();
+    if (!cal) {
+      setResgateDateError("Data não encontrada no calendário.");
+      return;
     }
+    setDataEhDiaUtil(!!(cal as any).dia_util);
+  };
 
-    // Validate: if resgate_total exists, date must be before it
-    if (selectedCustodia.resgate_total) {
-      const resgateDate = new Date(selectedCustodia.resgate_total + "T00:00:00");
-      if (d >= resgateDate) {
-        setResgateDateError("A data deve ser anterior à data do resgate total.");
-        return;
-      }
-    }
-
-    // Validate: business day (skip for Poupança)
-    const isPoupancaResgate = selectedCustodia.modalidade === "Poupança";
-    if (!isPoupancaResgate) {
-      const { data: diaUtil } = await supabase
-        .from("calendario_dias_uteis")
-        .select("dia_util")
-        .eq("data", dateISO)
-        .maybeSingle();
-
-      if (!diaUtil || !diaUtil.dia_util) {
-        setResgateDateError("A data selecionada não é um dia útil.");
-        return;
-      }
-    }
-
-    // Calculate saldo using renda fixa engine
+  /** Saldo do titulo na data, pelo motor. Roda quando o titulo e escolhido. */
+  const calcularSaldoResgate = async (selectedCustodia: CustodiaItem, dateISO: string) => {
+    if (!user) return;
+    setSaldoDisponivel(null);
     const isRendaFixaEngine = (selectedCustodia.modalidade === "Prefixado" || selectedCustodia.modalidade === "Pos Fixado" || selectedCustodia.modalidade === "Pós Fixado" || selectedCustodia.modalidade === "Mista") && selectedCustodia.taxa && selectedCustodia.preco_unitario;
 
     if (isRendaFixaEngine) {
@@ -547,6 +548,14 @@ export default function CadastrarTransacaoPage() {
     }
   };
 
+  // Saldo so pode ser calculado com titulo E data. Antes o calculo estava dentro do handler
+  // da data, que exigia o titulo ja escolhido - com a ordem invertida, virou efeito.
+  useEffect(() => {
+    if (!isResgate || !selectedCustodia || !data || resgateDateError) return;
+    calcularSaldoResgate(selectedCustodia, data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCustodiaId, data]);
+
   /** Handle typed resgate date input with mask */
   const handleResgateDateInputChange = (rawValue: string) => {
     const masked = applyDateMask(rawValue);
@@ -556,7 +565,7 @@ export default function CadastrarTransacaoPage() {
 
     const parsed = parseDateInput(masked);
     if (parsed) {
-      processResgateDate(parsed);
+      definirDataResgate(parsed);
     }
   };
 
@@ -570,7 +579,7 @@ export default function CadastrarTransacaoPage() {
       return;
     }
     setResgateDateInput(format(d, "dd/MM/yyyy"));
-    processResgateDate(d);
+    definirDataResgate(d);
   };
 
   // Load edit data
@@ -637,6 +646,43 @@ export default function CadastrarTransacaoPage() {
 
   /** Come-cotas e a unica movimentacao de fundo com quantidade digitada (vem do extrato). */
   const ehComeCotas = tipoMovimentacao === "Come-Cotas";
+
+  /** Saida (resgate, come-cotas, venda) so pode incidir sobre o que existia na data. */
+  const ehSaida = !!tipoMovimentacao && !["Aplicação", "Compra"].includes(tipoMovimentacao);
+
+  // Quem tinha saldo na data. Enquanto for null a lista fica travada, porque oferecer tudo
+  // enquanto carrega deixaria escolher um ativo que nao existia naquele dia.
+  const [comSaldo, setComSaldo] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!user || !ehSaida || !data || !(isFundo || isMoeda)) {
+      setComSaldo(null);
+      return;
+    }
+    let vivo = true;
+    comSaldoNaData(user.id, data, isFundo ? "fundo_id" : "moeda").then((s) => {
+      if (vivo) setComSaldo(s);
+    });
+    return () => { vivo = false; };
+  }, [user, ehSaida, data, isFundo, isMoeda]);
+
+  // Mudou a data numa saida: o ativo escolhido pode nao existir na nova data, entao sai.
+  useEffect(() => {
+    if (!ehSaida) return;
+    if (fundoId && comSaldo && !comSaldo.has(fundoId)) setFundoId("");
+    if (moedaSel && comSaldo && !comSaldo.has(moedaSel)) setMoedaSel("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comSaldo, ehSaida]);
+
+  /** Fundos oferecidos: todos na aplicacao, so os que tinham cotas na data nas saidas. */
+  const fundosDisponiveis = useMemo(
+    () => (ehSaida ? fundos.filter((f) => comSaldo?.has(f.id)) : fundos),
+    [fundos, ehSaida, comSaldo],
+  );
+
+  const moedasDisponiveis = useMemo(
+    () => (ehSaida ? MOEDAS.filter((m) => comSaldo?.has(m.codigo)) : MOEDAS),
+    [ehSaida, comSaldo],
+  );
 
   /** Quantidade de cotas da operacao: valor / cota. Exibida, nunca digitada. */
   const qtdCotasDerivada = useMemo(() => {
@@ -1316,17 +1362,24 @@ export default function CadastrarTransacaoPage() {
         {showMoedaFields && (
           <>
             <div className="grid grid-cols-2 gap-4">
+              <Field label="Data da Transação" required>
+                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
+              </Field>
+              {/* Na venda so aparece moeda com saldo na data, por isso ela vem depois. */}
               <Field label="Moeda" required>
                 <NativeSelect
                   value={moedaSel}
                   onChange={setMoedaSel}
-                  placeholder="Selecione a moeda"
-                  disabled={isEditing}
-                  options={MOEDAS.map((m) => ({ value: m.codigo, label: `${m.nome} (${m.codigo})` }))}
+                  placeholder={
+                    ehSaida && !data
+                      ? "Informe a data da operação"
+                      : ehSaida && moedasDisponiveis.length === 0
+                        ? "Nenhuma moeda em custódia nessa data"
+                        : "Selecione a moeda"
+                  }
+                  disabled={isEditing || (ehSaida && !data)}
+                  options={moedasDisponiveis.map((m) => ({ value: m.codigo, label: `${m.nome} (${m.codigo})` }))}
                 />
-              </Field>
-              <Field label="Data da Transação" required>
-                <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
               </Field>
             </div>
 
@@ -1378,16 +1431,6 @@ export default function CadastrarTransacaoPage() {
         {/* ── Fundos de Investimentos ── */}
         {showFundoFields && (
           <>
-            <Field label="Fundo" required>
-              <FundoSelect
-                fundos={fundos}
-                value={fundoId}
-                onChange={setFundoId}
-                disabled={isEditing}
-                hasError={validationErrors.has("fundoId")}
-              />
-            </Field>
-
             <div className="grid grid-cols-2 gap-4">
               <Field label="Data da Transação" required>
                 <Input type="date" value={data} onChange={(e) => setData(e.target.value)} />
@@ -1401,6 +1444,28 @@ export default function CadastrarTransacaoPage() {
                 />
               </Field>
             </div>
+
+            {/* Numa saida so aparecem os fundos com cotas na data, por isso o campo vem
+                depois dela e fica travado enquanto a data nao for informada. */}
+            <Field label="Fundo" required>
+              {ehSaida && !data ? (
+                <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+                  Informe a data da operação
+                </p>
+              ) : ehSaida && comSaldo && fundosDisponiveis.length === 0 ? (
+                <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+                  Nenhum fundo em custódia nessa data
+                </p>
+              ) : (
+                <FundoSelect
+                  fundos={fundosDisponiveis}
+                  value={fundoId}
+                  onChange={setFundoId}
+                  disabled={isEditing}
+                  hasError={validationErrors.has("fundoId")}
+                />
+              )}
+            </Field>
 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Valor da Cota">
@@ -1755,21 +1820,54 @@ export default function CadastrarTransacaoPage() {
         {/* ── Resgate Flow ── */}
         {showResgateFields && (
           <>
+            <Field label="Data de Transação" required>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="dd/mm/aaaa"
+                  value={resgateDateInput}
+                  className={cn("flex-1 max-w-[220px]", resgateDateError || validationErrors.has("data") ? "border-destructive ring-1 ring-destructive" : "")}
+                  onChange={(e) => { handleResgateDateInputChange(e.target.value); setValidationErrors((prev) => { const n = new Set(prev); n.delete("data"); return n; }); }}
+                />
+                <Popover open={resgateCalendarOpen} onOpenChange={setResgateCalendarOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="icon" className="shrink-0">
+                      <CalendarIcon className="h-4 w-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={resgateDate}
+                      onSelect={handleResgateCalendarSelect}
+                      initialFocus
+                      className="p-3 pointer-events-auto"
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              {resgateDateError && (
+                <p className="text-xs font-medium text-destructive mt-1">{resgateDateError}</p>
+              )}
+            </Field>
+
             <Field label="Nome do Título" required>
               <NativeSelect
                 value={selectedCustodiaId}
                 onChange={(v) => {
                   setSelectedCustodiaId(v);
                   setValor("");
-                  setData("");
                   setSaldoDisponivel(null);
-                  setResgateDateInput("");
-                  setResgateDate(undefined);
-                  setResgateDateError(null);
                   setFecharPosicao(false);
                 }}
-                placeholder="Selecione o título em custódia"
-                options={custodiaItems.map((c) => ({
+                disabled={!resgateDate || !!resgateDateError}
+                placeholder={
+                  !resgateDate || resgateDateError
+                    ? "Informe a data da operação"
+                    : custodiasNaData.length === 0
+                      ? "Nenhum título em custódia nessa data"
+                      : "Selecione o título em custódia"
+                }
+                options={custodiasNaData.map((c) => ({
                   value: c.id,
                   label: c.nome || `Custódia #${c.codigo_custodia}`,
                 }))}
@@ -1778,36 +1876,6 @@ export default function CadastrarTransacaoPage() {
 
             {selectedCustodia && (
               <>
-                <Field label="Data de Transação" required>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="dd/mm/aaaa"
-                      value={resgateDateInput}
-                      className={cn("flex-1 max-w-[220px]", resgateDateError || validationErrors.has("data") ? "border-destructive ring-1 ring-destructive" : "")}
-                      onChange={(e) => { handleResgateDateInputChange(e.target.value); setValidationErrors((prev) => { const n = new Set(prev); n.delete("data"); return n; }); }}
-                    />
-                    <Popover open={resgateCalendarOpen} onOpenChange={setResgateCalendarOpen}>
-                      <PopoverTrigger asChild>
-                        <Button variant="outline" size="icon" className="shrink-0">
-                          <CalendarIcon className="h-4 w-4" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
-                        <Calendar
-                          mode="single"
-                          selected={resgateDate}
-                          onSelect={handleResgateCalendarSelect}
-                          initialFocus
-                          className="p-3 pointer-events-auto"
-                        />
-                      </PopoverContent>
-                    </Popover>
-                  </div>
-                  {resgateDateError && (
-                    <p className="text-xs font-medium text-destructive mt-1">{resgateDateError}</p>
-                  )}
-                </Field>
-
                 {resgateDate && !resgateDateError && (
                   <>
                     {/* Row 1: Valor, Vencimento */}
