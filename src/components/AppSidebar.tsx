@@ -3,7 +3,6 @@ import {
   LayoutGrid,
   ArrowLeftRight,
   Vault,
-  DollarSign,
   
   Settings,
   Shield,
@@ -30,7 +29,6 @@ const menuItems: MenuItem[] = [
   { title: "Custódia", url: "/custodia", icon: Vault, adminOnly: true },
   { title: "Controle de Carteiras", url: "/controle-carteiras", icon: Briefcase, adminOnly: true },
   { title: "Eventos", url: "/eventos", icon: CalendarClock },
-  { title: "Proventos Recebidos", url: "/proventos", icon: DollarSign },
   
   { title: "Configurações", url: "/configuracoes", icon: Settings },
   { title: "Admin", url: "/admin", icon: Shield, adminOnly: true },

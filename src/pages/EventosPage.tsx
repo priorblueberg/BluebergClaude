@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { useEventos, type TipoEvento } from "@/hooks/useEventos";
+import { PaginaCabecalho, TabelaCartao, LinhaMensagem, Contagem } from "@/components/PaginaPadrao";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -93,16 +94,16 @@ export default function EventosPage() {
   );
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold text-foreground">Eventos</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Renda fixa: cupom, vencimento e resgate até {fmtData(dataReferenciaISO)}
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PaginaCabecalho
+        titulo="Eventos"
+        subtitulo={`Renda fixa: cupom, vencimento e resgate até ${fmtData(dataReferenciaISO)}`}
+      />
 
       {loading ? (
-        <div className="rounded-md border border-border p-8 text-center text-muted-foreground">Carregando...</div>
+        <TabelaCartao>
+          <div className="py-8 text-center text-sm text-muted-foreground">Carregando...</div>
+        </TabelaCartao>
       ) : (
         <>
           <div>
@@ -137,7 +138,7 @@ export default function EventosPage() {
           <div>
             <h2 className="text-sm font-medium text-foreground mb-1">Vencimentos em renda fixa</h2>
             <p className="text-xs text-muted-foreground mb-2">Próximos 12 meses</p>
-            <div className="rounded-md border border-border overflow-x-auto">
+            <TabelaCartao>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -149,11 +150,7 @@ export default function EventosPage() {
                 </TableHeader>
                 <TableBody>
                   {vencimentos.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center py-6 text-muted-foreground text-sm">
-                        Nenhum vencimento nos próximos 12 meses.
-                      </TableCell>
-                    </TableRow>
+                    <LinhaMensagem colSpan={4}>Nenhum vencimento nos próximos 12 meses.</LinhaMensagem>
                   ) : (
                     vencimentos.map((v) => (
                       <TableRow key={`${v.ativo}-${v.vencimento}`}>
@@ -166,7 +163,7 @@ export default function EventosPage() {
                   )}
                 </TableBody>
               </Table>
-            </div>
+            </TabelaCartao>
           </div>
 
           <div>
@@ -188,9 +185,9 @@ export default function EventosPage() {
                   </button>
                 ))}
               </div>
-              <span className="text-xs text-muted-foreground ml-auto">{visiveis.length} eventos</span>
+              <Contagem>{visiveis.length} eventos</Contagem>
             </div>
-            <div className="rounded-md border border-border overflow-x-auto">
+            <TabelaCartao>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -205,11 +202,7 @@ export default function EventosPage() {
                 </TableHeader>
                 <TableBody>
                   {visiveis.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-6 text-muted-foreground text-sm">
-                        Nenhum evento no período.
-                      </TableCell>
-                    </TableRow>
+                    <LinhaMensagem colSpan={7}>Nenhum evento no período.</LinhaMensagem>
                   ) : (
                     visiveis.map((e, i) => (
                       <TableRow key={`${e.data}-${e.ativo}-${e.tipo}-${i}`}>
@@ -231,7 +224,7 @@ export default function EventosPage() {
                   )}
                 </TableBody>
               </Table>
-            </div>
+            </TabelaCartao>
           </div>
         </>
       )}

@@ -13,7 +13,6 @@ import {
   CarteiraTesouroDireto,
   
   Movimentacoes,
-  ProventosRecebidos,
   Eventos,
   CadastrarTransacao,
   Configuracoes,
@@ -120,7 +119,6 @@ const App = () => (
                 <Route path="/posicao-consolidada" element={<PosicaoConsolidadaPage />} />
                 <Route path="/movimentacoes" element={<Movimentacoes />} />
                 <Route path="/eventos" element={<Eventos />} />
-                <Route path="/proventos" element={<ProventosRecebidos />} />
                 <Route path="/cadastrar-transacao" element={<CadastrarTransacao />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route path="/usuario" element={<Usuario />} />

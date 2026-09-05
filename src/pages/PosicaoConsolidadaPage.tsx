@@ -12,6 +12,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
+import { PaginaCabecalho, BarraDeFiltros, Contagem, TabelaCartao, LinhaMensagem } from "@/components/PaginaPadrao";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search } from "lucide-react";
@@ -489,40 +490,40 @@ export default function PosicaoConsolidadaPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-foreground">Posição Consolidada</h1>
+      <PaginaCabecalho
+        titulo="Posição Consolidada"
+        subtitulo={`Ativos em custódia e liquidados em ${new Date(dataReferenciaISO + "T12:00:00").toLocaleDateString("pt-BR")}`}
+      />
 
-      <div className="flex items-center gap-4">
-        <div className="relative max-w-xs flex-1">
+      <BarraDeFiltros>
+        <div className="relative w-full max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Buscar ativo..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
         </div>
-        <span className="text-sm text-muted-foreground">
-          Data de referência:{" "}
-          <span className="font-medium text-foreground">
-            {new Date(dataReferenciaISO + "T12:00:00").toLocaleDateString("pt-BR")}
-          </span>
-        </span>
-      </div>
+        <Contagem>{filteredRows.length} ativos</Contagem>
+      </BarraDeFiltros>
 
-      {loading && <p className="text-sm text-muted-foreground">Carregando posição...</p>}
-      {!loading && filteredRows.length === 0 && <p className="text-sm text-muted-foreground">Nenhum ativo encontrado.</p>}
-
-      {!loading && filteredRows.length > 0 && (
-        <div className="rounded-lg border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="min-w-[50px]">Status</TableHead>
-                <TableHead className="min-w-[250px]">Ativo</TableHead>
-                <TableHead className="min-w-[130px]">Valor Atualizado</TableHead>
-                <TableHead className="min-w-[130px]">Ganho Financeiro</TableHead>
-                <TableHead className="min-w-[110px]">Rentabilidade</TableHead>
-                <TableHead className="min-w-[150px]">Custodiante</TableHead>
-                <TableHead className="min-w-[110px] text-right">% do Portfólio</TableHead>
-                <TableHead className="min-w-[180px] text-right">Ações</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+      <TabelaCartao>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[50px] text-xs">Status</TableHead>
+              <TableHead className="min-w-[250px] text-xs">Ativo</TableHead>
+              <TableHead className="min-w-[130px] text-xs">Valor Atualizado</TableHead>
+              <TableHead className="min-w-[130px] text-xs">Ganho Financeiro</TableHead>
+              <TableHead className="min-w-[110px] text-xs">Rentabilidade</TableHead>
+              <TableHead className="min-w-[150px] text-xs">Custodiante</TableHead>
+              <TableHead className="min-w-[110px] text-xs text-right">% do Portfólio</TableHead>
+              <TableHead className="min-w-[180px] text-xs text-right">Ações</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <LinhaMensagem colSpan={8}>Carregando posição...</LinhaMensagem>
+            ) : filteredRows.length === 0 ? (
+              <LinhaMensagem colSpan={8}>Nenhum ativo encontrado.</LinhaMensagem>
+            ) : (
+              <>
               {filteredRows.map((row, i) => {
                 const pctPortfolio = totalValor > 0 ? (row.valorAtualizado / totalValor) * 100 : 0;
                 return (
@@ -535,12 +536,12 @@ export default function PosicaoConsolidadaPage() {
                         {row.ativo ? "Em custódia" : "Liquidado"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="font-medium">{row.nome}</TableCell>
-                    <TableCell>{fmtBrl(row.valorAtualizado)}</TableCell>
-                    <TableCell>{fmtBrl(row.ganhoFinanceiro)}</TableCell>
-                    <TableCell>{row.rentabilidade.toFixed(2)}%</TableCell>
-                    <TableCell>{row.custodiante}</TableCell>
-                    <TableCell className="text-right font-medium">{pctPortfolio.toFixed(2)}%</TableCell>
+                    <TableCell className="text-sm font-medium">{row.nome}</TableCell>
+                    <TableCell className="text-sm">{fmtBrl(row.valorAtualizado)}</TableCell>
+                    <TableCell className="text-sm">{fmtBrl(row.ganhoFinanceiro)}</TableCell>
+                    <TableCell className="text-sm">{row.rentabilidade.toFixed(2)}%</TableCell>
+                    <TableCell className="text-sm">{row.custodiante}</TableCell>
+                    <TableCell className="text-sm text-right font-medium">{pctPortfolio.toFixed(2)}%</TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">
                         <Button variant="outline" size="sm" className="text-xs h-7 px-2" onClick={(e) => openBoleta(row, "Aplicação", e)}>Aplicação</Button>
@@ -555,18 +556,19 @@ export default function PosicaoConsolidadaPage() {
               })}
               <TableRow className="bg-muted/50 font-semibold">
                 <TableCell />
-                <TableCell>Total</TableCell>
-                <TableCell>{fmtBrl(totalValor)}</TableCell>
-                <TableCell>{fmtBrl(totalGanho)}</TableCell>
-                <TableCell>{carteiraRentabilidade.toFixed(2)}%</TableCell>
+                <TableCell className="text-sm">Total</TableCell>
+                <TableCell className="text-sm">{fmtBrl(totalValor)}</TableCell>
+                <TableCell className="text-sm">{fmtBrl(totalGanho)}</TableCell>
+                <TableCell className="text-sm">{carteiraRentabilidade.toFixed(2)}%</TableCell>
                 <TableCell />
-                <TableCell className="text-right">100,00%</TableCell>
+                <TableCell className="text-sm text-right">100,00%</TableCell>
                 <TableCell />
               </TableRow>
+              </>
+            )}
             </TableBody>
           </Table>
-        </div>
-      )}
+      </TabelaCartao>
 
       {/* Boleta */}
       {dialogRow && user && (

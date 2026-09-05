@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { ArrowUpDown, Pencil, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { PaginaCabecalho, BarraDeFiltros, Contagem, TabelaCartao, LinhaMensagem } from "@/components/PaginaPadrao";
 import { Badge } from "@/components/ui/badge";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -226,13 +227,12 @@ export default function MovimentacoesPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold text-foreground">Movimentações</h1>
-        <p className="text-xs text-muted-foreground">Extrato de todas as movimentações registradas</p>
-      </div>
+      <PaginaCabecalho
+        titulo="Movimentações"
+        subtitulo="Extrato de todas as movimentações registradas"
+      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
+      <BarraDeFiltros>
         <div className="flex items-center gap-2">
           <label className="text-xs text-muted-foreground whitespace-nowrap">Nome do Ativo:</label>
           <select
@@ -259,16 +259,17 @@ export default function MovimentacoesPage() {
             ))}
           </select>
         </div>
-      </div>
+        <Contagem>{sortedRows.length} movimentações</Contagem>
+      </BarraDeFiltros>
 
-      <div className="rounded-lg border bg-card overflow-x-auto">
+      <TabelaCartao>
         <Table>
           <TableHeader>
             <TableRow>
               {COLUMNS.map((col) => (
                 <TableHead
                   key={col.key}
-                  className="cursor-pointer select-none whitespace-nowrap"
+                  className="cursor-pointer select-none whitespace-nowrap text-xs"
                   onClick={() => handleSort(col.key)}
                 >
                   <span className="inline-flex items-center gap-1">
@@ -277,38 +278,38 @@ export default function MovimentacoesPage() {
                   </span>
                 </TableHead>
               ))}
-              <TableHead className="text-center whitespace-nowrap">Ações</TableHead>
+              <TableHead className="text-center whitespace-nowrap text-xs">Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow><TableCell colSpan={colSpan} className="text-center py-8 text-muted-foreground">Carregando...</TableCell></TableRow>
+              <LinhaMensagem colSpan={colSpan}>Carregando...</LinhaMensagem>
             ) : sortedRows.length === 0 ? (
-              <TableRow><TableCell colSpan={colSpan} className="text-center py-8 text-muted-foreground">Nenhuma movimentação encontrada.</TableCell></TableRow>
+              <LinhaMensagem colSpan={colSpan}>Nenhuma movimentação encontrada.</LinhaMensagem>
             ) : (
               sortedRows.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell className="whitespace-nowrap">{fmtDate(r.data)}</TableCell>
-                  <TableCell className="whitespace-nowrap">{r.nome_ativo ?? "—"}</TableCell>
-                  <TableCell className="whitespace-nowrap">{r.tipo_movimentacao}</TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-nowrap text-sm">{fmtDate(r.data)}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">{r.nome_ativo ?? "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">{r.tipo_movimentacao}</TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">
                     {isPagamentoJuros(r.tipo_movimentacao) || isPoupancaMov(r)
                       ? "—"
                       : r.quantidade != null
                         ? r.quantidade.toLocaleString("pt-BR", { minimumFractionDigits: 7, maximumFractionDigits: 7 })
                         : "—"}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-nowrap text-sm">
                     {isPagamentoJuros(r.tipo_movimentacao) || isPoupancaMov(r)
                       ? "—"
                       : r.preco_unitario != null
                         ? r.preco_unitario.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
                         : "—"}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap">
+                  <TableCell className="whitespace-nowrap text-sm">
                     {r.valor != null ? r.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}
                   </TableCell>
-                  <TableCell className="whitespace-nowrap text-center">
+                  <TableCell className="whitespace-nowrap text-center text-sm">
                     {r.origem === "automatico" ? (
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Auto</Badge>
                     ) : (
@@ -335,7 +336,7 @@ export default function MovimentacoesPage() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </TabelaCartao>
 
       <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
         <AlertDialogContent>
