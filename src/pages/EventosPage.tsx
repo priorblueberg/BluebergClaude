@@ -16,7 +16,7 @@ const fmtData = (s: string) => {
 };
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
-/** Os tipos que contam como dinheiro recebido; resgate e come-cotas ficam de fora do total. */
+/** Os tipos que contam como dinheiro recebido; resgate fica de fora do total. */
 const RECEBIDOS: TipoEvento[] = ["Pagamento de juros", "Vencimento"];
 
 function Cartao({ rotulo, valor }: { rotulo: string; valor: string }) {
@@ -85,7 +85,7 @@ export default function EventosPage() {
       <div>
         <h1 className="text-lg font-semibold text-foreground">Eventos</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Cupom, vencimento, resgate e come-cotas até {fmtData(dataReferenciaISO)}
+          Renda fixa: cupom, vencimento e resgate até {fmtData(dataReferenciaISO)}
         </p>
       </div>
 

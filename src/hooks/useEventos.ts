@@ -17,14 +17,17 @@ import { fatoresIpcaDoTitulo, carregarSeriesIpca, algumIndexadoAoIpca, type Seri
  *  - "Pagamento de juros" = `CASH_INCOME` dele: cupom do motor (`pagamentoJuros`) mais o juro
  *    do dia do vencimento
  *  - "Vencimento" = `CASH_AMORTIZATION` dele: o principal corrigido devolvido no vencimento
- *  - "Resgate" e "Come-cotas": das movimentações. O Gorila não tem esses dois - resgate lá é
- *    transação, não evento - e por isso ficam fora dos cartões de total.
+ *  - "Resgate": das movimentações. O Gorila não tem esse - resgate lá é transação, não
+ *    evento - e por isso fica fora dos cartões de total.
+ *
+ * Fundos não entram: os eventos deles são come-cotas e resgate, e come-cotas é antecipação de
+ * imposto, não provento. A tela é de renda fixa.
  *
  * Conferido contra a API dele na janela de 12 meses até 02/09/2026: 125 rendimentos somando
  * R$ 434.295,37 contra R$ 434.295,44, e 7 amortizações somando R$ 103.193,61 dos dois lados,
  * cada papel batendo no centavo.
  */
-export type TipoEvento = "Pagamento de juros" | "Vencimento" | "Resgate" | "Come-cotas";
+export type TipoEvento = "Pagamento de juros" | "Vencimento" | "Resgate";
 
 export interface EventoRow {
   data: string;
@@ -74,7 +77,10 @@ export function useEventos() {
         .select("codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, indexador, preco_unitario, quantidade, resgate_total, pagamento, vencimento, valor_investido, fundo_id, instituicoes(nome), categorias(nome)")
         .eq("user_id", user.id);
 
-      const todos = (custodias || []) as any[];
+      // A tela e de eventos de RENDA FIXA. Fundo fica de fora: os eventos que ele produz sao
+      // come-cotas e resgate, que nao sao provento de titulo - o come-cotas e antecipacao de
+      // imposto, nao dinheiro recebido, e misturado no historico so polui a leitura.
+      const todos = ((custodias || []) as any[]).filter((c) => !c.fundo_id);
       if (todos.length === 0) {
         setEventos([]); setVencimentos([]); setLoading(false); return;
       }
@@ -96,7 +102,7 @@ export function useEventos() {
           .sort((a, b) => a.vencimento.localeCompare(b.vencimento)),
       );
 
-      // --- movimentacoes: come-cotas, resgates e vencimentos ---
+      // --- movimentacoes: resgates e vencimentos ---
       const codigos = todos.map((c) => c.codigo_custodia);
       const movs = await fetchAllRows((de, ate) =>
         supabase.from("movimentacoes")
@@ -132,8 +138,7 @@ export function useEventos() {
         if (!c) continue;
         const t = String(m.tipo_movimentacao);
         let tipo: TipoEvento | null = null;
-        if (t === "Come-Cotas") tipo = "Come-cotas";
-        else if (t === "Resgate no Vencimento") {
+        if (t === "Resgate no Vencimento") {
           if (noMotorPorVencimento.has(String(m.codigo_custodia))) continue;
           tipo = "Vencimento";
         }
