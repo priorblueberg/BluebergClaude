@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { format, parse, isValid } from "date-fns";
 import { ArrowLeft, PlusCircle, AlertTriangle, HelpCircle, CalendarIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,7 +8,7 @@ import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { toast } from "sonner";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
-import { calcularRendaFixaDiario, PAGAMENTO_OPTIONS } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, opcoesPagamentoDoProduto } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaSeNecessario } from "@/lib/ipcaSeries";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -162,9 +162,6 @@ export default function CadastrarTransacaoPage() {
   const [searchParams] = useSearchParams();
   const editId = searchParams.get("edit");
 
-  // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
-  const pagamentoOptions = isAdmin ? PAGAMENTO_OPTIONS : ["No Vencimento"];
-
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
 
@@ -213,6 +210,13 @@ export default function CadastrarTransacaoPage() {
   const isFundo = categoriaSelecionada?.nome === "Fundos de Investimentos";
   const isMoeda = categoriaSelecionada?.nome === "Moedas";
   const isPoupanca = produtoSelecionado?.nome === "Poupança";
+  // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
+  // Alem disso, LC, RDB, RDC e DPGE nao pagam cupom nem para admin: a boleta do Gorila nem
+  // oferece periodicidade neles (ver PRODUTOS_SEM_CUPOM no motor).
+  const pagamentoOptions = useMemo(
+    () => (isAdmin ? opcoesPagamentoDoProduto(produtoSelecionado?.nome) : ["No Vencimento"]),
+    [isAdmin, produtoSelecionado?.nome],
+  );
   const isPosFixado = modalidade === "Pós Fixado";
   const isEditing = !!editId;
   const isResgate = tipoMovimentacao === "Resgate";
@@ -220,6 +224,13 @@ export default function CadastrarTransacaoPage() {
   const selectedCustodia = custodiaItems.find((c) => c.id === selectedCustodiaId);
   // Etapa 1 do destravamento: a categoria escolhida já tem fluxo próprio na boleta?
   const categoriaImplementada = !categoriaSelecionada || CATEGORIAS_IMPLEMENTADAS.includes(categoriaSelecionada.nome);
+
+  // Trocar para um produto sem cupom (LC, RDB, RDC, DPGE) tem que limpar a periodicidade que
+  // ja estivesse escolhida - senao o titulo entra com cupom que o Gorila nao paga, e o select
+  // fica mostrando uma opcao que nem consta mais da lista.
+  useEffect(() => {
+    if (!pagamentoOptions.includes(pagamento)) setPagamento(pagamentoOptions[0]);
+  }, [pagamentoOptions, pagamento]);
 
   // Load categorias on mount — todas as categorias ativas. O fluxo de cada uma é
   // despachado abaixo; categorias sem fluxo próprio caem num placeholder (etapa 1

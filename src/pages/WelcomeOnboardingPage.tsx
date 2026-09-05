@@ -8,7 +8,7 @@ import EntidadeSelect from "@/components/EntidadeSelect";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { PAGAMENTO_OPTIONS } from "@/lib/rendaFixaEngine";
+import { opcoesPagamentoDoProduto } from "@/lib/rendaFixaEngine";
 
 // Reuse types and helpers from CadastrarTransacaoPage
 interface Produto { id: string; nome: string; }
@@ -61,9 +61,6 @@ export default function WelcomeOnboardingPage() {
   const { user, profileName, refreshCustodia } = useAuth();
   const isAdmin = useIsAdmin();
 
-  // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
-  const pagamentoOptions = isAdmin ? PAGAMENTO_OPTIONS : ["No Vencimento"];
-
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
   const [categoriaId, setCategoriaId] = useState("");
@@ -71,6 +68,14 @@ export default function WelcomeOnboardingPage() {
 
   // form state
   const [produtoId, setProdutoId] = useState("");
+
+  // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
+  // LC, RDB, RDC e DPGE nao pagam cupom nem para admin (ver PRODUTOS_SEM_CUPOM no motor).
+  // Fica DEPOIS de `produtos` e `produtoId`: acima delas seria ReferenceError em runtime,
+  // que o tsc nao acusa neste padrao.
+  const pagamentoOptions = isAdmin
+    ? opcoesPagamentoDoProduto(produtos.find((p) => p.id === produtoId)?.nome)
+    : ["No Vencimento"];
   const [data, setData] = useState("");
   const [valor, setValor] = useState("");
   const [precoUnitario, setPrecoUnitario] = useState("1.000,00");

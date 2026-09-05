@@ -129,6 +129,29 @@ const PERIODICIDADE_MESES: Record<string, number> = {
  */
 export const PAGAMENTO_OPTIONS = [...Object.keys(PERIODICIDADE_MESES), "No Vencimento"];
 
+/**
+ * Produtos que NAO pagam cupom periodico: os juros so saem no vencimento.
+ *
+ * Medido no Gorila em 05/09/2026 cadastrando 11 gemeos de um mesmo CDB (IPCA+2,60%, compra
+ * 07/04/2025, venc 23/04/2030, trimestral). A boleta desses quatro simplesmente NAO tem o
+ * campo "Periodicidade de pagamento" - nos outros sete (LCI, LCA, LCD, LF, LFS, LFSN, LIG)
+ * ela existe e o resultado bate com o CDB no centavo e cupom a cupom.
+ *
+ *   com cupom   PU 1072,743740   patrimonio 10.727,44   6 cupons
+ *   sem cupom   PU 1108,849348   patrimonio 11.088,49   nenhum
+ *
+ * A rentabilidade e a mesma nos doze (10,8849%): muda so se o dinheiro sai como cupom ou
+ * fica acumulado no papel. Sem esta trava, um titulo desses cadastrado com cupom faria o
+ * nosso motor pagar juros que o Gorila nao paga - R$ 361 de diferenca no papel medido.
+ */
+export const PRODUTOS_SEM_CUPOM = ["LC", "RDB", "RDC", "DPGE"];
+
+/** Periodicidades que a boleta deve oferecer para um produto. */
+export function opcoesPagamentoDoProduto(produtoNome: string | null | undefined): string[] {
+  const nome = (produtoNome ?? "").trim().toUpperCase();
+  return PRODUTOS_SEM_CUPOM.includes(nome) ? ["No Vencimento"] : PAGAMENTO_OPTIONS;
+}
+
 export function gerarDatasPagamentoJuros(
   dataInicio: string,
   vencimento: string,
