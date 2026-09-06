@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { format, parse, isValid } from "date-fns";
 import { AlertTriangle, CalendarIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
 import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
@@ -216,12 +217,15 @@ export default function BoletaCustodiaDialog({
         const fimSerie = [dateISO, row.vencimento ?? "", row.resgate_total ?? ""]
           .reduce((maior, d) => (d > maior ? d : maior), dateISO);
 
-        const calQuery = supabase
+        // Paginado: ate o vencimento a serie passa das 1000 linhas que o PostgREST
+        // devolve por requisicao, e ele corta em silencio.
+        const calQuery = fetchAllRows((de, ate) => supabase
             .from("calendario_dias_uteis")
             .select("data, dia_util")
             .gte("data", row.data_inicio)
             .lte("data", fimSerie)
-            .order("data");
+            .order("data")
+            .range(de, ate)).then((data) => ({ data }));
         const movQuery = supabase
             .from("movimentacoes")
             .select("data, tipo_movimentacao, valor")

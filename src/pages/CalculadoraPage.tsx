@@ -14,6 +14,7 @@ import { Download } from "lucide-react";
 import CalculadoraTable from "@/components/CalculadoraTable";
 import CalculadoraCarteiraTable from "@/components/CalculadoraCarteiraTable";
 import { exportIndividualToExcel, exportCarteiraToExcel } from "@/lib/exportCalculadora";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 const CARTEIRA_RF_ID = "__carteira_rf__";
 
@@ -101,17 +102,17 @@ export default function CalculadoraPage() {
         if (isPoupanca) {
           // Poupança calculation
           const [calRes, movRes, selicRes, lotesRes, trRes, poupRendRes] = await Promise.all([
-            supabase.from("calendario_dias_uteis").select("data, dia_util")
-              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data"),
+            fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
             supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
               .eq("codigo_custodia", product.codigo_custodia).eq("user_id", user.id).order("data"),
-            supabase.from("historico_selic").select("data, taxa_anual")
-              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data"),
+            fetchAllRows((de, ate) => supabase.from("historico_selic").select("data, taxa_anual")
+              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
             Promise.resolve({ data: [] }), // lotes now built from movimentações
-            supabase.from("historico_tr").select("data, taxa_mensal")
-              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data"),
-            supabase.from("historico_poupanca_rendimento").select("data, rendimento_mensal")
-              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data"),
+            fetchAllRows((de, ate) => supabase.from("historico_tr").select("data, taxa_mensal")
+              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
+            fetchAllRows((de, ate) => supabase.from("historico_poupanca_rendimento").select("data, rendimento_mensal")
+              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
           ]);
 
           const movs = (movRes.data || []).map((m: any) => ({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) }));
@@ -132,12 +133,12 @@ export default function CalculadoraPage() {
         } else {
           // Renda Fixa calculation
           const [calRes, movRes, cdiRes] = await Promise.all([
-            supabase.from("calendario_dias_uteis").select("data, dia_util")
-              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data"),
+            fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
             supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
               .eq("codigo_custodia", product.codigo_custodia).eq("user_id", user.id).order("data"),
-            supabase.from("historico_cdi").select("data, taxa_anual")
-              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data"),
+            fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
+              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
           ]);
 
           const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
@@ -204,10 +205,14 @@ export default function CalculadoraPage() {
       }, dataCalculo);
 
       const [calRes, cdiRes] = await Promise.all([
-        supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data"),
-        supabase.from("historico_cdi").select("data, taxa_anual")
-          .gte("data", getDateMinus(dataInicio, 5)).lte("data", dataCalculo).order("data"),
+        // Paginado: o calendario vai ate o vencimento mais longo (1.463 linhas em 06/09/2026)
+        // e o PostgREST corta em 1000 SEM avisar. Truncado, ele parava em 23/09/2026 e as
+        // datas de cupom dos papeis que vencem depois disso saiam erradas - eram os R$ 10,29
+        // que faltavam nesta tela contra a Carteira e a Posicao Consolidada.
+        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+          .gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data").range(de, ate)).then((data) => ({ data })),
+        fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
+          .gte("data", getDateMinus(dataInicio, 5)).lte("data", dataCalculo).order("data").range(de, ate)).then((data) => ({ data })),
       ]);
 
       const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
@@ -219,12 +224,13 @@ export default function CalculadoraPage() {
 
       // Batch fetch all movimentações in a single query
       const allCodigos = rfProducts.map(p => p.codigo_custodia);
-      const { data: allMovData } = await supabase
+      const allMovData = await fetchAllRows((de, ate) => supabase
         .from("movimentacoes")
         .select("data, tipo_movimentacao, valor, codigo_custodia")
         .in("codigo_custodia", allCodigos)
         .eq("user_id", user!.id)
-        .order("data");
+        .order("data")
+        .range(de, ate));
 
       const movByCodigo = new Map<string, { data: string; tipo_movimentacao: string; valor: number }[]>();
       for (const m of (allMovData || [])) {

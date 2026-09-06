@@ -227,13 +227,13 @@ export function useCarteiraRF() {
           .gte("data", pisoSeries).lte("data", dataCalculo).order("data").range(de, ate))
           .then((data) => ({ data })),
         poupancaCodigos.length > 0
-          ? supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data")
+          ? fetchAllRows((de, ate) => supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data").range(de, ate)).then((data) => ({ data }))
           : Promise.resolve({ data: [] }),
         poupancaCodigos.length > 0
-          ? supabase.from("historico_tr").select("data, taxa_mensal").gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data")
+          ? fetchAllRows((de, ate) => supabase.from("historico_tr").select("data, taxa_mensal").gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data").range(de, ate)).then((data) => ({ data }))
           : Promise.resolve({ data: [] }),
         poupancaCodigos.length > 0
-          ? supabase.from("historico_poupanca_rendimento").select("data, rendimento_mensal").gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data")
+          ? fetchAllRows((de, ate) => supabase.from("historico_poupanca_rendimento").select("data, rendimento_mensal").gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data").range(de, ate)).then((data) => ({ data }))
           : Promise.resolve({ data: [] }),
       ]);
 

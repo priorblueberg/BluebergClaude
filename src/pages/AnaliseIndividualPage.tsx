@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { Search, ChevronUp, ChevronDown, ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -87,18 +88,20 @@ export function ProductDetail({ product, onBack, backLabel = "Voltar para lista 
 
       // Fetch CDI, dias_uteis, and movimentacoes in parallel
       const [cdiRes, diasRes, movsRes] = await Promise.all([
-        supabase
+        fetchAllRows((de, ate) => supabase
           .from("historico_cdi")
           .select("data, taxa_anual")
           .gte("data", product.data_inicio)
           .lte("data", endDate)
-          .order("data"),
-        supabase
+          .order("data")
+          .range(de, ate)).then((data) => ({ data })),
+        fetchAllRows((de, ate) => supabase
           .from("calendario_dias_uteis")
           .select("data, dia_util")
           .gte("data", getDateMinus(product.data_inicio, 5))
           .lte("data", calendarEndDate)
-          .order("data"),
+          .order("data")
+          .range(de, ate)).then((data) => ({ data })),
         supabase
           .from("movimentacoes")
           .select("data, tipo_movimentacao, valor")
