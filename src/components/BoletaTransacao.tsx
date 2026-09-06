@@ -212,6 +212,8 @@ export default function BoletaTransacao({
   const [editLoaded, setEditLoaded] = useState(false);
   /** Nome do titulo da movimentacao em edicao, so para exibicao. */
   const [nomeAtivoEmEdicao, setNomeAtivoEmEdicao] = useState("");
+  /** Codigo de custodia da movimentacao em edicao, para propagar o nome ao papel inteiro. */
+  const [codigoCustodiaEmEdicao, setCodigoCustodiaEmEdicao] = useState<string | null>(null);
   // Fundos
   const [fundos, setFundos] = useState<{ id: string; nome: string; cnpj: string }[]>([]);
   const [fundoId, setFundoId] = useState("");
@@ -653,6 +655,7 @@ export default function BoletaTransacao({
       setMoedaSel((mov as any).moeda || "");
       setQtdCotas(mov.quantidade != null ? String(mov.quantidade).replace(".", ",") : "");
       setNomeAtivoEmEdicao(mov.nome_ativo || "");
+      setCodigoCustodiaEmEdicao((mov as any).codigo_custodia ?? null);
       setEditLoaded(true);
     })();
   }, [editId, editLoaded, categorias]);
@@ -1300,6 +1303,19 @@ export default function BoletaTransacao({
         }).eq("id", editId);
 
         if (error) throw error;
+
+        // O nome do ativo e derivado dos termos do papel, entao vale para a custodia inteira.
+        // Antes so a linha editada e a custodia eram renomeadas, e a lista passava a mostrar o
+        // MESMO papel com dois nomes - o que torna impossivel distinguir as linhas na hora de
+        // editar ou excluir, que foi como eu apaguei a transacao errada no Gorila em 06/09/2026.
+        if (codigoCustodiaEmEdicao) {
+          const { error: errNome } = await supabase
+            .from("movimentacoes")
+            .update({ nome_ativo: nomeAtivo })
+            .eq("codigo_custodia", codigoCustodiaEmEdicao)
+            .eq("user_id", user!.id);
+          if (errNome) console.error("nao foi possivel propagar o nome do ativo", errNome);
+        }
 
         await fullSyncAfterMovimentacao(editId!, categoriaId, user!.id, dataReferenciaISO);
         applyDataReferencia();
