@@ -22,7 +22,7 @@ import {
 
 interface CustodiaRow {
   id: string;
-  codigo_custodia: number;
+  codigo_custodia: string;
   data_inicio: string;
   tipo_movimentacao: string;
   modalidade: string | null;

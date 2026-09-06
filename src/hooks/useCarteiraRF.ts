@@ -31,7 +31,7 @@ export interface CarteiraInfo {
 
 interface CustodiaProduct {
   id: string;
-  codigo_custodia: number;
+  codigo_custodia: string;
   nome: string | null;
   data_inicio: string;
   data_calculo: string | null;
@@ -267,9 +267,9 @@ export function useCarteiraRF() {
         .order("data")
         .range(de, ate));
 
-      const movByCodigo = new Map<number, { data: string; tipo_movimentacao: string; valor: number }[]>();
+      const movByCodigo = new Map<string, { data: string; tipo_movimentacao: string; valor: number }[]>();
       for (const m of (allMovData || [])) {
-        const code = m.codigo_custodia as number;
+        const code = m.codigo_custodia as string;
         if (!movByCodigo.has(code)) movByCodigo.set(code, []);
         movByCodigo.get(code)!.push({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) });
       }

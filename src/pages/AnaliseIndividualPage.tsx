@@ -18,7 +18,7 @@ import {
 export interface CustodiaProduct {
   id: string;
   nome: string | null;
-  codigo_custodia: number;
+  codigo_custodia: string;
   data_inicio: string;
   data_calculo: string | null;
   data_limite: string | null;

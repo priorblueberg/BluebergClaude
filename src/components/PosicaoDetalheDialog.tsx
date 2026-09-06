@@ -34,7 +34,7 @@ export interface PosicaoDetalheData {
   custodiante: string;
   valorAtualizado: number;
   dataInicio: string;
-  codigoCustodia: number;
+  codigoCustodia: string;
   categoriaId: string;
   indexador: string | null;
   taxa: number | null;

@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 
 export interface CustodiaRowForBoleta {
   id: string;
-  codigo_custodia: number;
+  codigo_custodia: string;
   data_inicio: string;
   nome: string | null;
   categoria: string;

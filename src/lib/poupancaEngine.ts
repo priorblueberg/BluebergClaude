@@ -278,6 +278,7 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
       valorCota: 1,
       saldoCotas: liquido,
       liquido,
+      principalCorrigido: 0,
       valorCota2: 1,
       saldoCotas2: liquido + mov.resgates,
       liquido2: liquido + mov.resgates,

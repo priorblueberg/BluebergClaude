@@ -33,7 +33,7 @@ interface Movimentacao {
   preco_unitario: number | null;
   valor: number | null;
   origem: string;
-  codigo_custodia: number | null;
+  codigo_custodia: string | null;
   modalidade: string | null;
 }
 

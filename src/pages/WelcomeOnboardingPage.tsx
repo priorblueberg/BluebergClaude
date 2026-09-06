@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { PlusCircle, HelpCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { resolverTitulo } from "@/lib/resolverTitulo";
+import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
@@ -176,9 +177,10 @@ export default function WelcomeOnboardingPage() {
         valorExtrato = quantidade != null ? `R$ ${fmtBR(valorNum)} (R$ ${fmtBR(puNum)} x ${fmtBR(quantidade)})` : `R$ ${fmtBR(valorNum)}`;
       }
 
-      const { data: maxRow } = await supabase.from("movimentacoes").select("codigo_custodia").not("codigo_custodia", "is", null).order("codigo_custodia", { ascending: false }).limit(1);
-      const maxCodigo = maxRow && maxRow.length > 0 ? (maxRow[0].codigo_custodia ?? 99) : 99;
-      const codigoCustodia = maxCodigo + 1;
+      // `codigo_custodia` e texto: ordenar no banco devolvia "99" como maior que "1000", e o
+      // ativo novo podia nascer com um codigo JA EM USO. `proximoCodigoCustodia` le paginado
+      // e tira o maximo numerico do conjunto inteiro - e a mesma funcao que a boleta usa.
+      const codigoCustodia = await proximoCodigoCustodia(user.id);
 
       // Os termos do papel vivem no cadastro compartilhado, nao mais na movimentacao. Poupanca
       // fica de fora de proposito: nao tem emissor nem vencimento para formar identidade.

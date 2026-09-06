@@ -39,7 +39,7 @@ interface Produto {
 interface CustodiaItem {
   id: string;
   nome: string | null;
-  codigo_custodia: number;
+  codigo_custodia: string;
   data_inicio: string;
   valor_investido: number;
   taxa: number | null;
@@ -1438,7 +1438,7 @@ export default function BoletaTransacao({
         const { data: inserted } = await supabase
           .from("movimentacoes")
           .select("id")
-          .eq("codigo_custodia", nomeAtivo ? codigoCustodia : -1)
+          .eq("codigo_custodia", nomeAtivo ? codigoCustodia : "-1")
           .eq("user_id", user!.id)
           .order("created_at", { ascending: false })
           .limit(1);

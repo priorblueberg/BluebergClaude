@@ -102,7 +102,7 @@ function formatValorExtrato(valor: number, precoUnitario: number, quantidade: nu
  * These rows are derived values and must be updated when earlier movimentações change.
  */
 async function syncManualResgatesTotais(
-  codigoCustodia: number,
+  codigoCustodia: string,
   userId: string,
   custodiaRecord: SyncCustodiaBase
 ) {
@@ -212,7 +212,7 @@ async function syncManualResgatesTotais(
  * when resgate_total === vencimento AND vencimento < today (real date).
  */
 async function syncResgateNoVencimento(
-  codigoCustodia: number,
+  codigoCustodia: string,
   userId: string,
   custodiaRecord: SyncCustodiaBase,
   /** O chamador garante que nao ha movimentacao automatica: dispensa a consulta. */
@@ -348,7 +348,7 @@ async function syncResgateNoVencimento(
 // ── Poupança Lotes Sync ──
 
 /** Sync poupanca_lotes based on movimentacoes for a given codigo_custodia */
-async function syncPoupancaLotes(codigoCustodia: number, userId: string, custodiaId?: string) {
+async function syncPoupancaLotes(codigoCustodia: string, userId: string, custodiaId?: string) {
   // Fetch all movimentacoes for this poupança
   const { data: allMovs } = await supabase
     .from("movimentacoes")
@@ -803,7 +803,7 @@ export async function syncCustodiaFromMovimentacao(
 }
 
 /** After deleting a movimentacao, remove the custodia record if no more movimentacoes reference it */
-export async function syncCustodiaOnDelete(codigoCustodia: number, userId: string, dataReferencia?: string) {
+export async function syncCustodiaOnDelete(codigoCustodia: string, userId: string, dataReferencia?: string) {
   if (!codigoCustodia) return;
 
   const { data: remaining } = await supabase
@@ -1004,7 +1004,7 @@ export async function syncCarteiraGeral(userId: string, dataReferencia?: string)
  * Then syncs custodia and auto resgates.
  */
 export async function reprocessMovimentacoesForCodigo(
-  codigoCustodia: number,
+  codigoCustodia: string,
   userId: string,
   categoriaId: string,
   dataReferencia?: string
@@ -1071,7 +1071,7 @@ export async function reprocessMovimentacoesForCodigo(
   const cdiRecordsReprocess = await fetchCdiIfNeeded(baseInfo.indexador, baseInfo.dataInicio, calEnd > refDate ? calEnd : refDate);
 
   // 6. For each movimentação, compute engine and update PU/Qty from calculator columns
-  const atualizacoes: Promise<void>[] = [];
+  const atualizacoes: PromiseLike<void>[] = [];
   for (let i = 0; i < manualMovs.length; i++) {
     const mov = manualMovs[i];
 
@@ -1206,7 +1206,7 @@ export async function fullSyncAfterMovimentacao(
 
 /** Full sync after deleting a movimentacao */
 export async function fullSyncAfterDelete(
-  codigoCustodia: number | null,
+  codigoCustodia: string | null,
   categoriaId: string,
   userId: string,
   dataReferencia?: string

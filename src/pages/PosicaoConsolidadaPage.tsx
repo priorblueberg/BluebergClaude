@@ -31,7 +31,7 @@ import PosicaoDetalheDialog, { type PosicaoDetalheData } from "@/components/Posi
 
 interface CustodiaProduct {
   id: string;
-  codigo_custodia: number;
+  codigo_custodia: string;
   nome: string | null;
   data_inicio: string;
   data_calculo: string | null;
@@ -183,10 +183,10 @@ export default function PosicaoConsolidadaPage() {
         ? await carregarSeriesIpca()
         : null;
 
-      const movByCodigo = new Map<number, { data: string; tipo_movimentacao: string; valor: number }[]>();
-      const movFundoByCodigo = new Map<number, { data: string; tipo: string; valor: number; data_cotizacao: string | null; qtd_cotas: number | null }[]>();
+      const movByCodigo = new Map<string, { data: string; tipo_movimentacao: string; valor: number }[]>();
+      const movFundoByCodigo = new Map<string, { data: string; tipo: string; valor: number; data_cotizacao: string | null; qtd_cotas: number | null }[]>();
       for (const m of ((movRes as any).data || [])) {
-        const code = m.codigo_custodia as number;
+        const code = m.codigo_custodia as string;
         if (!movByCodigo.has(code)) movByCodigo.set(code, []);
         movByCodigo.get(code)!.push({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) });
         if (!movFundoByCodigo.has(code)) movFundoByCodigo.set(code, []);

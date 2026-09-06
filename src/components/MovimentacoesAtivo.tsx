@@ -11,7 +11,7 @@ interface Movimentacao {
 }
 
 interface Props {
-  codigoCustodia: number;
+  codigoCustodia: string;
 }
 
 export default function MovimentacoesAtivo({ codigoCustodia }: Props) {
