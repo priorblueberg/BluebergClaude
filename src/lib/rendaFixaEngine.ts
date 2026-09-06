@@ -523,7 +523,11 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     // E: Líquido (1) — subtract both resgates and jurosPago
     let liquido1: number;
     if (isDataInicio) {
-      liquido1 = aplicacoes;
+      // No caso normal o primeiro dia so tem a aplicacao, e os dois outros termos sao zero.
+      // Eles importam quando a serie COMECA num resgate - o que acontece se a data da
+      // aplicacao for editada para depois dele (ver `inicioDaSerie` no syncEngine). Antes o
+      // resgate era descartado aqui e a posicao aparecia intacta.
+      liquido1 = aplicacoes - resgatesTotal - jurosPago;
     } else {
       liquido1 = prevLiquido * (1 + dailyMult) + aplicacoes - resgatesTotal - jurosPago;
     }

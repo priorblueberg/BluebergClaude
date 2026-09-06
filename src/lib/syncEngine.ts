@@ -443,6 +443,28 @@ async function syncPoupancaLotes(codigoCustodia: number, userId: string, custodi
 
 // ── Custodia Sync ──
 
+/**
+ * Inicio da SERIE de uma custodia: a primeira movimentacao, seja ela qual for - nao a
+ * aplicacao inicial.
+ *
+ * As duas datas coincidem no caso normal. Deixam de coincidir quando a data da aplicacao e
+ * editada para depois de um resgate: o resgate fica antes do inicio da serie e o motor
+ * simplesmente nao o enxerga. A posicao aparece saudavel e o dinheiro resgatado some do
+ * calculo - no teste de 06/09/2026 um resgate de R$ 1.000 sumiu e o papel exibiu R$ 505,20
+ * positivos, sem nenhum sinal na tela.
+ *
+ * O Gorila nao tem marco de inicio: a posicao e o resultado das transacoes. Medido no mesmo
+ * dia, movendo uma venda de Euro para antes de qualquer compra, ele manteve a quantidade
+ * final (70.996,5) e levou a posicao a negativo no intervalo, com a rentabilidade indo de
+ * 8,97% para 16,18%. A regra aqui passa a ser a mesma.
+ *
+ * As CARACTERISTICAS do papel (produto, modalidade, taxa, vencimento) continuam vindo da
+ * aplicacao inicial: uma coisa e quando a serie comeca, outra e o que o titulo e.
+ */
+export function inicioDaSerieDeMovs(movs: { data?: string | null }[], fallback: string): string {
+  return movs.reduce((menor, m) => (m.data && m.data < menor ? m.data : menor), fallback);
+}
+
 /** Compute resgate_total for a Renda Fixa custodia record */
 type MovResgate = { codigo_custodia: string | number; data: string; tipo_movimentacao: string };
 
@@ -602,6 +624,8 @@ export async function syncCustodiaFromMovimentacao(
   // Refine isPoupanca now that we have aplicacaoInicial
   isPoupanca = isPoupanca || aplicacaoInicial.modalidade === "Poupança";
 
+  const inicioDaSerie = inicioDaSerieDeMovs(allMovs || [], aplicacaoInicial.data as string);
+
   // valor_investido = CUSTO, na convencao do Gorila (2026-08-22):
   //  - aplicacao entra pelo valor pago;
   //  - resgate parcial baixa quantidade x custo medio, NAO o valor bruto recebido (subtrair o
@@ -666,7 +690,7 @@ export async function syncCustodiaFromMovimentacao(
 
   const custodiaData = {
     codigo_custodia: mov.codigo_custodia,
-    data_inicio: aplicacaoInicial.data,
+    data_inicio: inicioDaSerie,
     produto_id: aplicacaoInicial.produto_id,
     tipo_movimentacao: aplicacaoInicial.tipo_movimentacao,
     instituicao_id: aplicacaoInicial.instituicao_id,
@@ -706,7 +730,7 @@ export async function syncCustodiaFromMovimentacao(
       resgate_total: resgateTotal,
       modalidade: aplicacaoInicial.modalidade,
       taxa: aplicacaoInicial.taxa,
-      data_inicio: aplicacaoInicial.data,
+      data_inicio: inicioDaSerie,
       categoria_id: aplicacaoInicial.categoria_id,
       produto_id: aplicacaoInicial.produto_id,
       instituicao_id: aplicacaoInicial.instituicao_id,
@@ -723,7 +747,7 @@ export async function syncCustodiaFromMovimentacao(
       resgate_total: resgateTotal,
       modalidade: aplicacaoInicial.modalidade,
       taxa: aplicacaoInicial.taxa,
-      data_inicio: aplicacaoInicial.data,
+      data_inicio: inicioDaSerie,
       categoria_id: aplicacaoInicial.categoria_id,
       produto_id: aplicacaoInicial.produto_id,
       instituicao_id: aplicacaoInicial.instituicao_id,
