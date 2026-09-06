@@ -671,6 +671,21 @@ export default function BoletaTransacao({
    * edicao do Gorila: as caracteristicas do papel pertencem a custodia, nao a movimentacao.
    */
   const showEdicaoSaidaRF = isEditing && isRendaFixa && ehSaidaRF;
+
+  /**
+   * Num aporte adicional, os termos do papel sao somente leitura.
+   *
+   * Vencimento, emissor, modalidade, indexador, taxa e periodicidade descrevem o TITULO, e o
+   * titulo e definido pela aplicacao inicial - `syncCustodia` le os termos de la. Editando-os
+   * numa Aplicacao secundaria, a movimentacao passava a divergir da custodia e ainda renomeava
+   * o ativo, deixando a mesma custodia com movimentacoes de nomes diferentes na lista.
+   *
+   * E o mesmo principio da edicao do Gorila, medido em 06/09/2026: la o ativo e travado e so
+   * se edita o que e da operacao. A diferenca e que na Aplicacao Inicial nos mantemos os
+   * termos editaveis, porque e ali que eles nascem - o Gorila edita isso no cadastro do ativo,
+   * que nos nao temos separado.
+   */
+  const travarTermosDoPapel = isEditing && isRendaFixa && isAplicacao;
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
   const showFundoFields = isFundo && !!tipoMovimentacao;
 
@@ -1748,8 +1763,9 @@ export default function BoletaTransacao({
                       type="date"
                       value={vencimento}
                       min={data || undefined}
+                      disabled={travarTermosDoPapel}
                       onChange={(e) => { setVencimento(e.target.value); setValidationErrors((prev) => { const n = new Set(prev); n.delete("vencimento"); return n; }); }}
-                      className={`input-field ${validationErrors.has("vencimento") ? "border-destructive ring-1 ring-destructive" : ""}`}
+                      className={`input-field ${travarTermosDoPapel ? "opacity-60" : ""} ${validationErrors.has("vencimento") ? "border-destructive ring-1 ring-destructive" : ""}`}
                     />
                   </Field>
                 </div>
@@ -1777,6 +1793,7 @@ export default function BoletaTransacao({
                       labelCadastro="Nome do Emissor"
                       placeholder="Pesquisar emissor..."
                       hasError={validationErrors.has("emissorId")}
+                      disabled={travarTermosDoPapel}
                     />
                   </Field>
                 </div>
@@ -1797,6 +1814,7 @@ export default function BoletaTransacao({
                         label: m,
                       }))}
                       hasError={validationErrors.has("modalidade")}
+                      disabled={travarTermosDoPapel}
                     />
                   </Field>
 
@@ -1811,6 +1829,7 @@ export default function BoletaTransacao({
                           label: idx,
                         }))}
                         hasError={validationErrors.has("indexador")}
+                        disabled={travarTermosDoPapel}
                       />
                     </Field>
                   )}
@@ -1820,9 +1839,10 @@ export default function BoletaTransacao({
                       <input
                         type="text"
                         value={taxa}
+                        disabled={travarTermosDoPapel}
                         onChange={(e) => { setTaxa(formatTaxaInput(e.target.value)); setValidationErrors((prev) => { const n = new Set(prev); n.delete("taxa"); return n; }); }}
                         placeholder="0,00"
-                        className={`input-field pr-7 ${validationErrors.has("taxa") ? "border-destructive ring-1 ring-destructive" : ""}`}
+                        className={`input-field pr-7 ${travarTermosDoPapel ? "opacity-60" : ""} ${validationErrors.has("taxa") ? "border-destructive ring-1 ring-destructive" : ""}`}
                       />
                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
                         %
@@ -1840,6 +1860,7 @@ export default function BoletaTransacao({
                         label: p,
                       }))}
                       hasError={validationErrors.has("pagamento")}
+                      disabled={travarTermosDoPapel}
                     />
                   </Field>
                 </div>
