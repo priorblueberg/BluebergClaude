@@ -8,7 +8,7 @@ const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+export const supabase = createClient<Database, 'invest'>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   // Os dados replicados do Blueberg vivem no schema `invest` deste projeto
   // (public guarda as financas pessoais do Daniel). Todo .from()/.rpc() do app
   // resolve em invest por padrao; auth (GoTrue) nao e afetado.
