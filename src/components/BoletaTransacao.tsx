@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
 import FundoSelect from "@/components/FundoSelect";
 import TituloSelect from "@/components/TituloSelect";
-import { MOEDAS } from "@/lib/cambioEngine";
+import { MOEDAS } from "@/lib/catalogoDeMoedas";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";

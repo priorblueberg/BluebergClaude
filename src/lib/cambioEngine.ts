@@ -14,15 +14,8 @@ import {
 } from "./fundoEngine";
 import type { DailyRow } from "./rendaFixaEngine";
 
-export const MOEDAS = [
-  { codigo: "USD", nome: "Dólar americano", simbolo: "US$", tabela: "historico_dolar" },
-  { codigo: "EUR", nome: "Euro", simbolo: "€", tabela: "historico_euro" },
-] as const;
+// O catalogo de moedas mora em `catalogoDeMoedas`: aqui fica so o motor.
 
-export type CodigoMoeda = (typeof MOEDAS)[number]["codigo"];
-
-export const moedaPorCodigo = (codigo: string | null | undefined) =>
-  MOEDAS.find((m) => m.codigo === codigo) ?? null;
 
 const COMPRAS = new Set(["Compra", "Aplicação", "Aplicação Inicial"]);
 const VENDAS = new Set(["Venda", "Resgate", "Resgate Total"]);
@@ -138,4 +131,4 @@ export function cambioRowsToDailyRows(rows: CambioDailyRow[]): DailyRow[] {
   );
 }
 
-export default { calcularCambioDiario, cambioRowsToDailyRows, MOEDAS, moedaPorCodigo };
+export default { calcularCambioDiario, cambioRowsToDailyRows };
