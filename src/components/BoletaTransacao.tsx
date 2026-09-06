@@ -668,11 +668,21 @@ export default function BoletaTransacao({
           .maybeSingle();
         setEmissorNome(emissor?.nome ?? "");
       }
-      setModalidade(mov.modalidade || "");
-      setIndexador(mov.indexador || "");
-      setTaxa(mov.taxa ? String(mov.taxa) : "");
-      setPagamento(mov.pagamento || "No Vencimento");
-      setVencimento(mov.vencimento || "");
+      // Os termos vem do CADASTRO quando a movimentacao tem titulo. As colunas na movimentacao
+      // sao legado em extincao: enquanto existirem, servem so de fallback.
+      const tit = (mov as any).titulo_id
+        ? (await supabase
+            .from("cadastro_de_titulos")
+            .select("modalidade, indexador, taxa, vencimento, pagamento, preco_emissao")
+            .eq("id", (mov as any).titulo_id)
+            .maybeSingle()).data as any
+        : null;
+      setModalidade(tit?.modalidade ?? mov.modalidade ?? "");
+      setIndexador((tit ? tit.indexador : mov.indexador) ?? "");
+      setTaxa(tit?.taxa != null ? String(tit.taxa) : (mov.taxa ? String(mov.taxa) : ""));
+      setPagamento(tit?.pagamento ?? mov.pagamento ?? "No Vencimento");
+      setVencimento(tit?.vencimento ?? mov.vencimento ?? "");
+      setTituloId((mov as any).titulo_id ?? "");
       // Fundo e moeda tambem sao editaveis: sem isto a tela de edicao abria vazia.
       setFundoId((mov as any).fundo_id || "");
       setMoedaSel((mov as any).moeda || "");
@@ -1407,10 +1417,15 @@ export default function BoletaTransacao({
               .insert({ ...identidade, preco_emissao: puNum, nome: nomeAtivo, criado_por: user.id } as any)
               .select("id")
               .maybeSingle();
-            // Cadastro do titulo nao pode impedir a operacao: se falhar, a movimentacao entra
-            // sem vinculo e o papel pode ser reconciliado depois.
-            if (errTitulo) console.error("nao foi possivel cadastrar o titulo", errTitulo);
-            tituloResolvido = criado ? (criado as any).id : null;
+            // Bloqueante: com os termos vivendo no cadastro, uma operacao sem titulo ficaria
+            // sem onde guarda-los. Melhor recusar do que gravar pela metade.
+            if (errTitulo || !criado) {
+              console.error("nao foi possivel cadastrar o titulo", errTitulo);
+              setSubmitting(false);
+              toast.error("Não foi possível cadastrar o título. A operação não foi gravada.");
+              return;
+            }
+            tituloResolvido = (criado as any).id;
           }
         }
 

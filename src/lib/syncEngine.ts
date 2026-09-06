@@ -322,6 +322,9 @@ async function syncResgateNoVencimento(
       produto_id: custodiaRecord.produto_id,
       instituicao_id: custodiaRecord.instituicao_id,
       emissor_id: custodiaRecord.emissor_id,
+      // O vinculo com o papel, nao uma copia dos termos dele: e a custodia que sabe qual
+      // titulo e. Sem isto a automatica nascia orfa a cada reprocessamento.
+      titulo_id: (custodiaRecord as any).titulo_id ?? null,
       modalidade: custodiaRecord.modalidade,
       indexador: custodiaRecord.indexador,
       taxa: custodiaRecord.taxa,
@@ -573,7 +576,9 @@ export async function syncCustodiaFromMovimentacao(
 
   const categoriaNome = precarregado?.categoriaNome ?? ((mov as any).categorias?.nome || "");
   const isRendaFixa = categoriaNome === "Renda Fixa";
-  let isPoupanca = mov.modalidade === "Poupança";
+  // Poupanca vem da CATEGORIA, nao de uma coluna copiada na movimentacao: ela nao tem titulo
+  // no cadastro, entao nao poderia herdar `modalidade` de la depois que a coluna sair.
+  let isPoupanca = categoriaNome === "Poupança";
 
   if (!mov.codigo_custodia) return;
 
