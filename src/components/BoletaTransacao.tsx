@@ -1214,7 +1214,9 @@ export default function BoletaTransacao({
       setValidationErrors(new Set());
 
       const valorNum = parseCurrencyToNumber(valor);
-      if (saldoDisponivel !== null && valorNum > saldoDisponivel) {
+      // Em centavos, pelo mesmo motivo de `valorResgateSuperaSaldo`: o valor do "Fechar
+      // Posicao" vem arredondado e pode ficar milesimos acima do saldo cru.
+      if (saldoDisponivel !== null && Math.round(valorNum * 100) > Math.round(saldoDisponivel * 100)) {
         toast.error("O valor do resgate excede o saldo disponível.");
         return;
       }
@@ -1515,8 +1517,15 @@ export default function BoletaTransacao({
   const fmtBrlDisplay = (v: number | null) =>
     v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 
+  // Comparacao em CENTAVOS. O "Fechar Posicao" preenche o saldo arredondado a 2 casas, e
+  // quando o arredondamento sobe o valor fica alguns milesimos ACIMA do saldo cru - bastava
+  // isso para o botao travar e a posicao ficar impossivel de fechar pela tela. Medido em
+  // 06/09/2026 numa poupanca: saldo R$ 12.005,68664670, campo R$ 12.005,69, bloqueio por
+  // R$ 0,0033. Em centavos os dois viram 1200569 e a comparacao passa a dizer o que quer
+  // dizer: barrar quem pede mais do que tem, nao quem pede exatamente tudo.
   const valorResgateSuperaSaldo =
-    isResgate && saldoDisponivel !== null && parseCurrencyToNumber(valor) > saldoDisponivel && valor !== "";
+    isResgate && saldoDisponivel !== null && valor !== "" &&
+    Math.round(parseCurrencyToNumber(valor) * 100) > Math.round(saldoDisponivel * 100);
 
   return (
     <div className="space-y-6">
