@@ -360,7 +360,7 @@ export default function BoletaTransacao({
 
   // Load custodia items when Resgate is selected
   useEffect(() => {
-    if (!isResgate || !categoriaId || !user) {
+    if (!(isResgate || ehSaidaRF) || !categoriaId || !user) {
       setCustodiaItems([]);
       return;
     }
@@ -373,7 +373,7 @@ export default function BoletaTransacao({
       .then(({ data }) => {
         if (data) setCustodiaItems(data as CustodiaItem[]);
       });
-  }, [isResgate, categoriaId, user]);
+  }, [isResgate, ehSaidaRF, categoriaId, user]);
 
   // Auto-fill fields when custodia item selected
   useEffect(() => {
@@ -472,7 +472,11 @@ export default function BoletaTransacao({
   };
 
   /** Saldo do titulo na data, pelo motor. Roda quando o titulo e escolhido. */
-  const calcularSaldoResgate = async (selectedCustodia: CustodiaItem, dateISO: string) => {
+  /**
+   * Saldo do titulo na data. `ignorarId` tira a propria movimentacao da conta - na EDICAO o
+   * numero util e "quanto havia disponivel antes deste resgate", nao o saldo ja liquido dele.
+   */
+  const calcularSaldoResgate = async (selectedCustodia: CustodiaItem, dateISO: string, ignorarId?: string | null) => {
     if (!user) return;
     setSaldoDisponivel(null);
     const isRendaFixaEngine = (selectedCustodia.modalidade === "Prefixado" || selectedCustodia.modalidade === "Pos Fixado" || selectedCustodia.modalidade === "Pós Fixado" || selectedCustodia.modalidade === "Mista") && selectedCustodia.taxa && selectedCustodia.preco_unitario;
@@ -500,12 +504,13 @@ export default function BoletaTransacao({
           .lte("data", fimSerie)
           .order("data")
           .range(de, ate)).then((data) => ({ data }));
-        const movQuery = supabase
-          .from("movimentacoes")
-          .select("data, tipo_movimentacao, valor")
-          .eq("codigo_custodia", selectedCustodia.codigo_custodia)
-          .eq("user_id", user.id)
-          .order("data");
+        const movQuery = (ignorarId
+          ? supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
+              .eq("codigo_custodia", selectedCustodia.codigo_custodia).eq("user_id", user.id)
+              .neq("id", ignorarId).order("data")
+          : supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
+              .eq("codigo_custodia", selectedCustodia.codigo_custodia).eq("user_id", user.id)
+              .order("data"));
         const custQuery = supabase
           .from("custodia")
           .select("resgate_total")
@@ -571,10 +576,10 @@ export default function BoletaTransacao({
   // Saldo so pode ser calculado com titulo E data. Antes o calculo estava dentro do handler
   // da data, que exigia o titulo ja escolhido - com a ordem invertida, virou efeito.
   useEffect(() => {
-    if (!isResgate || !selectedCustodia || !data || resgateDateError) return;
-    calcularSaldoResgate(selectedCustodia, data);
+    if (!(isResgate || showEdicaoSaidaRF) || !selectedCustodia || !data || resgateDateError) return;
+    calcularSaldoResgate(selectedCustodia, data, showEdicaoSaidaRF ? editId : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCustodiaId, data]);
+  }, [selectedCustodiaId, data, showEdicaoSaidaRF]);
 
   /** Handle typed resgate date input with mask */
   const handleResgateDateInputChange = (rawValue: string) => {
@@ -674,6 +679,14 @@ export default function BoletaTransacao({
    * edicao do Gorila: as caracteristicas do papel pertencem a custodia, nao a movimentacao.
    */
   const showEdicaoSaidaRF = isEditing && isRendaFixa && ehSaidaRF;
+
+  // Na edicao de uma saida, casa a custodia pelo codigo da movimentacao. E o que destrava o
+  // calculo do saldo, que e escrito para o fluxo de criacao (onde o usuario escolhe o titulo).
+  useEffect(() => {
+    if (!showEdicaoSaidaRF || !codigoCustodiaEmEdicao || custodiaItems.length === 0) return;
+    const achada = custodiaItems.find((c) => String(c.codigo_custodia) === String(codigoCustodiaEmEdicao));
+    if (achada && achada.id !== selectedCustodiaId) setSelectedCustodiaId(achada.id);
+  }, [showEdicaoSaidaRF, codigoCustodiaEmEdicao, custodiaItems, selectedCustodiaId]);
 
   /**
    * Num aporte adicional, os termos do papel sao somente leitura.
@@ -1701,7 +1714,7 @@ export default function BoletaTransacao({
         )}
 
         {/* ── Aplicação Flow ── */}
-        {(isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate)) && isRendaFixa && !isPoupanca && (
+        {(isAplicacao || (isEditing && !!tipoMovimentacao && !ehSaidaRF)) && isRendaFixa && !isPoupanca && (
           <>
             {/* Produto selector */}
             <Field label="Produto" required>
@@ -1906,7 +1919,7 @@ export default function BoletaTransacao({
         )}
 
         {/* ── Poupança Aplicação Flow (product-based) ── */}
-        {isPoupanca && isRendaFixa && (isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate)) && (
+        {isPoupanca && isRendaFixa && (isAplicacao || (isEditing && !!tipoMovimentacao && !ehSaidaRF)) && (
           <>
             {/* Produto auto-selected, no selector needed */}
 
@@ -2007,6 +2020,20 @@ export default function BoletaTransacao({
                   className={validationErrors.has("valor") ? "border-destructive ring-1 ring-destructive" : ""}
                 />
               </Field>
+            </div>
+
+            {/* O saldo mostrado DESCONSIDERA esta movimentacao: e o que havia antes dela. */}
+            <div className="rounded-md border border-border bg-muted/30 px-4 py-3">
+              <p className="text-xs text-muted-foreground">
+                Saldo disponível em {data ? fmtData(data) : "—"}, sem contar esta movimentação:
+              </p>
+              <p className="mt-0.5 text-sm font-semibold text-foreground">
+                {calculandoSaldo
+                  ? "Calculando..."
+                  : saldoDisponivel !== null
+                    ? fmtBrlDisplay(saldoDisponivel)
+                    : "—"}
+              </p>
             </div>
 
             <p className="text-xs text-muted-foreground">
