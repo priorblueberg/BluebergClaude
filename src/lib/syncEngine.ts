@@ -826,7 +826,10 @@ export async function syncCustodiaFromMovimentacao(
     await syncManualResgatesTotais(mov.codigo_custodia, mov.user_id!, {
       vencimento: termos.vencimento,
       resgate_total: resgateTotal,
-      modalidade: termos.modalidade,
+      // A poupanca nao tem titulo no cadastro, entao `termos.modalidade` vem nula e a funcao
+      // cairia no motor de renda fixa com taxa 0 - o recalculo devolvia o PRINCIPAL
+      // (R$ 15.000,00 no teste de 06/09/2026, onde o certo era R$ 16.256,95).
+      modalidade: isPoupanca ? "Poupança" : termos.modalidade,
       taxa: termos.taxa,
       data_inicio: inicioDaSerie,
       categoria_id: aplicacaoInicial.categoria_id,
