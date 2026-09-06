@@ -668,8 +668,7 @@ export default function BoletaTransacao({
           .maybeSingle();
         setEmissorNome(emissor?.nome ?? "");
       }
-      // Os termos vem do CADASTRO quando a movimentacao tem titulo. As colunas na movimentacao
-      // sao legado em extincao: enquanto existirem, servem so de fallback.
+      // Os termos vem do cadastro. As colunas duplicadas na movimentacao nao existem mais.
       const tit = (mov as any).titulo_id
         ? (await supabase
             .from("cadastro_de_titulos")
@@ -677,11 +676,11 @@ export default function BoletaTransacao({
             .eq("id", (mov as any).titulo_id)
             .maybeSingle()).data as any
         : null;
-      setModalidade(tit?.modalidade ?? mov.modalidade ?? "");
-      setIndexador((tit ? tit.indexador : mov.indexador) ?? "");
-      setTaxa(tit?.taxa != null ? String(tit.taxa) : (mov.taxa ? String(mov.taxa) : ""));
-      setPagamento(tit?.pagamento ?? mov.pagamento ?? "No Vencimento");
-      setVencimento(tit?.vencimento ?? mov.vencimento ?? "");
+      setModalidade(tit?.modalidade ?? "");
+      setIndexador(tit?.indexador ?? "");
+      setTaxa(tit?.taxa != null ? String(tit.taxa) : "");
+      setPagamento(tit?.pagamento ?? "No Vencimento");
+      setVencimento(tit?.vencimento ?? "");
       setTituloId((mov as any).titulo_id ?? "");
       // Fundo e moeda tambem sao editaveis: sem isto a tela de edicao abria vazia.
       setFundoId((mov as any).fundo_id || "");
@@ -1332,12 +1331,7 @@ export default function BoletaTransacao({
           preco_unitario: puNum,
           instituicao_id: instituicaoId,
           emissor_id: emissorId,
-          modalidade: modalidadeToSave,
-          taxa: taxaNum,
-          pagamento: pagamentoToSave,
-          vencimento,
           nome_ativo: nomeAtivo,
-          indexador: indexadorToSave,
           quantidade,
           valor_extrato: valorExtrato,
         }).eq("id", editId);
@@ -1442,13 +1436,8 @@ export default function BoletaTransacao({
           // existe (instituicao_id acima + nome_ativo). Gravar o id de
           // instituicoes aqui estourava a FK emissor_id -> emissores.
           emissor_id: isPoupanca ? null : emissorId || null,
-          modalidade: modalidadeToSave,
-          taxa: isPoupanca ? null : taxaNum,
-          pagamento: isPoupanca ? "Mensal" : pagamentoToSave,
-          vencimento: isPoupanca ? null : vencimento || null,
           nome_ativo: nomeAtivo,
           codigo_custodia: nomeAtivo ? codigoCustodia : null,
-          indexador: isPoupanca ? null : indexadorToSave,
           quantidade,
           valor_extrato: valorExtrato,
           user_id: user?.id,

@@ -327,11 +327,6 @@ async function syncResgateNoVencimento(
       // O vinculo com o papel, nao uma copia dos termos dele: e a custodia que sabe qual
       // titulo e. Sem isto a automatica nascia orfa a cada reprocessamento.
       titulo_id: (custodiaRecord as any).titulo_id ?? null,
-      modalidade: custodiaRecord.modalidade,
-      indexador: custodiaRecord.indexador,
-      taxa: custodiaRecord.taxa,
-      pagamento: custodiaRecord.pagamento,
-      vencimento: custodiaRecord.vencimento,
       preco_unitario: precoUnitario,
       quantidade,
       valor,
@@ -628,8 +623,37 @@ export async function syncCustodiaFromMovimentacao(
     (m: any) => m.tipo_movimentacao === "Aplicação"
   ) || mov;
 
-  // Refine isPoupanca now that we have aplicacaoInicial
-  isPoupanca = isPoupanca || aplicacaoInicial.modalidade === "Poupança";
+  /**
+   * Termos do papel: vem do CADASTRO quando ha titulo, nao das colunas da movimentacao.
+   *
+   * Um CDB emitido a 102% do CDI com vencimento em 31/12/2029 e um papel so, e varios
+   * clientes compram o mesmo - quem define os termos foi o emissor. Enquanto eles viviam
+   * copiados em cada movimentacao, editar um aporte reescrevia o papel e renomear uma linha
+   * deixava as outras para tras. Com o cadastro, ha um lugar unico que responde "o que este
+   * titulo e", e a custodia passa a ser so uma materializacao dele.
+   *
+   * Sem titulo (fundo, moeda, poupanca e o legado ainda nao migrado) vale a aplicacao
+   * inicial, como antes.
+   */
+  const titulo = aplicacaoInicial.titulo_id
+    ? (await supabase
+        .from("cadastro_de_titulos")
+        .select("emissor_id, modalidade, indexador, taxa, vencimento, pagamento, preco_emissao, nome")
+        .eq("id", aplicacaoInicial.titulo_id)
+        .maybeSingle()).data as any
+    : null;
+
+  const termos = {
+    modalidade: titulo?.modalidade ?? null,
+    indexador: titulo?.indexador ?? null,
+    taxa: titulo?.taxa ?? null,
+    vencimento: titulo?.vencimento ?? null,
+    pagamento: titulo?.pagamento ?? null,
+    preco_unitario: titulo?.preco_emissao ?? aplicacaoInicial.preco_unitario,
+    emissor_id: titulo?.emissor_id ?? aplicacaoInicial.emissor_id,
+    nome: titulo?.nome ?? aplicacaoInicial.nome_ativo,
+  };
+
 
   const inicioDaSerie = inicioDaSerieDeMovs(allMovs || [], aplicacaoInicial.data as string);
 
@@ -662,7 +686,7 @@ export async function syncCustodiaFromMovimentacao(
   // Titulo ja vencido tambem encerra: custo zero. Nao da para depender da movimentacao de
   // "Resgate no Vencimento", porque ela e criada DEPOIS desta gravacao no reprocessamento -- na
   // primeira passada ela ainda nao existe e o custo ficaria de pe indefinidamente.
-  const vencimentoDoTitulo = aplicacaoInicial.vencimento as string | null;
+  const vencimentoDoTitulo = termos.vencimento as string | null;
   if (isRendaFixa && !isPoupanca && vencimentoDoTitulo && vencimentoDoTitulo <= refDate) {
     valorInvestidoLiquido = 0;
   }
@@ -672,53 +696,22 @@ export async function syncCustodiaFromMovimentacao(
   // Compute resgate_total (for RF non-poupança or poupança with resgate total)
   let resgateTotal: string | null = null;
   if (isRendaFixa && !isPoupanca) {
-    resgateTotal = resgateTotalDeMovs((allMovs || []) as any, aplicacaoInicial.vencimento);
+    resgateTotal = resgateTotalDeMovs((allMovs || []) as any, termos.vencimento);
   } else if (isPoupanca) {
     // For Poupança, compute resgate_total from manual "Resgate Total" movements
     resgateTotal = resgateTotalDeMovs((allMovs || []) as any, null);
   }
 
   // Compute data_limite — Poupança gets a far-future date so the portfolio stays active
-  const dataLimite = isPoupanca ? "2040-12-31" : (isRendaFixa ? aplicacaoInicial.vencimento : null);
+  const dataLimite = isPoupanca ? "2040-12-31" : (isRendaFixa ? termos.vencimento : null);
 
   // Compute data_calculo
   const dataCalculo = computeDataCalculo(refDate, resgateTotal, dataLimite);
 
-  /**
-   * Termos do papel: vem do CADASTRO quando ha titulo, nao das colunas da movimentacao.
-   *
-   * Um CDB emitido a 102% do CDI com vencimento em 31/12/2029 e um papel so, e varios
-   * clientes compram o mesmo - quem define os termos foi o emissor. Enquanto eles viviam
-   * copiados em cada movimentacao, editar um aporte reescrevia o papel e renomear uma linha
-   * deixava as outras para tras. Com o cadastro, ha um lugar unico que responde "o que este
-   * titulo e", e a custodia passa a ser so uma materializacao dele.
-   *
-   * Sem titulo (fundo, moeda, poupanca e o legado ainda nao migrado) vale a aplicacao
-   * inicial, como antes.
-   */
-  const titulo = aplicacaoInicial.titulo_id
-    ? (await supabase
-        .from("cadastro_de_titulos")
-        .select("emissor_id, modalidade, indexador, taxa, vencimento, pagamento, preco_emissao, nome")
-        .eq("id", aplicacaoInicial.titulo_id)
-        .maybeSingle()).data as any
-    : null;
-
-  const termos = {
-    modalidade: titulo?.modalidade ?? aplicacaoInicial.modalidade,
-    indexador: titulo ? titulo.indexador : aplicacaoInicial.indexador,
-    taxa: titulo?.taxa ?? aplicacaoInicial.taxa,
-    vencimento: titulo?.vencimento ?? aplicacaoInicial.vencimento,
-    pagamento: titulo?.pagamento ?? aplicacaoInicial.pagamento,
-    preco_unitario: titulo?.preco_emissao ?? aplicacaoInicial.preco_unitario,
-    emissor_id: titulo?.emissor_id ?? aplicacaoInicial.emissor_id,
-    nome: titulo?.nome ?? aplicacaoInicial.nome_ativo,
-  };
-
   // Derive estrategia from modalidade + indexador
   const derivedEstrategia = (() => {
-    const mod = titulo?.modalidade ?? aplicacaoInicial.modalidade;
-    const idx = titulo ? titulo.indexador : aplicacaoInicial.indexador;
+    const mod = termos.modalidade;
+    const idx = termos.indexador;
     if (mod === "Poupança") return "Poupança";
     if (mod === "Prefixado") return "Prefixado";
     if ((mod === "Pos Fixado" || mod === "Pós Fixado") && idx === "CDI") return "Pós Fixado CDI";
@@ -1056,11 +1049,15 @@ export async function reprocessMovimentacoesForCodigo(
 
   const baseInfo = {
     dataInicio: aplicacaoInicial.data,
-    taxa: (tituloReproc?.taxa ?? aplicacaoInicial.taxa) || 0,
-    modalidade: (tituloReproc?.modalidade ?? aplicacaoInicial.modalidade) || "Prefixado",
+    taxa: tituloReproc?.taxa || 0,
+    modalidade: tituloReproc?.modalidade || "Prefixado",
+    // PU de emissao e do titulo; o preco_unitario da movimentacao e o praticado na operacao.
     puInicial: (tituloReproc?.preco_emissao ?? aplicacaoInicial.preco_unitario) || 1000,
-    pagamento: tituloReproc?.pagamento ?? aplicacaoInicial.pagamento,
-    vencimento: tituloReproc?.vencimento ?? aplicacaoInicial.vencimento,
+    pagamento: tituloReproc?.pagamento ?? null,
+    vencimento: tituloReproc?.vencimento ?? null,
+    // O indexador decide se o motor precisa da serie de CDI ou dos fatores de IPCA. Lendo da
+    // movimentacao, depois da coluna sair, ele vinha undefined e o CDI deixava de ser buscado.
+    indexador: tituloReproc?.indexador ?? null,
   };
 
   // 4. Get the full calendar range needed
@@ -1071,7 +1068,7 @@ export async function reprocessMovimentacoesForCodigo(
   if (calendario.length === 0) return;
 
   // 5. Fetch CDI if needed
-  const cdiRecordsReprocess = await fetchCdiIfNeeded(aplicacaoInicial.indexador, baseInfo.dataInicio, calEnd > refDate ? calEnd : refDate);
+  const cdiRecordsReprocess = await fetchCdiIfNeeded(baseInfo.indexador, baseInfo.dataInicio, calEnd > refDate ? calEnd : refDate);
 
   // 6. For each movimentação, compute engine and update PU/Qty from calculator columns
   const atualizacoes: Promise<void>[] = [];
@@ -1100,10 +1097,10 @@ export async function reprocessMovimentacoesForCodigo(
       dataResgateTotal: null,
       pagamento: baseInfo.pagamento,
       vencimento: baseInfo.vencimento,
-      indexador: aplicacaoInicial.indexador,
+      indexador: baseInfo.indexador,
       cdiRecords: cdiRecordsReprocess,
       ipcaFatores: await fatoresIpcaSeNecessario(
-        aplicacaoInicial.indexador, baseInfo.vencimento, calendario, baseInfo.dataInicio),
+        baseInfo.indexador, baseInfo.vencimento, calendario, baseInfo.dataInicio),
     });
 
     const rowDia = rows.find((r) => r.data === mov.data);
