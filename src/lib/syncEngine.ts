@@ -677,10 +677,41 @@ export async function syncCustodiaFromMovimentacao(
   // Compute data_calculo
   const dataCalculo = computeDataCalculo(refDate, resgateTotal, dataLimite);
 
+  /**
+   * Termos do papel: vem do CADASTRO quando ha titulo, nao das colunas da movimentacao.
+   *
+   * Um CDB emitido a 102% do CDI com vencimento em 31/12/2029 e um papel so, e varios
+   * clientes compram o mesmo - quem define os termos foi o emissor. Enquanto eles viviam
+   * copiados em cada movimentacao, editar um aporte reescrevia o papel e renomear uma linha
+   * deixava as outras para tras. Com o cadastro, ha um lugar unico que responde "o que este
+   * titulo e", e a custodia passa a ser so uma materializacao dele.
+   *
+   * Sem titulo (fundo, moeda, poupanca e o legado ainda nao migrado) vale a aplicacao
+   * inicial, como antes.
+   */
+  const titulo = aplicacaoInicial.titulo_id
+    ? (await supabase
+        .from("cadastro_de_titulos")
+        .select("emissor_id, modalidade, indexador, taxa, vencimento, pagamento, preco_emissao, nome")
+        .eq("id", aplicacaoInicial.titulo_id)
+        .maybeSingle()).data as any
+    : null;
+
+  const termos = {
+    modalidade: titulo?.modalidade ?? aplicacaoInicial.modalidade,
+    indexador: titulo ? titulo.indexador : aplicacaoInicial.indexador,
+    taxa: titulo?.taxa ?? aplicacaoInicial.taxa,
+    vencimento: titulo?.vencimento ?? aplicacaoInicial.vencimento,
+    pagamento: titulo?.pagamento ?? aplicacaoInicial.pagamento,
+    preco_unitario: titulo?.preco_emissao ?? aplicacaoInicial.preco_unitario,
+    emissor_id: titulo?.emissor_id ?? aplicacaoInicial.emissor_id,
+    nome: titulo?.nome ?? aplicacaoInicial.nome_ativo,
+  };
+
   // Derive estrategia from modalidade + indexador
   const derivedEstrategia = (() => {
-    const mod = aplicacaoInicial.modalidade;
-    const idx = aplicacaoInicial.indexador;
+    const mod = titulo?.modalidade ?? aplicacaoInicial.modalidade;
+    const idx = titulo ? titulo.indexador : aplicacaoInicial.indexador;
     if (mod === "Poupança") return "Poupança";
     if (mod === "Prefixado") return "Prefixado";
     if ((mod === "Pos Fixado" || mod === "Pós Fixado") && idx === "CDI") return "Pós Fixado CDI";
@@ -694,16 +725,16 @@ export async function syncCustodiaFromMovimentacao(
     produto_id: aplicacaoInicial.produto_id,
     tipo_movimentacao: aplicacaoInicial.tipo_movimentacao,
     instituicao_id: aplicacaoInicial.instituicao_id,
-    modalidade: aplicacaoInicial.modalidade,
-    indexador: aplicacaoInicial.indexador,
-    taxa: aplicacaoInicial.taxa,
+    modalidade: termos.modalidade,
+    indexador: termos.indexador,
+    taxa: termos.taxa,
     valor_investido: valorInvestidoLiquido,
-    preco_unitario: aplicacaoInicial.preco_unitario,
+    preco_unitario: termos.preco_unitario,
     quantidade: aplicacaoInicial.quantidade,
-    vencimento: aplicacaoInicial.vencimento,
-    emissor_id: aplicacaoInicial.emissor_id,
-    pagamento: aplicacaoInicial.pagamento,
-    nome: aplicacaoInicial.nome_ativo,
+    vencimento: termos.vencimento,
+    emissor_id: termos.emissor_id,
+    pagamento: termos.pagamento,
+    nome: termos.nome,
     categoria_id: aplicacaoInicial.categoria_id,
     user_id: mov.user_id,
     data_limite: dataLimite,
@@ -711,7 +742,7 @@ export async function syncCustodiaFromMovimentacao(
     multiplicador: categoriaNome || null,
     resgate_total: resgateTotal,
     data_calculo: dataCalculo,
-    pu_inicial: aplicacaoInicial.preco_unitario,
+    pu_inicial: termos.preco_unitario,
     estrategia: derivedEstrategia,
   };
 
@@ -726,36 +757,36 @@ export async function syncCustodiaFromMovimentacao(
   // Sync manual "Resgate Total" values created by the "Fechar Posição" flow (RF non-poupança only)
   if (isRendaFixa && !isPoupanca) {
     await syncManualResgatesTotais(mov.codigo_custodia, mov.user_id!, {
-      vencimento: aplicacaoInicial.vencimento,
+      vencimento: termos.vencimento,
       resgate_total: resgateTotal,
-      modalidade: aplicacaoInicial.modalidade,
-      taxa: aplicacaoInicial.taxa,
+      modalidade: termos.modalidade,
+      taxa: termos.taxa,
       data_inicio: inicioDaSerie,
       categoria_id: aplicacaoInicial.categoria_id,
       produto_id: aplicacaoInicial.produto_id,
       instituicao_id: aplicacaoInicial.instituicao_id,
-      emissor_id: aplicacaoInicial.emissor_id,
-      pagamento: aplicacaoInicial.pagamento,
-      indexador: aplicacaoInicial.indexador,
-      nome: aplicacaoInicial.nome_ativo,
-      preco_unitario: aplicacaoInicial.preco_unitario,
+      emissor_id: termos.emissor_id,
+      pagamento: termos.pagamento,
+      indexador: termos.indexador,
+      nome: termos.nome,
+      preco_unitario: termos.preco_unitario,
     });
 
     // Sync automatic "Resgate no Vencimento"
     await syncResgateNoVencimento(mov.codigo_custodia, mov.user_id!, {
-      vencimento: aplicacaoInicial.vencimento,
+      vencimento: termos.vencimento,
       resgate_total: resgateTotal,
-      modalidade: aplicacaoInicial.modalidade,
-      taxa: aplicacaoInicial.taxa,
+      modalidade: termos.modalidade,
+      taxa: termos.taxa,
       data_inicio: inicioDaSerie,
       categoria_id: aplicacaoInicial.categoria_id,
       produto_id: aplicacaoInicial.produto_id,
       instituicao_id: aplicacaoInicial.instituicao_id,
-      emissor_id: aplicacaoInicial.emissor_id,
-      pagamento: aplicacaoInicial.pagamento,
-      indexador: aplicacaoInicial.indexador,
-      nome: aplicacaoInicial.nome_ativo,
-      preco_unitario: aplicacaoInicial.preco_unitario,
+      emissor_id: termos.emissor_id,
+      pagamento: termos.pagamento,
+      indexador: termos.indexador,
+      nome: termos.nome,
+      preco_unitario: termos.preco_unitario,
     }, precarregado?.semAutomaticos);
   }
 
@@ -1001,13 +1032,24 @@ export async function reprocessMovimentacoesForCodigo(
     (m) => m.tipo_movimentacao === "Aplicação Inicial"
   ) || manualMovs[0];
 
+  // Os parametros do motor tambem saem do cadastro quando ha titulo: e a mesma fonte que o
+  // `syncCustodia` usa, para o reprocessamento nao calcular com termos diferentes dos que
+  // ficam gravados na custodia.
+  const tituloReproc = (aplicacaoInicial as any).titulo_id
+    ? (await supabase
+        .from("cadastro_de_titulos")
+        .select("modalidade, indexador, taxa, vencimento, pagamento, preco_emissao")
+        .eq("id", (aplicacaoInicial as any).titulo_id)
+        .maybeSingle()).data as any
+    : null;
+
   const baseInfo = {
     dataInicio: aplicacaoInicial.data,
-    taxa: aplicacaoInicial.taxa || 0,
-    modalidade: aplicacaoInicial.modalidade || "Prefixado",
-    puInicial: aplicacaoInicial.preco_unitario || 1000,
-    pagamento: aplicacaoInicial.pagamento,
-    vencimento: aplicacaoInicial.vencimento,
+    taxa: (tituloReproc?.taxa ?? aplicacaoInicial.taxa) || 0,
+    modalidade: (tituloReproc?.modalidade ?? aplicacaoInicial.modalidade) || "Prefixado",
+    puInicial: (tituloReproc?.preco_emissao ?? aplicacaoInicial.preco_unitario) || 1000,
+    pagamento: tituloReproc?.pagamento ?? aplicacaoInicial.pagamento,
+    vencimento: tituloReproc?.vencimento ?? aplicacaoInicial.vencimento,
   };
 
   // 4. Get the full calendar range needed
