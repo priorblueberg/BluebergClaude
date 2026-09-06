@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { PlusCircle, HelpCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { resolverTitulo } from "@/lib/resolverTitulo";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
@@ -179,22 +180,42 @@ export default function WelcomeOnboardingPage() {
       const maxCodigo = maxRow && maxRow.length > 0 ? (maxRow[0].codigo_custodia ?? 99) : 99;
       const codigoCustodia = maxCodigo + 1;
 
+      // Os termos do papel vivem no cadastro compartilhado, nao mais na movimentacao. Poupanca
+      // fica de fora de proposito: nao tem emissor nem vencimento para formar identidade.
+      const pagamentoToSave = isPoupanca ? "Mensal" : (isAdmin ? pagamento : "No Vencimento");
+      let tituloResolvido: string | null = null;
+      if (!isPoupanca && vencimento && modalidadeToSave && taxaNum != null) {
+        tituloResolvido = await resolverTitulo(
+          {
+            produto_id: produtoId,
+            emissor_id: emissorId || null,
+            modalidade: modalidadeToSave,
+            indexador: indexadorToSave,
+            taxa: taxaNum,
+            vencimento,
+            pagamento: pagamentoToSave,
+          },
+          { preco_emissao: puNum, nome: nomeAtivo, criado_por: user.id }
+        );
+        if (!tituloResolvido) {
+          setSubmitting(false);
+          toast.error("Não foi possível cadastrar o título. A operação não foi gravada.");
+          return;
+        }
+      }
+
       const { error } = await supabase.from("movimentacoes").insert({
         categoria_id: categoriaId,
         tipo_movimentacao: "Aplicação Inicial",
         data,
         produto_id: produtoId,
+        titulo_id: tituloResolvido,
         valor: valorNum,
         preco_unitario: puNum,
         instituicao_id: instituicaoId,
         emissor_id: isPoupanca ? null : emissorId,
-        modalidade: modalidadeToSave,
-        taxa: taxaNum,
-        pagamento: isPoupanca ? "Mensal" : (isAdmin ? pagamento : "No Vencimento"),
-        vencimento: isPoupanca ? null : vencimento,
         nome_ativo: nomeAtivo,
         codigo_custodia: codigoCustodia,
-        indexador: indexadorToSave,
         quantidade,
         valor_extrato: valorExtrato,
         user_id: user.id,

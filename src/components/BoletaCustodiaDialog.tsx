@@ -361,6 +361,10 @@ export default function BoletaCustodiaDialog({
         valorExtrato = `R$ ${valorNum.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       }
 
+      // Os termos do papel vivem no cadastro; a movimentacao so aponta para ele.
+      const { data: cust } = await supabase
+        .from("custodia").select("titulo_id").eq("id", row.id).maybeSingle();
+
       const { data: inserted, error } = await supabase
         .from("movimentacoes")
         .insert({
@@ -372,11 +376,7 @@ export default function BoletaCustodiaDialog({
           produto_id: row.produto_id,
           instituicao_id: row.instituicao_id,
           emissor_id: row.emissor_id,
-          modalidade: row.modalidade,
-          indexador: row.indexador,
-          taxa: row.taxa,
-          pagamento: row.pagamento,
-          vencimento: row.vencimento,
+          titulo_id: (cust as any)?.titulo_id ?? null,
           preco_unitario: pu,
           quantidade,
           valor: valorNum,

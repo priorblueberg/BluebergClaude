@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { format, parse, isValid } from "date-fns";
 import { PlusCircle, AlertTriangle, HelpCircle, CalendarIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { resolverTitulo } from "@/lib/resolverTitulo";
 import { useAuth } from "@/hooks/useAuth";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { buildNomeAtivo } from "@/lib/nomeAtivo";
@@ -381,7 +382,7 @@ export default function BoletaTransacao({
     }
     supabase
       .from("custodia")
-      .select("id, nome, codigo_custodia, data_inicio, valor_investido, taxa, indexador, vencimento, modalidade, pagamento, produto_id, instituicao_id, emissor_id, categoria_id, preco_unitario, resgate_total")
+      .select("id, nome, codigo_custodia, data_inicio, valor_investido, taxa, indexador, vencimento, modalidade, pagamento, produto_id, instituicao_id, emissor_id, categoria_id, preco_unitario, resgate_total, titulo_id")
       .eq("categoria_id", categoriaId)
       .eq("user_id", user.id)
       .order("nome")
@@ -1185,13 +1186,9 @@ export default function BoletaTransacao({
           preco_unitario: null,
           instituicao_id: selectedCustodia.instituicao_id,
           emissor_id: selectedCustodia.emissor_id,
-          modalidade: selectedCustodia.modalidade,
-          taxa: selectedCustodia.taxa,
-          pagamento: selectedCustodia.pagamento,
-          vencimento: selectedCustodia.vencimento,
+          titulo_id: (selectedCustodia as any).titulo_id ?? null,
           nome_ativo: selectedCustodia.nome,
           codigo_custodia: selectedCustodia.codigo_custodia,
-          indexador: selectedCustodia.indexador,
           quantidade: null,
           valor_extrato: `R$ ${fmtBR(valorNum)}`,
           user_id: user.id,
@@ -1389,37 +1386,24 @@ export default function BoletaTransacao({
         // comprem o MESMO papel caiam no mesmo registro, em vez de duplica-lo.
         let tituloResolvido: string | null = tituloId || null;
         if (!isPoupanca && !tituloResolvido && vencimento && modalidadeToSave && taxaNum != null) {
-          const identidade = {
-            produto_id: produtoId,
-            emissor_id: emissorId || null,
-            modalidade: modalidadeToSave,
-            indexador: indexadorToSave,
-            taxa: taxaNum,
-            vencimento,
-            pagamento: pagamentoToSave,
-          };
-          const { data: jaExiste } = await supabase
-            .from("cadastro_de_titulos")
-            .select("id")
-            .match(identidade as any)
-            .maybeSingle();
-          if (jaExiste) {
-            tituloResolvido = (jaExiste as any).id;
-          } else {
-            const { data: criado, error: errTitulo } = await supabase
-              .from("cadastro_de_titulos")
-              .insert({ ...identidade, preco_emissao: puNum, nome: nomeAtivo, criado_por: user.id } as any)
-              .select("id")
-              .maybeSingle();
-            // Bloqueante: com os termos vivendo no cadastro, uma operacao sem titulo ficaria
-            // sem onde guarda-los. Melhor recusar do que gravar pela metade.
-            if (errTitulo || !criado) {
-              console.error("nao foi possivel cadastrar o titulo", errTitulo);
-              setSubmitting(false);
-              toast.error("Não foi possível cadastrar o título. A operação não foi gravada.");
-              return;
-            }
-            tituloResolvido = (criado as any).id;
+          tituloResolvido = await resolverTitulo(
+            {
+              produto_id: produtoId,
+              emissor_id: emissorId || null,
+              modalidade: modalidadeToSave,
+              indexador: indexadorToSave,
+              taxa: taxaNum,
+              vencimento,
+              pagamento: pagamentoToSave,
+            },
+            { preco_emissao: puNum, nome: nomeAtivo, criado_por: user.id }
+          );
+          // Bloqueante: com os termos vivendo no cadastro, uma operacao sem titulo ficaria
+          // sem onde guarda-los. Melhor recusar do que gravar pela metade.
+          if (!tituloResolvido) {
+            setSubmitting(false);
+            toast.error("Não foi possível cadastrar o título. A operação não foi gravada.");
+            return;
           }
         }
 

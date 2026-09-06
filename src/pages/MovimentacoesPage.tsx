@@ -27,7 +27,6 @@ interface Movimentacao {
   created_at: string;
   data: string;
   tipo_movimentacao: string;
-  pagamento: string | null;
   nome_ativo: string | null;
   instituicao: string | null;
   quantidade: number | null;
@@ -67,15 +66,29 @@ export default function MovimentacoesPage() {
   const [filterTipo, setFilterTipo] = useState("");
 
   const fetchData = async () => {
-    const { data, error } = await supabase
-      .from("movimentacoes")
-      .select(`
-        id, created_at, data, tipo_movimentacao,
-        pagamento, nome_ativo, quantidade, preco_unitario,
-        valor, origem, codigo_custodia, modalidade,
-        instituicoes(nome)
-      `)
-      .order("data", { ascending: false });
+    // A modalidade saiu de `movimentacoes` quando os termos do papel passaram a viver no
+    // cadastro; aqui ela so serve para esconder PU de poupanca, entao vem da custodia.
+    const [{ data, error }, { data: custodias }] = await Promise.all([
+      supabase
+        .from("movimentacoes")
+        .select(`
+          id, created_at, data, tipo_movimentacao,
+          nome_ativo, quantidade, preco_unitario,
+          valor, origem, codigo_custodia,
+          instituicoes(nome)
+        `)
+        .order("data", { ascending: false }),
+      supabase.from("custodia").select("codigo_custodia, modalidade"),
+    ]);
+
+    const modalidadePorCustodia = new Map<number, string | null>(
+      (custodias ?? []).map((c: any) => [c.codigo_custodia, c.modalidade ?? null])
+    );
+
+    if (error) {
+      toast.error("Erro ao carregar movimentações.");
+      console.error(error);
+    }
 
     if (!error && data) {
       const mapped = data.map((r: any) => ({
@@ -83,7 +96,6 @@ export default function MovimentacoesPage() {
           created_at: r.created_at,
           data: r.data,
           tipo_movimentacao: r.tipo_movimentacao,
-          pagamento: r.pagamento,
           nome_ativo: r.nome_ativo,
           instituicao: r.instituicoes?.nome ?? null,
           quantidade: r.quantidade ?? null,
@@ -91,7 +103,7 @@ export default function MovimentacoesPage() {
           valor: r.valor ?? null,
           origem: r.origem ?? "manual",
           codigo_custodia: r.codigo_custodia ?? null,
-          modalidade: r.modalidade ?? null,
+          modalidade: modalidadePorCustodia.get(r.codigo_custodia) ?? null,
         }));
       setRows(mapped);
       _movCachedRows = mapped;
