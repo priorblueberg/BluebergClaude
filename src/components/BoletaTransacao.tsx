@@ -561,7 +561,10 @@ export default function BoletaTransacao({
           puInicial: selectedCustodia.preco_unitario!,
           calendario,
           movimentacoes,
-          dataResgateTotal: custRes.data?.resgate_total ?? null,
+          // Ao ignorar a propria movimentacao, tem que ignorar tambem o encerramento que ELA
+          // provoca: `custodia.resgate_total` guarda a data dela, e com ele a posicao ja chega
+          // zerada ao dia - a caixa mostrava "R$ 0,00 sem contar esta movimentacao".
+          dataResgateTotal: (ignorarId && isResgateTotal) ? null : (custRes.data?.resgate_total ?? null),
           pagamento: selectedCustodia.pagamento,
           vencimento: selectedCustodia.vencimento,
           indexador: selectedCustodia.indexador,
