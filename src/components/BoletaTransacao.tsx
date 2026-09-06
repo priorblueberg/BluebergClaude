@@ -1452,12 +1452,15 @@ export default function BoletaTransacao({
 
         const insertedId = inserted?.[0]?.id || null;
 
+        await fullSyncAfterMovimentacao(insertedId, categoriaId, user!.id, dataReferenciaISO);
+
+        // DEPOIS do sync: e ele que cria a custodia. Antes, o update nao encontrava linha
+        // nenhuma e o vinculo se perdia calado - o titulo ficava cadastrado e a custodia orfa.
         if (tituloResolvido && codigoCustodia) {
           await supabase.from("custodia").update({ titulo_id: tituloResolvido })
             .eq("codigo_custodia", codigoCustodia).eq("user_id", user.id);
         }
 
-        await fullSyncAfterMovimentacao(insertedId, categoriaId, user!.id, dataReferenciaISO);
         applyDataReferencia();
 
         toast.success("Transação cadastrada com sucesso!");
