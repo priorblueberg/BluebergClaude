@@ -921,6 +921,11 @@ export default function BoletaTransacao({
       }
 
       const qtdOperacao = qtdInformada ?? (cotacaoDoDia ? valorNum / cotacaoDoDia : null);
+      // O preco e o cambio EFETIVO da operacao, nao a PTAX: quando o cliente informa a
+      // quantidade justamente para registrar spread e IOF, gravar a PTAX faria o extrato
+      // contar outra historia (R$ 5,94 numa compra fechada a R$ 6,67). Com a quantidade
+      // derivada os dois coincidem, entao a divisao vale para os dois casos.
+      const precoEfetivo = qtdOperacao ? valorNum / qtdOperacao : cotacaoDoDia;
 
       setSubmitting(true);
 
@@ -965,7 +970,7 @@ export default function BoletaTransacao({
             data,
             valor: valorNum,
             quantidade: qtd,
-            preco_unitario: cotacaoDoDia,
+            preco_unitario: precoEfetivo,
           }).eq("id", editId);
           if (errUp) throw errUp;
           await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
@@ -986,7 +991,7 @@ export default function BoletaTransacao({
           tipo_movimentacao: tipoMovimentacao,
           valor: valorNum,
           quantidade: qtd,
-          preco_unitario: cotacaoDoDia,
+          preco_unitario: precoEfetivo,
           user_id: user.id,
           origem: "manual",
         }).select("id").single();
