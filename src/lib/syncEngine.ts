@@ -6,6 +6,7 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaSeNecessario, limparCacheIpca } from "@/lib/ipcaSeries";
 
@@ -100,6 +101,18 @@ function formatValorExtrato(valor: number, precoUnitario: number, quantidade: nu
 /**
  * Recalculate manual "Resgate Total" rows created by the "Fechar Posição" flow.
  * These rows are derived values and must be updated when earlier movimentações change.
+ *
+ * E a mesma semantica do "Fechar posicao" do Gorila, que a boleta dele descreve assim: a
+ * transacao "se ajusta automaticamente as mudancas no historico anterior a data da transacao,
+ * garantindo que a posicao do ativo fique zerada ao final do dia, mesmo com insercoes
+ * posteriores de transacoes em datas passadas".
+ *
+ * Medido em 06/09/2026 num CDB 100% do CDI: fechado em 20/08/2026 por R$ 12.395,97, um aporte
+ * retroativo de R$ 5.000,00 em 10/06/2026 reescreveu o fechamento para **R$ 17.531,52** dos
+ * dois lados, com a posicao seguindo zerada e P&L de R$ 2.531,52.
+ *
+ * A poupanca tem motor proprio e por isso ficava de fora; sem o recalculo, o aporte retroativo
+ * reabria a posicao com resIduo (R$ 5.067,41 no teste), enquanto o Gorila a mantinha fechada.
  */
 async function syncManualResgatesTotais(
   codigoCustodia: string,
@@ -117,6 +130,8 @@ async function syncManualResgatesTotais(
       .order("data");
 
     if (!manualResgates || manualResgates.length === 0) return;
+
+    const ehPoupanca = custodiaRecord.modalidade === "Poupança";
 
     const lastResgateDate = manualResgates[manualResgates.length - 1].data;
 
@@ -138,7 +153,19 @@ async function syncManualResgatesTotais(
 
     if (!calendario || !movs) return;
 
-    const cdiRecords = await fetchCdiIfNeeded(custodiaRecord.indexador, custodiaRecord.data_inicio, lastResgateDate);
+    const cdiRecords = ehPoupanca
+      ? []
+      : await fetchCdiIfNeeded(custodiaRecord.indexador, custodiaRecord.data_inicio, lastResgateDate);
+
+    // Serie do BCB: a poupanca credita pela taxa oficial, nao pelo CDI.
+    const rendimentoPoupanca = ehPoupanca
+      ? (await fetchAllRows<{ data: string; rendimento_mensal: number }>((de, ate) =>
+          supabase.from("historico_poupanca_rendimento").select("data, rendimento_mensal")
+            .gte("data", custodiaRecord.data_inicio).lte("data", lastResgateDate)
+            .order("data").range(de, ate))).map((r) => ({
+              data: r.data, rendimento_mensal: Number(r.rendimento_mensal),
+            }))
+      : [];
 
     for (const manualResgate of manualResgates) {
       // NAO cortar o calendario na data do resgate: o motor conta as datas de
@@ -159,26 +186,46 @@ async function syncManualResgatesTotais(
       const ipcaFatores = await fatoresIpcaSeNecessario(
         custodiaRecord.indexador, custodiaRecord.vencimento, calendario, custodiaRecord.data_inicio);
 
-      const rows = calcularRendaFixaDiario({
-        dataInicio: custodiaRecord.data_inicio,
-        dataCalculo: manualResgate.data,
-        taxa: custodiaRecord.taxa || 0,
-        modalidade: custodiaRecord.modalidade || "Prefixado",
-        puInicial: custodiaRecord.preco_unitario || 1000,
-        calendario,
-        movimentacoes: movsAteData,
-        dataResgateTotal: null,
-        pagamento: custodiaRecord.pagamento,
-        vencimento: custodiaRecord.vencimento,
-        indexador: custodiaRecord.indexador,
-        cdiRecords,
-        ipcaFatores,
-      });
+      const rows = ehPoupanca
+        ? calcularPoupancaDiario({
+            dataInicio: custodiaRecord.data_inicio,
+            dataCalculo: manualResgate.data,
+            calendario,
+            movimentacoes: movsAteData,
+            lotes: buildPoupancaLotesFromMovs(movsAteData),
+            selicRecords: [],
+            poupancaRendimentoRecords: rendimentoPoupanca,
+          })
+        : calcularRendaFixaDiario({
+            dataInicio: custodiaRecord.data_inicio,
+            dataCalculo: manualResgate.data,
+            taxa: custodiaRecord.taxa || 0,
+            modalidade: custodiaRecord.modalidade || "Prefixado",
+            puInicial: custodiaRecord.preco_unitario || 1000,
+            calendario,
+            movimentacoes: movsAteData,
+            dataResgateTotal: null,
+            pagamento: custodiaRecord.pagamento,
+            vencimento: custodiaRecord.vencimento,
+            indexador: custodiaRecord.indexador,
+            cdiRecords,
+            ipcaFatores,
+          });
 
       const rowDia = rows[rows.length - 1];
       if (!rowDia) continue;
 
       const valor = Math.max(rowDia.liquido, 0);
+
+      if (ehPoupanca) {
+        // Poupanca nao tem cota nem PU: o Gorila mostra Quantidade como "-".
+        await supabase
+          .from("movimentacoes")
+          .update({ valor, preco_unitario: null, quantidade: null, valor_extrato: formatValorExtrato(valor, 0, 0) })
+          .eq("id", manualResgate.id);
+        continue;
+      }
+
       const isNoVencimento = custodiaRecord.pagamento === "No Vencimento";
 
       let precoUnitario: number;
@@ -773,8 +820,9 @@ export async function syncCustodiaFromMovimentacao(
     .upsert(custodiaData, { onConflict: "user_id,codigo_custodia" });
   if (upsertErr) console.error("syncCustodia: erro ao gravar", upsertErr);
 
-  // Sync manual "Resgate Total" values created by the "Fechar Posição" flow (RF non-poupança only)
-  if (isRendaFixa && !isPoupanca) {
+  // Sync manual "Resgate Total" values created by the "Fechar Posição" flow.
+  // A poupanca entra aqui tambem: ela tem motor proprio, tratado dentro da funcao.
+  if (isRendaFixa) {
     await syncManualResgatesTotais(mov.codigo_custodia, mov.user_id!, {
       vencimento: termos.vencimento,
       resgate_total: resgateTotal,
