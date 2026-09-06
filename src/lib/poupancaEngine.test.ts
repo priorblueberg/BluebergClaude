@@ -147,3 +147,77 @@ describe("numero de creditos ate 03/09/2026 (contra o Gorila)", () => {
     });
   }
 });
+
+/**
+ * Multiplos aportes e a ordem de consumo no resgate.
+ *
+ * Medido contra o Gorila em 06/09/2026 (poupanca BANCO INTER): aportes de R$ 5.000,00 em
+ * 10/01/2025 e 20/02/2025, resgate de R$ 6.000,00 em 15/07/2025. Em 03/09/2026 ele fecha em
+ * **R$ 4.753,83**. As tres hipoteses davam numeros distintos - FIFO R$ 4.753,83, LIFO
+ * R$ 4.719,12 e pro-rata R$ 4.736,37 - e so o FIFO bate.
+ *
+ * O que faz o teste discriminar e os aniversarios DIFERENTES (dia 10 e dia 20): o lote que
+ * sobrevive define quantos creditos ainda entram. Com aportes no mesmo dia, as tres hipoteses
+ * empatariam e o teste nao provaria nada.
+ */
+describe("multiplos aportes e FIFO no resgate", () => {
+  const movs = [
+    { data: "2025-01-10", tipo_movimentacao: "Aplicação Inicial", valor: 5000 },
+    { data: "2025-02-20", tipo_movimentacao: "Aplicação", valor: 5000 },
+    { data: "2025-07-15", tipo_movimentacao: "Resgate", valor: 6000 },
+  ];
+
+  function rodarLotes(ate: string) {
+    return calcularPoupancaDiario({
+      dataInicio: "2025-01-10",
+      dataCalculo: ate,
+      calendario: calendarioEntre("2025-01-10", ate),
+      movimentacoes: movs,
+      lotes: buildPoupancaLotesFromMovs(movs),
+      selicRecords: [],
+      poupancaRendimentoRecords: serieFixa("2023-01-01", ate),
+    });
+  }
+
+  it("cada aporte vira um lote com a sua propria data-base", () => {
+    const lotes = buildPoupancaLotesFromMovs(movs);
+    expect(lotes).toHaveLength(2);
+    expect(lotes[0].dia_aniversario).toBe(10);
+    expect(lotes[1].dia_aniversario).toBe(20);
+  });
+
+  it("os dois lotes rendem nos seus proprios aniversarios", () => {
+    const rows = rodarLotes("2025-04-30");
+    const comGanho = rows.filter((r) => r.ganhoDiario > 0.00001).map((r) => r.data);
+    expect(comGanho).toEqual([
+      "2025-02-10", "2025-03-10", "2025-03-20", "2025-04-10", "2025-04-20",
+    ]);
+  });
+
+  it("o resgate consome o lote MAIS ANTIGO primeiro (FIFO)", () => {
+    const rows = rodarLotes("2026-09-03");
+    const fim = rows[rows.length - 1];
+
+    const f = 1.005;
+    const saldoA = 5000 * Math.pow(f, 6);  // dia 10: creditos de 02 a 07/2025
+    const saldoB = 5000 * Math.pow(f, 4);  // dia 20: creditos de 03 a 06/2025
+    const resto = saldoA + saldoB - 6000;
+
+    // FIFO: o lote A morre, o resto fica no B (dia 20), que ainda recebe 14 creditos.
+    const fifo = resto * Math.pow(f, 14);
+    // LIFO deixaria o resto no A (dia 10), com 13 creditos.
+    const lifo = resto * Math.pow(f, 13);
+
+    expect(fim.liquido).toBeCloseTo(fifo, 2);
+    expect(Math.abs(fim.liquido - lifo)).toBeGreaterThan(1);
+  });
+
+  it("o saldo em maos no dia do resgate soma os dois lotes", () => {
+    const rows = rodarLotes("2025-07-15");
+    const dia = rows.find((r) => r.data === "2025-07-15")!;
+    const f = 1.005;
+    // antes do resgate: A com 6 creditos, B com 4
+    const antes = 5000 * Math.pow(f, 6) + 5000 * Math.pow(f, 4);
+    expect(dia.liquido).toBeCloseTo(antes - 6000, 2);
+  });
+});
