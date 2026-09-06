@@ -210,6 +210,8 @@ export default function BoletaTransacao({
   const [vencimento, setVencimento] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [editLoaded, setEditLoaded] = useState(false);
+  /** Nome do titulo da movimentacao em edicao, so para exibicao. */
+  const [nomeAtivoEmEdicao, setNomeAtivoEmEdicao] = useState("");
   // Fundos
   const [fundos, setFundos] = useState<{ id: string; nome: string; cnpj: string }[]>([]);
   const [fundoId, setFundoId] = useState("");
@@ -241,7 +243,10 @@ export default function BoletaTransacao({
   const isPosFixado = modalidade === "Pós Fixado";
   const isEditing = !!editId;
   const isResgate = tipoMovimentacao === "Resgate";
+  const isResgateTotal = tipoMovimentacao === "Resgate Total";
   const isAplicacao = tipoMovimentacao === "Aplicação";
+  /** Saidas de renda fixa. Na edicao elas tem formulario proprio, nao o de aplicacao. */
+  const ehSaidaRF = isResgate || isResgateTotal;
   const selectedCustodia = custodiaItems.find((c) => c.id === selectedCustodiaId);
 
   /**
@@ -647,13 +652,25 @@ export default function BoletaTransacao({
       setFundoId((mov as any).fundo_id || "");
       setMoedaSel((mov as any).moeda || "");
       setQtdCotas(mov.quantidade != null ? String(mov.quantidade).replace(".", ",") : "");
+      setNomeAtivoEmEdicao(mov.nome_ativo || "");
       setEditLoaded(true);
     })();
   }, [editId, editLoaded, categorias]);
 
   // Step visibility
   const showTipoMovimentacao = !!categoriaId && (isRendaFixa || isFundo || isMoeda);
-  const showAplicacaoFields = showTipoMovimentacao && isRendaFixa && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !isResgate));
+  const showAplicacaoFields = showTipoMovimentacao && isRendaFixa && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !ehSaidaRF));
+  /**
+   * Edicao de resgate e de resgate total.
+   *
+   * Antes o Resgate nao caia em formulario nenhum (o de aplicacao o excluia, o de resgate
+   * excluia edicao) e o modal abria vazio, sem campos e sem salvar. E o Resgate Total caia no
+   * formulario de APLICACAO, com o valor resgatado rotulado "Valor Inicial".
+   *
+   * Aqui so aparece o que e da operacao - data e valor. O titulo e imutavel, como o ativo na
+   * edicao do Gorila: as caracteristicas do papel pertencem a custodia, nao a movimentacao.
+   */
+  const showEdicaoSaidaRF = isEditing && isRendaFixa && ehSaidaRF;
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
   const showFundoFields = isFundo && !!tipoMovimentacao;
 
@@ -759,6 +776,52 @@ export default function BoletaTransacao({
   const handleSubmit = async () => {
     if (!user) {
       toast.error("Usuário não autenticado. Faça login novamente.");
+      return;
+    }
+
+    // ── Edicao de saida de renda fixa (Resgate e Resgate Total) ──
+    // So data e valor mudam. O titulo, o emissor e os termos do papel nao pertencem a esta
+    // movimentacao, entao nao sao tocados aqui.
+    if (showEdicaoSaidaRF) {
+      const faltando = new Set<string>();
+      if (!data) faltando.add("data");
+      if (!valor || parseCurrencyToNumber(valor) <= 0) faltando.add("valor");
+      if (faltando.size > 0) {
+        setValidationErrors(faltando);
+        toast.error("Preencha a data e o valor.");
+        return;
+      }
+      setValidationErrors(new Set());
+
+      const foraJanela = foraDaJanela(data, maxDataISO);
+      if (foraJanela) {
+        toast.error(foraJanela);
+        return;
+      }
+      if (modalidade !== "Poupança" && !(await ehDiaUtil(data))) {
+        toast.error("A data da operação deve ser um dia útil.");
+        return;
+      }
+
+      setSubmitting(true);
+      try {
+        const valorNum = parseCurrencyToNumber(valor);
+        const { error } = await supabase
+          .from("movimentacoes")
+          .update({ data, valor: valorNum })
+          .eq("id", editId);
+        if (error) throw error;
+
+        await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
+        applyDataReferencia();
+        toast.success(`${tipoMovimentacao} atualizado com sucesso!`);
+        onFechar?.();
+      } catch (err) {
+        console.error(err);
+        toast.error("Erro ao atualizar a movimentação.");
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -1877,6 +1940,51 @@ export default function BoletaTransacao({
                 </div>
               </>
             )}
+          </>
+        )}
+
+        {/* ── Edicao de saida de renda fixa (Resgate / Resgate Total) ── */}
+        {showEdicaoSaidaRF && (
+          <>
+            <Field label="Título">
+              <Input readOnly className="bg-muted/50" value={nomeAtivoEmEdicao || "—"} />
+            </Field>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Data de Transação" required>
+                <Input
+                  type="date"
+                  value={data}
+                  min={limitesData.min}
+                  max={limitesData.max}
+                  onChange={(e) => { setData(e.target.value); setValidationErrors((prev) => { const n = new Set(prev); n.delete("data"); return n; }); }}
+                  className={`input-field ${validationErrors.has("data") ? "border-destructive ring-1 ring-destructive" : ""}`}
+                />
+              </Field>
+              <Field label={isResgateTotal ? "Valor do Resgate Total (R$)" : "Valor do Resgate (R$)"} required>
+                <Input
+                  value={valor}
+                  onChange={(e) => { setValor(formatCurrency(e.target.value)); setValidationErrors((prev) => { const n = new Set(prev); n.delete("valor"); return n; }); }}
+                  placeholder="0,00"
+                  inputMode="numeric"
+                  className={validationErrors.has("valor") ? "border-destructive ring-1 ring-destructive" : ""}
+                />
+              </Field>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Só a data e o valor da operação mudam aqui. O título e os termos dele (emissor, taxa,
+              indexador, vencimento) pertencem à custódia, não a esta movimentação.
+            </p>
+
+            <div className="flex gap-3">
+              <Button onClick={handleSubmit} disabled={submitting}>
+                {submitting ? "Salvando..." : "Salvar alterações"}
+              </Button>
+              <Button variant="outline" onClick={() => onFechar?.()} disabled={submitting}>
+                Cancelar
+              </Button>
+            </div>
           </>
         )}
 
