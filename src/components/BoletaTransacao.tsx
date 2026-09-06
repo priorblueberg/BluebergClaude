@@ -23,6 +23,7 @@ import FundoSelect from "@/components/FundoSelect";
 import TituloSelect from "@/components/TituloSelect";
 import { MOEDAS } from "@/lib/catalogoDeMoedas";
 import { fetchAllRows } from "@/lib/fetchAllRows";
+import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
 import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
@@ -582,6 +583,48 @@ export default function BoletaTransacao({
         if (rowDia) {
           setSaldoDisponivel(rowDia.liquido);
         }
+      } catch {
+        setSaldoDisponivel(null);
+      } finally {
+        setCalculandoSaldo(false);
+      }
+    } else if (selectedCustodia.modalidade === "Poupança") {
+      // A poupanca tem motor proprio: sem ele a caixa mostrava o valor APLICADO como saldo
+      // disponivel. Medido em 06/09/2026: R$ 10.000,00 numa posicao que ja valia R$ 10.258,60
+      // com quatro aniversarios pagos - o cliente nao conseguiria resgatar o que era dele.
+      setCalculandoSaldo(true);
+      try {
+        const [calRes, movRes, rendRes] = await Promise.all([
+          fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+            .gte("data", selectedCustodia.data_inicio).lte("data", dateISO).order("data").range(de, ate)),
+          (ignorarId
+            ? supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
+                .eq("codigo_custodia", selectedCustodia.codigo_custodia).eq("user_id", user.id)
+                .neq("id", ignorarId).order("data")
+            : supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
+                .eq("codigo_custodia", selectedCustodia.codigo_custodia).eq("user_id", user.id)
+                .order("data")),
+          fetchAllRows((de, ate) => supabase.from("historico_poupanca_rendimento")
+            .select("data, rendimento_mensal")
+            .gte("data", selectedCustodia.data_inicio).lte("data", dateISO).order("data").range(de, ate)),
+        ]);
+
+        const movs = ((movRes as any).data || []).map((m: any) => ({
+          data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor),
+        }));
+        const rows = calcularPoupancaDiario({
+          dataInicio: selectedCustodia.data_inicio,
+          dataCalculo: dateISO,
+          calendario: (calRes || []) as any,
+          movimentacoes: movs,
+          lotes: buildPoupancaLotesFromMovs(movs),
+          selicRecords: [],
+          poupancaRendimentoRecords: ((rendRes || []) as any[]).map((r: any) => ({
+            data: r.data, rendimento_mensal: Number(r.rendimento_mensal),
+          })),
+        });
+        const rowDia = rows.find((r) => r.data === dateISO) ?? rows[rows.length - 1];
+        setSaldoDisponivel(rowDia ? rowDia.liquido : selectedCustodia.valor_investido);
       } catch {
         setSaldoDisponivel(null);
       } finally {
