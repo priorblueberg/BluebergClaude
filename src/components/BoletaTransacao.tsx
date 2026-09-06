@@ -249,6 +249,17 @@ export default function BoletaTransacao({
   const isAplicacao = tipoMovimentacao === "Aplicação";
   /** Saidas de renda fixa. Na edicao elas tem formulario proprio, nao o de aplicacao. */
   const ehSaidaRF = isResgate || isResgateTotal;
+  /**
+   * Edicao de resgate e de resgate total.
+   *
+   * Antes o Resgate nao caia em formulario nenhum (o de aplicacao o excluia, o de resgate
+   * excluia edicao) e o modal abria vazio, sem campos e sem salvar. E o Resgate Total caia no
+   * formulario de APLICACAO, com o valor resgatado rotulado "Valor Inicial".
+   *
+   * Aqui so aparece o que e da operacao - data e valor. O titulo e imutavel, como o ativo na
+   * edicao do Gorila: as caracteristicas do papel pertencem a custodia, nao a movimentacao.
+   */
+  const showEdicaoSaidaRF = isEditing && isRendaFixa && ehSaidaRF;
   const selectedCustodia = custodiaItems.find((c) => c.id === selectedCustodiaId);
 
   /**
@@ -668,17 +679,6 @@ export default function BoletaTransacao({
   // Step visibility
   const showTipoMovimentacao = !!categoriaId && (isRendaFixa || isFundo || isMoeda);
   const showAplicacaoFields = showTipoMovimentacao && isRendaFixa && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !ehSaidaRF));
-  /**
-   * Edicao de resgate e de resgate total.
-   *
-   * Antes o Resgate nao caia em formulario nenhum (o de aplicacao o excluia, o de resgate
-   * excluia edicao) e o modal abria vazio, sem campos e sem salvar. E o Resgate Total caia no
-   * formulario de APLICACAO, com o valor resgatado rotulado "Valor Inicial".
-   *
-   * Aqui so aparece o que e da operacao - data e valor. O titulo e imutavel, como o ativo na
-   * edicao do Gorila: as caracteristicas do papel pertencem a custodia, nao a movimentacao.
-   */
-  const showEdicaoSaidaRF = isEditing && isRendaFixa && ehSaidaRF;
 
   // Na edicao de uma saida, casa a custodia pelo codigo da movimentacao. E o que destrava o
   // calculo do saldo, que e escrito para o fluxo de criacao (onde o usuario escolhe o titulo).
