@@ -86,6 +86,8 @@ type SyncCustodiaBase = {
   indexador: string | null;
   nome: string | null;
   preco_unitario: number | null;
+  /** Vinculo com o cadastro de titulos, herdado pelas movimentacoes automaticas. */
+  titulo_id?: string | null;
 };
 
 function formatValorExtrato(valor: number, precoUnitario: number, quantidade: number) {
@@ -775,6 +777,8 @@ export async function syncCustodiaFromMovimentacao(
       indexador: termos.indexador,
       nome: termos.nome,
       preco_unitario: termos.preco_unitario,
+      // O vinculo com o papel viaja junto: e ele que a movimentacao automatica precisa herdar.
+      titulo_id: (aplicacaoInicial as any).titulo_id ?? null,
     });
 
     // Sync automatic "Resgate no Vencimento"
@@ -792,6 +796,8 @@ export async function syncCustodiaFromMovimentacao(
       indexador: termos.indexador,
       nome: termos.nome,
       preco_unitario: termos.preco_unitario,
+      // O vinculo com o papel viaja junto: e ele que a movimentacao automatica precisa herdar.
+      titulo_id: (aplicacaoInicial as any).titulo_id ?? null,
     }, precarregado?.semAutomaticos);
   }
 
