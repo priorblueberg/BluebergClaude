@@ -19,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
 import FundoSelect from "@/components/FundoSelect";
+import TituloSelect from "@/components/TituloSelect";
 import { MOEDAS } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
@@ -214,6 +215,9 @@ export default function BoletaTransacao({
   const [nomeAtivoEmEdicao, setNomeAtivoEmEdicao] = useState("");
   /** Codigo de custodia da movimentacao em edicao, para propagar o nome ao papel inteiro. */
   const [codigoCustodiaEmEdicao, setCodigoCustodiaEmEdicao] = useState<string | null>(null);
+  /** Titulo escolhido no cadastro compartilhado. Vazio + `cadastrandoNovoTitulo` = papel novo. */
+  const [tituloId, setTituloId] = useState("");
+  const [cadastrandoNovoTitulo, setCadastrandoNovoTitulo] = useState(false);
   // Fundos
   const [fundos, setFundos] = useState<{ id: string; nome: string; cnpj: string }[]>([]);
   const [fundoId, setFundoId] = useState("");
@@ -704,7 +708,15 @@ export default function BoletaTransacao({
    * termos editaveis, porque e ali que eles nascem - o Gorila edita isso no cadastro do ativo,
    * que nos nao temos separado.
    */
-  const travarTermosDoPapel = isEditing && isRendaFixa && isAplicacao;
+  /**
+   * Termos do papel somente leitura.
+   *
+   * Dois casos: aporte adicional em edicao (os termos vem da aplicacao inicial) e titulo
+   * escolhido do cadastro (os termos sao do emissor, nao de quem compra). Num CDB emitido a
+   * 102% do CDI com vencimento em 31/12/2029, quem define isso foi o banco - o cliente so
+   * decide quando e quanto aplicar.
+   */
+  const travarTermosDoPapel = (isEditing && isRendaFixa && isAplicacao) || (!!tituloId && !cadastrandoNovoTitulo);
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
   const showFundoFields = isFundo && !!tipoMovimentacao;
 
@@ -1214,6 +1226,8 @@ export default function BoletaTransacao({
         categoriaId, tipoMovimentacao, produtoId, valor, data, precoUnitario,
         instituicaoId, emissorId, modalidade, taxa, pagamento, vencimento,
       };
+      // Ou escolheu um titulo do cadastro, ou declarou que esta cadastrando um novo.
+      if (!isEditing && !tituloId && !cadastrandoNovoTitulo) requiredFields.tituloId = "";
       if (isPosFixado) {
         requiredFields.indexador = indexador;
       }
@@ -1366,11 +1380,46 @@ export default function BoletaTransacao({
           codigoCustodia = "";
         }
 
+        // Resolve o titulo no cadastro compartilhado. Papel novo entra aqui, e a partir dai
+        // fica disponivel para qualquer cliente - a chave unica garante que dois clientes que
+        // comprem o MESMO papel caiam no mesmo registro, em vez de duplica-lo.
+        let tituloResolvido: string | null = tituloId || null;
+        if (!isPoupanca && !tituloResolvido && vencimento && modalidadeToSave && taxaNum != null) {
+          const identidade = {
+            produto_id: produtoId,
+            emissor_id: emissorId || null,
+            modalidade: modalidadeToSave,
+            indexador: indexadorToSave,
+            taxa: taxaNum,
+            vencimento,
+            pagamento: pagamentoToSave,
+          };
+          const { data: jaExiste } = await supabase
+            .from("cadastro_de_titulos")
+            .select("id")
+            .match(identidade as any)
+            .maybeSingle();
+          if (jaExiste) {
+            tituloResolvido = (jaExiste as any).id;
+          } else {
+            const { data: criado, error: errTitulo } = await supabase
+              .from("cadastro_de_titulos")
+              .insert({ ...identidade, preco_emissao: puNum, nome: nomeAtivo, criado_por: user.id } as any)
+              .select("id")
+              .maybeSingle();
+            // Cadastro do titulo nao pode impedir a operacao: se falhar, a movimentacao entra
+            // sem vinculo e o papel pode ser reconciliado depois.
+            if (errTitulo) console.error("nao foi possivel cadastrar o titulo", errTitulo);
+            tituloResolvido = criado ? (criado as any).id : null;
+          }
+        }
+
         const { error } = await supabase.from("movimentacoes").insert({
           categoria_id: categoriaId,
           tipo_movimentacao: tipoFinal,
           data,
           produto_id: produtoId,
+          titulo_id: tituloResolvido,
           valor: valorNum,
           preco_unitario: isPoupanca ? null : puNum,
           instituicao_id: instituicaoId,
@@ -1402,6 +1451,11 @@ export default function BoletaTransacao({
           .limit(1);
 
         const insertedId = inserted?.[0]?.id || null;
+
+        if (tituloResolvido && codigoCustodia) {
+          await supabase.from("custodia").update({ titulo_id: tituloResolvido })
+            .eq("codigo_custodia", codigoCustodia).eq("user_id", user.id);
+        }
 
         await fullSyncAfterMovimentacao(insertedId, categoriaId, user!.id, dataReferenciaISO);
         applyDataReferencia();
@@ -1732,6 +1786,39 @@ export default function BoletaTransacao({
                 }))}
               />
             </Field>
+
+            {/* O papel em si, do cadastro compartilhado. Novo titulo entra por aqui tambem. */}
+            {!!produtoId && !isEditing && (
+              <Field label="Título" required>
+                <TituloSelect
+                  produtoId={produtoId}
+                  produtoNome={produtos.find((p) => p.id === produtoId)?.nome ?? "título"}
+                  value={tituloId}
+                  cadastrandoNovo={cadastrandoNovoTitulo}
+                  hasError={validationErrors.has("tituloId")}
+                  onCadastrarNovo={() => {
+                    setTituloId("");
+                    setCadastrandoNovoTitulo(true);
+                    setEmissorId(""); setEmissorNome("");
+                    setModalidade(""); setIndexador(""); setTaxa("");
+                    setVencimento(""); setPagamento("No Vencimento");
+                  }}
+                  onSelecionar={(t) => {
+                    setTituloId(t.id);
+                    setCadastrandoNovoTitulo(false);
+                    setEmissorId(t.emissor_id ?? "");
+                    setEmissorNome(t.emissor_nome ?? "");
+                    setModalidade(t.modalidade);
+                    setIndexador(t.indexador ?? "");
+                    setTaxa(String(t.taxa).replace(".", ","));
+                    setVencimento(t.vencimento);
+                    setPagamento(t.pagamento);
+                    setPrecoUnitario(formatCurrency(Math.round(t.preco_emissao * 100).toString()));
+                    setValidationErrors((prev) => { const n = new Set(prev); n.delete("tituloId"); return n; });
+                  }}
+                />
+              </Field>
+            )}
 
             {showAplicacaoFields && (
               <>
