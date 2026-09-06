@@ -7,7 +7,8 @@
  * Regras:
  * - Selic > 8.5% a.a. → 0.5% ao mês + TR (TR = 0 no MVP)
  * - Selic ≤ 8.5% a.a. → 70% da Selic ao mês + TR
- * - Rendimento ocorre apenas no "aniversário" (dia do mês da aplicação)
+ * - Rendimento ocorre apenas no "aniversário" (dia do mês da DATA-BASE)
+ * - Depósito nos dias 29, 30 e 31 tem data-base no dia 1o do mês seguinte
  * - Resgate segue FIFO (First In, First Out)
  */
 
@@ -40,6 +41,8 @@ export interface PoupancaEngineInput {
 interface LoteState {
   id: string;
   dataAplicacao: string;
+  /** A partir dela contam os aniversários; difere do depósito nos dias 29, 30 e 31. */
+  dataBase: string;
   diaAniversario: number;
   valorPrincipal: number;
   valorAtual: number;
@@ -81,6 +84,29 @@ function getDataBaseTR(aniversarioISO: string, diaAniversario: number): string {
     prevYear -= 1;
   }
   return getAniversarioNoMes(prevYear, prevMonth, diaAniversario);
+}
+
+/**
+ * Data-base do depósito: é a partir dela que se contam os aniversários.
+ *
+ * Para os dias 1 a 28 é o próprio dia do depósito. Para os dias **29, 30 e 31** a regra da
+ * poupança manda a data-base para o **dia 1o do mês seguinte** - quem deposita em 31/01 rende
+ * todo dia 1o, não todo dia 28/30/31.
+ *
+ * Medido contra o Gorila em 06/09/2026 com quatro depósitos de R$ 10.000,00, todos batendo ao
+ * centavo em 03/09/2026: 15/01/2025 -> R$ 11.337,58 (dia 15), 31/01/2025 -> R$ 11.340,18
+ * (dia 1o), 29/02/2024 -> R$ 12.086,14 (dia 1o) e 28/02/2025 -> R$ 11.264,94 (dia 28, que
+ * confirma a fronteira: 28 ainda é dia normal).
+ *
+ * Antes daqui o motor fazia `Math.min(dia, último dia do mês)`, o que levava o depósito de
+ * 31/01 para 28/02 e depois para 31/03. Não é a lei nem o Gorila.
+ */
+export function dataBaseDoDeposito(dataISO: string): string {
+  const [y, m, d] = dataISO.split("-").map(Number);
+  if (d <= 28) return dataISO;
+  const proxMes = m === 12 ? 1 : m + 1;
+  const ano = m === 12 ? y + 1 : y;
+  return `${ano}-${String(proxMes).padStart(2, "0")}-01`;
 }
 
 /**
@@ -166,7 +192,8 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
     .map(l => ({
       id: l.id,
       dataAplicacao: l.data_aplicacao,
-      diaAniversario: Number(l.dia_aniversario),
+      dataBase: dataBaseDoDeposito(l.data_aplicacao),
+      diaAniversario: Number(dataBaseDoDeposito(l.data_aplicacao).slice(8, 10)),
       valorPrincipal: Number(l.valor_principal),
       valorAtual: Number(l.valor_principal), // Start from principal, will accumulate
       rendimentoAcumulado: 0,
@@ -197,7 +224,9 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
     const activeLotes = activeLotesOnDate(date);
 
     for (const lote of activeLotes) {
-      if (date <= lote.dataAplicacao) continue;
+      // Ate a data-base nao ha aniversario. Para o deposito de 31/01 a data-base e 01/02,
+      // e o primeiro credito so vem em 01/03 - creditar em 01/02 seria um mes a mais.
+      if (date <= lote.dataBase) continue;
 
       // Credit yield on anniversary date regardless of business day
       if (isAniversario(date, lote.diaAniversario)) {
@@ -333,7 +362,7 @@ export function buildPoupancaLotesFromMovs(
     .map((m, idx) => ({
       id: `derived-${idx}`,
       data_aplicacao: m.data,
-      dia_aniversario: new Date(m.data + "T00:00:00").getDate(),
+      dia_aniversario: Number(dataBaseDoDeposito(m.data).slice(8, 10)),
       valor_principal: m.valor,
       valor_atual: m.valor,
       rendimento_acumulado: 0,

@@ -544,6 +544,20 @@ function computeDataCalculo(dataReferencia: string, resgateTotal: string | null,
  *   acabou de ler e reescrever todas as movimentacoes do codigo: sem isto, esta
  *   funcao repetia as duas leituras por titulo.
  */
+/**
+ * Id do produto "Poupança", em cache de modulo.
+ *
+ * A alternativa era carregar o nome do produto junto de cada movimentacao, o que somaria uma
+ * leitura por titulo no reprocessamento inteiro. Aqui e uma consulta por sessao.
+ */
+let _idProdutoPoupanca: string | null | undefined;
+export async function produtoPoupancaId(): Promise<string | null> {
+  if (_idProdutoPoupanca !== undefined) return _idProdutoPoupanca;
+  const { data } = await supabase.from("produtos").select("id").eq("nome", "Poupança").maybeSingle();
+  _idProdutoPoupanca = (data as any)?.id ?? null;
+  return _idProdutoPoupanca;
+}
+
 export async function syncCustodiaFromMovimentacao(
   movimentacaoId: string,
   dataReferencia?: string,
@@ -573,9 +587,10 @@ export async function syncCustodiaFromMovimentacao(
 
   const categoriaNome = precarregado?.categoriaNome ?? ((mov as any).categorias?.nome || "");
   const isRendaFixa = categoriaNome === "Renda Fixa";
-  // Poupanca vem da CATEGORIA, nao de uma coluna copiada na movimentacao: ela nao tem titulo
-  // no cadastro, entao nao poderia herdar `modalidade` de la depois que a coluna sair.
-  let isPoupanca = categoriaNome === "Poupança";
+  // Poupanca e um PRODUTO dentro de Renda Fixa, como no Gorila (la ela aparece na lista de
+  // tipos ao lado de CDB e LCI, e a posicao entra sob Renda Fixa). Nao da para detectar pela
+  // categoria nem por coluna da movimentacao: ela nao tem titulo no cadastro.
+  let isPoupanca = mov.produto_id === (await produtoPoupancaId());
 
   if (!mov.codigo_custodia) return;
 
@@ -725,12 +740,16 @@ export async function syncCustodiaFromMovimentacao(
     produto_id: aplicacaoInicial.produto_id,
     tipo_movimentacao: aplicacaoInicial.tipo_movimentacao,
     instituicao_id: aplicacaoInicial.instituicao_id,
-    modalidade: termos.modalidade,
+    // A poupanca nao tem titulo no cadastro, entao os termos vem nulos de la. A modalidade e
+    // o que o hook da carteira usa para mandar o papel ao motor certo (`rfProducts.filter(p =>
+    // p.modalidade === "Poupança")`) - sem ela a poupanca cairia no motor de renda fixa.
+    modalidade: isPoupanca ? "Poupança" : termos.modalidade,
     indexador: termos.indexador,
     taxa: termos.taxa,
     valor_investido: valorInvestidoLiquido,
     preco_unitario: termos.preco_unitario,
-    quantidade: aplicacaoInicial.quantidade,
+    // Poupanca nao tem cota: o Gorila mostra a coluna Quantidade como "-".
+    quantidade: isPoupanca ? null : aplicacaoInicial.quantidade,
     vencimento: termos.vencimento,
     emissor_id: termos.emissor_id,
     pagamento: termos.pagamento,
