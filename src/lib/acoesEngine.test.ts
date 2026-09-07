@@ -160,7 +160,12 @@ describe("proventos", () => {
     expect(ultimo(comProvento).rentabilidadeAcumuladaPct).toBeCloseTo(0, 8);
   });
 
-  it("JCP entra liquido de 15% de IR; dividendo nao", () => {
+  /**
+   * Por padrao o JCP entra BRUTO, para bater com o Gorila - ele exibe sem a retencao.
+   * Medido em 07/09/2026 numa posicao de 1.000 PETR4: JSCP de R$ 202,50, que e 0,202504 x
+   * 1.000 sem desconto nenhum.
+   */
+  it("por padrao o JCP entra BRUTO, como o Gorila mostra", () => {
     const rows = rodar({
       dataInicio: "2026-01-05", dataCalculo: "2026-01-08",
       precos: serieComQueda, movimentacoes: compra100,
@@ -168,18 +173,19 @@ describe("proventos", () => {
     });
     const ex = rows.find((r) => r.data === "2026-01-07")!;
     expect(ex.proventoBruto).toBeCloseTo(100, 2);
-    expect(ex.proventoLiquido).toBeCloseTo(100 * (1 - IR_JCP), 2);
-    expect(IR_JCP).toBe(0.15);
+    expect(ex.proventoLiquido).toBeCloseTo(100, 2);
   });
 
-  it("desligar o IR do JCP devolve o bruto", () => {
-    const rows = rodar({
+  it("ligando o desconto, o JCP sai liquido de 15% e o dividendo nao muda", () => {
+    const comIr = (tipo: "JCP" | "DIVIDENDO") => rodar({
       dataInicio: "2026-01-05", dataCalculo: "2026-01-08",
       precos: serieComQueda, movimentacoes: compra100,
-      proventos: [{ tipo: "JCP", valor: 1, data_ex: "2026-01-07" }],
-      descontarIrDoJcp: false,
-    });
-    expect(rows.find((r) => r.data === "2026-01-07")!.proventoLiquido).toBeCloseTo(100, 2);
+      proventos: [{ tipo, valor: 1, data_ex: "2026-01-07" }],
+      descontarIrDoJcp: true,
+    }).find((r) => r.data === "2026-01-07")!;
+    expect(comIr("JCP").proventoLiquido).toBeCloseTo(100 * (1 - IR_JCP), 2);
+    expect(comIr("DIVIDENDO").proventoLiquido).toBeCloseTo(100, 2);
+    expect(IR_JCP).toBe(0.15);
   });
 
   it("quem nao tinha a acao na data-ex nao recebe nada", () => {

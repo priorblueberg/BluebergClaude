@@ -32,7 +32,7 @@ export interface PosicaoAcao {
   quantidade: number;
   quantidadeFormatada: string;
   preco: number | null;
-  /** Provento recebido dentro da janela, líquido de IR sobre JCP. */
+  /** Provento recebido dentro da janela, bruto (o IR do JCP não é descontado, como no Gorila). */
   proventos: number;
   ativo: boolean;
   existiuNaJanela?: boolean;

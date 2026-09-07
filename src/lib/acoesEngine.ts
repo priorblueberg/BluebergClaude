@@ -75,7 +75,17 @@ export interface AcoesEngineInput {
   movimentacoes: AcaoMovimentacao[];
   proventos?: Provento[];
   eventos?: EventoCorporativo[];
-  /** JCP líquido de IR no resultado. Default: true, que é o que cai na conta. */
+  /**
+   * Desconta o IR do JCP no resultado. Default **false**, para bater com o Gorila.
+   *
+   * O IR de 15% sobre JCP é retido na fonte de verdade - o líquido é o que cai na conta. Mas
+   * o Gorila exibe o BRUTO (medido em 07/09/2026: JSCP de R$ 202,50 numa posição de 1.000
+   * ações, que é 0,202504 x 1.000 sem retenção), e a decisão do Daniel foi acompanhar ele,
+   * para a validação tela contra tela continuar valendo ao centavo.
+   *
+   * Ligar isto passa a mostrar o que entra no caixa, ao custo de divergir do Gorila em todo
+   * papel que pague JCP.
+   */
   descontarIrDoJcp?: boolean;
 }
 
@@ -95,7 +105,8 @@ export interface AcaoDailyRow {
   valorPosicao: number;
   custoMedio: number;
   valorInvestido: number;
-  /** Provento com data-ex neste dia, bruto e líquido de IR. */
+  /** Provento com data-ex neste dia. `proventoLiquido` é o que entra no resultado - igual ao
+   *  bruto por padrão, e descontado do IR do JCP quando `descontarIrDoJcp` está ligado. */
   proventoBruto: number;
   proventoLiquido: number;
   proventoAcumulado: number;
@@ -139,7 +150,7 @@ function proventosPorData(proventos: Provento[], eventos: EventoCorporativo[], d
 export function calcularAcoesDiario(input: AcoesEngineInput): AcaoDailyRow[] {
   const eventos = (input.eventos ?? []).filter((e) => e.data_ex && Number.isFinite(e.fator) && e.fator > 0);
   const proventos = input.proventos ?? [];
-  const descontarIr = input.descontarIrDoJcp ?? true;
+  const descontarIr = input.descontarIrDoJcp ?? false;
 
   // Preços em unidades de hoje: dividir pelo fator dos eventos posteriores.
   const precosAj = input.precos.map((p) => ({

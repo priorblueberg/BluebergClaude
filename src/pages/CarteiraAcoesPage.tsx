@@ -28,7 +28,7 @@ export default function CarteiraAcoesPage() {
       linhas={linhas}
       loading={loading}
       mensagemVazio="Nenhuma posição em ações. Cadastre a primeira compra para acompanhar preço e proventos."
-      nota="A posição vale quantidade x preço de fechamento. Dividendos e JCP entram no resultado na data-ex, que é o dia em que o preço cai - JCP líquido dos 15% de IR retido na fonte. Desdobramentos e grupamentos ajustam a quantidade sem alterar o valor da posição."
+      nota="A posição vale quantidade x preço de fechamento. Dividendos e JCP entram no resultado na data-ex, que é o dia em que o preço cai - JCP entra bruto, como o Gorila exibe - o IR de 15% é retido na fonte. Desdobramentos e grupamentos ajustam a quantidade sem alterar o valor da posição."
     />
   );
 }
