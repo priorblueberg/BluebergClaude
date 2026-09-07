@@ -1280,13 +1280,20 @@ export async function fullSyncAfterMovimentacao(
     // Get the codigo_custodia for this movimentação
     const { data: mov } = await supabase
       .from("movimentacoes")
-      .select("codigo_custodia, fundo_id, moeda")
+      .select("codigo_custodia, fundo_id, moeda, acao_id")
       .eq("id", movimentacaoId)
       .single();
 
     // Moeda tem motor proprio: saldo em moeda x cotacao do dia.
     if ((mov as any)?.moeda && mov?.codigo_custodia) {
       await syncCustodiaMoeda(mov.codigo_custodia, userId, dataReferencia);
+      await syncControleCarteiras(categoriaId, userId, dataReferencia);
+      return;
+    }
+
+    // Acao tem motor proprio: quantidade x preco de fechamento, com desdobramento aplicado.
+    if ((mov as any)?.acao_id && mov?.codigo_custodia) {
+      await syncCustodiaAcao(mov.codigo_custodia, userId, dataReferencia);
       await syncControleCarteiras(categoriaId, userId, dataReferencia);
       return;
     }
@@ -1319,13 +1326,19 @@ export async function fullSyncAfterDelete(
     // Check if there are remaining movimentações for this codigo
     const { data: remaining } = await supabase
       .from("movimentacoes")
-      .select("id, fundo_id, moeda")
+      .select("id, fundo_id, moeda, acao_id")
       .eq("codigo_custodia", codigoCustodia)
       .eq("user_id", userId)
       .limit(1);
 
     if (remaining && remaining.length > 0 && (remaining[0] as any).moeda) {
       await syncCustodiaMoeda(codigoCustodia, userId, dataReferencia);
+      await syncControleCarteiras(categoriaId, userId, dataReferencia);
+      return;
+    }
+
+    if (remaining && remaining.length > 0 && (remaining[0] as any).acao_id) {
+      await syncCustodiaAcao(codigoCustodia, userId, dataReferencia);
       await syncControleCarteiras(categoriaId, userId, dataReferencia);
       return;
     }
@@ -1385,7 +1398,7 @@ export async function recalculateAllForDataReferencia(userId: string, dataRefere
     // 2. Todas as movimentacoes, em ordem cronologica.
     const manualMovs = await fetchAllRows((de, ate) => supabase
       .from("movimentacoes")
-      .select("id, categoria_id, codigo_custodia, fundo_id, moeda")
+      .select("id, categoria_id, codigo_custodia, fundo_id, moeda, acao_id")
       .eq("user_id", userId)
       .order("data", { ascending: true })
       .order("created_at", { ascending: true })
@@ -1400,7 +1413,7 @@ export async function recalculateAllForDataReferencia(userId: string, dataRefere
     // 3. Um passe por codigo_custodia, cada um no motor da sua categoria.
     const processedCodigos = new Set<string>();
     const categoriaIds = new Set<string>();
-    const aReconstruir: { code: string; categoriaId: string; fundo: boolean; moeda: boolean }[] = [];
+    const aReconstruir: { code: string; categoriaId: string; fundo: boolean; moeda: boolean; acao: boolean }[] = [];
 
     for (const mov of manualMovs as any[]) {
       categoriaIds.add(mov.categoria_id);
@@ -1412,6 +1425,7 @@ export async function recalculateAllForDataReferencia(userId: string, dataRefere
         categoriaId: mov.categoria_id,
         fundo: !!mov.fundo_id,
         moeda: !!mov.moeda,
+        acao: !!mov.acao_id,
       });
     }
 
@@ -1427,6 +1441,8 @@ export async function recalculateAllForDataReferencia(userId: string, dataRefere
             await syncCustodiaFundo(item.code, userId, dataReferencia);
           } else if (item.moeda) {
             await syncCustodiaMoeda(item.code, userId, dataReferencia);
+          } else if (item.acao) {
+            await syncCustodiaAcao(item.code, userId, dataReferencia);
           } else {
             await reprocessMovimentacoesForCodigo(item.code, userId, item.categoriaId, dataReferencia);
           }
@@ -1689,6 +1705,133 @@ export async function syncCustodiaMoeda(
     data_calculo: dataCalculo,
     resgate_total: dataZerou,
     alocacao_patrimonial: "Câmbio",
+  };
+
+  if (custodiaExistente) {
+    await supabase.from("custodia").update(dados).eq("id", custodiaExistente.id);
+  } else {
+    await supabase.from("custodia").insert(dados);
+  }
+}
+
+
+/**
+ * Custodia de uma posicao em acoes.
+ *
+ * Espelha `syncCustodiaMoeda`: percorre as movimentacoes acumulando quantidade e custo medio,
+ * e grava o retrato. O que muda e a fonte do preco (`cotacoes_acoes`) e o DESDOBRAMENTO: a
+ * quantidade guardada aqui e a de HOJE, entao uma compra anterior a um split 2:1 entra
+ * valendo o dobro de acoes - do contrario a custodia mostraria metade do que o investidor tem.
+ */
+export async function syncCustodiaAcao(
+  codigoCustodia: string | number,
+  userId: string,
+  dataReferencia?: string
+) {
+  const refDate = dataReferencia || new Date().toISOString().slice(0, 10);
+  const codigo = String(codigoCustodia);
+
+  const { data: movs } = await supabase
+    .from("movimentacoes")
+    .select("*")
+    .eq("codigo_custodia", codigo)
+    .eq("user_id", userId)
+    .order("data", { ascending: true })
+    .order("created_at", { ascending: true });
+
+  const { data: custodiaExistente } = await supabase
+    .from("custodia")
+    .select("id")
+    .eq("codigo_custodia", codigo)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (!movs || movs.length === 0) {
+    if (custodiaExistente) await supabase.from("custodia").delete().eq("id", custodiaExistente.id);
+    return;
+  }
+
+  const primeira = movs[0] as any;
+  const acaoId = (movs.find((m: any) => m.acao_id) as any)?.acao_id;
+  if (!acaoId) return;
+
+  const { data: papel } = await supabase
+    .from("cadastro_de_acoes")
+    .select("ticker")
+    .eq("id", acaoId)
+    .maybeSingle();
+  const ticker = (papel as any)?.ticker;
+  if (!ticker) return;
+
+  const [{ data: precos }, { data: eventos }] = await Promise.all([
+    supabase.from("cotacoes_acoes").select("data, fechamento").eq("ticker", ticker).order("data"),
+    supabase.from("eventos_corporativos_acoes").select("fator, data_ex").eq("ticker", ticker),
+  ]);
+
+  const precoEm = (dataISO: string): number | null => {
+    let achado: number | null = null;
+    for (const c of (precos || []) as any[]) {
+      if (c.data > dataISO) break;
+      achado = Number(c.fechamento);
+    }
+    return achado;
+  };
+
+  /** Fator que leva uma quantidade da data `d` para unidades de hoje. */
+  const fatorDesde = (d: string) =>
+    ((eventos || []) as any[]).reduce(
+      (f, e) => (e.data_ex && e.data_ex > d ? f * Number(e.fator) : f), 1);
+
+  const COMPRAS = ["Compra", "Aplicação", "Aplicação Inicial"];
+
+  let saldo = 0;
+  let custo = 0;
+  let dataZerou: string | null = null;
+
+  for (const m of movs as any[]) {
+    const preco = precoEm(m.data);
+    let qtd = m.quantidade != null ? Number(m.quantidade) : null;
+    if (qtd == null && preco) {
+      qtd = Number(m.valor) / preco;
+      await supabase.from("movimentacoes")
+        .update({ quantidade: qtd, preco_unitario: preco })
+        .eq("id", m.id);
+    }
+    if (qtd == null) continue;
+
+    const qtdHoje = qtd * fatorDesde(m.data);
+
+    if (COMPRAS.includes(m.tipo_movimentacao)) {
+      saldo += qtdHoje;
+      custo += Number(m.valor);
+      dataZerou = null;
+    } else {
+      const custoMedio = saldo > 0 ? custo / saldo : 0;
+      saldo -= qtdHoje;
+      custo -= custoMedio * qtdHoje;
+      if (saldo <= 1e-8) { saldo = 0; custo = 0; dataZerou = m.data; }
+    }
+  }
+
+  const dataCalculo = dataZerou && dataZerou < refDate ? dataZerou : refDate;
+  const dados = {
+    user_id: userId,
+    codigo_custodia: codigo,
+    categoria_id: primeira.categoria_id,
+    produto_id: primeira.produto_id,
+    acao_id: acaoId,
+    instituicao_id: primeira.instituicao_id,
+    nome: primeira.nome_ativo,
+    tipo_movimentacao: "Compra",
+    valor_investido: Math.round(custo * 100) / 100,
+    quantidade: saldo,
+    preco_unitario: precoEm(dataCalculo),
+    data_inicio: primeira.data,
+    data_calculo: dataCalculo,
+    resgate_total: dataZerou,
+    modalidade: "Ações",
+    alocacao_patrimonial: "Renda Variável",
+    multiplicador: "Renda Variável",
   };
 
   if (custodiaExistente) {

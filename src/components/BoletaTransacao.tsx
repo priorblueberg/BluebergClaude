@@ -22,6 +22,7 @@ import EntidadeSelect from "@/components/EntidadeSelect";
 import FundoSelect from "@/components/FundoSelect";
 import TituloSelect from "@/components/TituloSelect";
 import { MOEDAS } from "@/lib/catalogoDeMoedas";
+import AcaoSelect from "@/components/AcaoSelect";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
@@ -90,7 +91,7 @@ const INDEXADOR_OPTIONS = ["CDI", "CDI+", "IPCA+"];
 // Categorias com fluxo de cadastro já implementado na boleta. As demais ficam
 // visíveis no dropdown mas caem num placeholder até ganharem seu próprio fluxo.
 // (Poupança é um produto dentro de Renda Fixa, não uma categoria à parte.)
-const CATEGORIAS_IMPLEMENTADAS = ["Renda Fixa", "Fundos de Investimentos", "Moedas"];
+const CATEGORIAS_IMPLEMENTADAS = ["Renda Fixa", "Fundos de Investimentos", "Moedas", "Renda Variável"];
 
 // Moeda: compra e venda de saldo em moeda estrangeira, sem juros.
 const TIPOS_MOVIMENTACAO_MOEDA = ["Compra", "Venda"];
@@ -232,6 +233,11 @@ export default function BoletaTransacao({
   } | null>(null);
   // Moedas
   const [moedaSel, setMoedaSel] = useState("");
+  // Acoes
+  const [acaoId, setAcaoId] = useState("");
+  const [acaoTicker, setAcaoTicker] = useState("");
+  const [acaoNome, setAcaoNome] = useState("");
+  const [custosOp, setCustosOp] = useState("");
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
 
   // Derived
@@ -240,6 +246,7 @@ export default function BoletaTransacao({
   const isRendaFixa = categoriaSelecionada?.nome === "Renda Fixa";
   const isFundo = categoriaSelecionada?.nome === "Fundos de Investimentos";
   const isMoeda = categoriaSelecionada?.nome === "Moedas";
+  const isAcao = categoriaSelecionada?.nome === "Renda Variável";
   const isPoupanca = produtoSelecionado?.nome === "Poupança";
   // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
   // Alem disso, LC, RDB, RDC e DPGE nao pagam cupom nem para admin: a boleta do Gorila nem
@@ -307,7 +314,7 @@ export default function BoletaTransacao({
         if (data) {
           // TEMPORARIO: usuario comum opera Renda Fixa e Fundos; as demais
           // categorias seguem fechadas ate ganharem motor. Admin ve tudo.
-          const LIBERADAS = ["Renda Fixa", "Fundos de Investimentos", "Moedas"];
+          const LIBERADAS = ["Renda Fixa", "Fundos de Investimentos", "Moedas", "Renda Variável"];
           const visiveis = isAdmin ? data : data.filter((c) => LIBERADAS.includes(c.nome));
           setCategorias(visiveis);
           if (visiveis.length === 1 && !editId) {
@@ -922,6 +929,132 @@ export default function BoletaTransacao({
       } catch (err) {
         console.error(err);
         toast.error("Erro ao atualizar a movimentação.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    // ── Ações ──
+    if (isAcao) {
+      const faltando = new Set<string>();
+      if (!acaoId) faltando.add("acaoId");
+      if (!data) faltando.add("data");
+      if (!valor || parseCurrencyToNumber(valor) <= 0) faltando.add("valor");
+      if (!instituicaoId) faltando.add("instituicaoId");
+      if (faltando.size > 0) {
+        setValidationErrors(faltando);
+        toast.error("Preencha todos os campos obrigatórios.");
+        return;
+      }
+      setValidationErrors(new Set());
+
+      const foraJanela = foraDaJanela(data, maxDataISO);
+      if (foraJanela) { toast.error(foraJanela); return; }
+      if (!(await ehDiaUtil(data))) {
+        toast.error("A data da operação deve ser um dia útil.");
+        return;
+      }
+
+      const valorNum = parseCurrencyToNumber(valor);
+      const custosNum = custosOp ? parseCurrencyToNumber(custosOp) : 0;
+      const qtdInformada = parseQuantidade(qtdCotas);
+
+      // Sem quantidade informada ela sai do fechamento do dia. Se o pregão daquela data não
+      // está na base, gravar agora produziria quantidade errada em silêncio - e em ação a
+      // quantidade é inteira, então o erro não some no arredondamento.
+      const { data: precoRow } = await supabase
+        .from("cotacoes_acoes")
+        .select("fechamento")
+        .eq("ticker", acaoTicker)
+        .eq("data", data)
+        .maybeSingle();
+      const precoDoDia = precoRow ? Number((precoRow as any).fechamento) : null;
+
+      if (qtdInformada == null && precoDoDia == null) {
+        toast.error(`Não há pregão de ${acaoTicker} em ${fmtData(data)} na base. Informe a quantidade de ações.`);
+        return;
+      }
+
+      const qtdOperacao = qtdInformada ?? (precoDoDia ? valorNum / precoDoDia : null);
+      // O preço é o EFETIVO da operação, não o fechamento: quem informa a quantidade está
+      // registrando o preço em que executou, e gravar o fechamento faria o extrato contar
+      // outra história.
+      const precoEfetivo = qtdOperacao ? valorNum / qtdOperacao : precoDoDia;
+
+      setSubmitting(true);
+      try {
+        // Mesmo papel na mesma instituição é a mesma posição.
+        const { data: existentes } = await supabase
+          .from("movimentacoes")
+          .select("codigo_custodia")
+          .eq("user_id", user.id)
+          .eq("acao_id", acaoId)
+          .eq("instituicao_id", instituicaoId)
+          .not("codigo_custodia", "is", null)
+          .limit(1);
+
+        const codigoCustodia = existentes && existentes.length > 0
+          ? String(existentes[0].codigo_custodia)
+          : await proximoCodigoCustodia(user.id);
+
+        // Venda não pode passar do saldo: o motor aceita posição negativa e ela seguiria
+        // "rendendo", então o erro só apareceria semanas depois na carteira.
+        if (tipoMovimentacao === "Venda" && qtdOperacao != null) {
+          const saldo = await saldoEmQuantidade(codigoCustodia, user.id, data, editId);
+          if (qtdOperacao > saldo + 1e-8) {
+            setSubmitting(false);
+            toast.error(
+              `Venda de ${qtdOperacao.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} ações maior que o saldo de ${saldo.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} em ${fmtData(data)}.`,
+            );
+            return;
+          }
+        }
+
+        if (isEditing) {
+          const { error: errUp } = await supabase.from("movimentacoes").update({
+            instituicao_id: instituicaoId,
+            data,
+            valor: valorNum,
+            quantidade: qtdOperacao,
+            preco_unitario: precoEfetivo,
+          }).eq("id", editId);
+          if (errUp) throw errUp;
+          await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
+          applyDataReferencia();
+          toast.success("Operação atualizada com sucesso!");
+          onFechar?.();
+          return;
+        }
+
+        const { data: inserida, error } = await supabase.from("movimentacoes").insert({
+          categoria_id: categoriaId,
+          produto_id: produtoId || produtos[0]?.id || null,
+          instituicao_id: instituicaoId,
+          acao_id: acaoId,
+          codigo_custodia: codigoCustodia,
+          nome_ativo: acaoTicker,
+          data,
+          tipo_movimentacao: tipoMovimentacao,
+          valor: valorNum,
+          quantidade: qtdOperacao,
+          preco_unitario: precoEfetivo,
+          custos_operacao: custosNum || null,
+          user_id: user.id,
+          origem: "manual",
+        }).select("id").single();
+
+        if (error) throw error;
+
+        await fullSyncAfterMovimentacao(inserida.id, categoriaId, user.id, dataReferenciaISO);
+        applyDataReferencia();
+        toast.success("Operação cadastrada com sucesso!");
+        resetForm();
+        setAcaoId(""); setAcaoTicker(""); setAcaoNome("");
+        setQtdCotas(""); setCustosOp("");
+      } catch (err: any) {
+        toast.error("Erro ao cadastrar operação de ações.");
+        console.error(err);
       } finally {
         setSubmitting(false);
       }
@@ -1615,9 +1748,82 @@ export default function BoletaTransacao({
             <AlertDescription>
               O fluxo de cadastro para <strong>{categoriaSelecionada?.nome}</strong> ainda não está
               disponível. Por enquanto a boleta cadastra <strong>Renda Fixa</strong>,{" "}
-              <strong>Fundos de Investimentos</strong> e <strong>Moedas</strong>.
+              <strong>Fundos de Investimentos</strong>, <strong>Moedas</strong> e{" "}
+              <strong>Renda Variável</strong>.
             </AlertDescription>
           </Alert>
+        )}
+
+        {/* ── Ações ── */}
+        {isAcao && (
+          <>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Data da Transação" required>
+                <Input type="date" value={data} min={limitesData.min} max={limitesData.max} onChange={(e) => setData(e.target.value)} />
+              </Field>
+              <Field label="Ação" required>
+                <AcaoSelect
+                  value={acaoId}
+                  disabled={isEditing}
+                  onChange={(id, ticker, nome) => { setAcaoId(id); setAcaoTicker(ticker); setAcaoNome(nome); }}
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label={tipoMovimentacao === "Compra" ? "Valor Pago (R$)" : "Valor Recebido (R$)"} required>
+                <Input
+                  value={valor}
+                  onChange={(e) => setValor(formatCurrency(e.target.value))}
+                  placeholder="0,00"
+                  inputMode="numeric"
+                />
+              </Field>
+              <Field label="Quantidade de Ações">
+                <Input
+                  value={qtdCotas}
+                  onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
+                  placeholder="Em branco, usa o fechamento do dia"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Custos da Operação (R$)">
+                <Input
+                  value={custosOp}
+                  onChange={(e) => setCustosOp(formatCurrency(e.target.value))}
+                  placeholder="Corretagem e emolumentos"
+                  inputMode="numeric"
+                />
+              </Field>
+              <Field label="Instituição (custodiante)" required>
+                <EntidadeSelect
+                  tipo="instituicao"
+                  value={instituicaoId}
+                  onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); }}
+                  tituloCadastro="Cadastrar Nova Instituição"
+                  labelCadastro="Nome da Instituição"
+                  placeholder="Busque a corretora"
+                />
+              </Field>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              A quantidade em branco é derivada pelo fechamento do dia. Informe a quantidade
+              quando quiser registrar o preço em que executou de fato. Dividendos e JCP entram
+              sozinhos, pela data-ex - não precisam ser lançados.
+            </p>
+
+            <div className="flex gap-3">
+              <Button onClick={handleSubmit} disabled={submitting}>
+                {submitting ? "Salvando..." : isEditing ? "Salvar alterações" : "Cadastrar"}
+              </Button>
+              <Button variant="outline" onClick={() => onFechar?.()} disabled={submitting}>
+                Cancelar
+              </Button>
+            </div>
+          </>
         )}
 
         {/* ── Moedas ── */}

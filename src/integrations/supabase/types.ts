@@ -363,6 +363,135 @@ export type Database = {
           }
         ]
       }
+      cadastro_de_acoes: {
+        Row: {
+          id: string
+          ticker: string
+          nome: string
+          isin: string | null
+          moeda: string
+          bolsa: string | null
+          ativo: boolean
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          ticker: string
+          nome: string
+          isin?: string | null
+          moeda?: string
+          bolsa?: string | null
+          ativo?: boolean
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          ticker?: string
+          nome?: string
+          isin?: string | null
+          moeda?: string
+          bolsa?: string | null
+          ativo?: boolean
+          created_at?: string
+        }
+        Relationships: []
+      }
+      cotacoes_acoes: {
+        Row: {
+          ticker: string
+          data: string
+          fechamento: number
+          abertura: number | null
+          maxima: number | null
+          minima: number | null
+          volume: number | null
+          provisorio: boolean
+        }
+        Insert: {
+          ticker: string
+          data: string
+          fechamento: number
+          abertura?: number | null
+          maxima?: number | null
+          minima?: number | null
+          volume?: number | null
+          provisorio?: boolean
+        }
+        Update: {
+          ticker?: string
+          data?: string
+          fechamento?: number
+          abertura?: number | null
+          maxima?: number | null
+          minima?: number | null
+          volume?: number | null
+          provisorio?: boolean
+        }
+        Relationships: []
+      }
+      proventos_acoes: {
+        Row: {
+          id: string
+          ticker: string
+          tipo: string
+          valor: number
+          data_ex: string | null
+          data_pagamento: string | null
+          fonte: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          ticker: string
+          tipo: string
+          valor: number
+          data_ex?: string | null
+          data_pagamento?: string | null
+          fonte?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          ticker?: string
+          tipo?: string
+          valor?: number
+          data_ex?: string | null
+          data_pagamento?: string | null
+          fonte?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
+      eventos_corporativos_acoes: {
+        Row: {
+          id: string
+          ticker: string
+          tipo: string
+          fator: number
+          data_ex: string | null
+          fonte: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          ticker: string
+          tipo: string
+          fator: number
+          data_ex?: string | null
+          fonte?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          ticker?: string
+          tipo?: string
+          fator?: number
+          data_ex?: string | null
+          fonte?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
       cotas_fundos: {
         Row: {
           fundo_id: string
@@ -429,6 +558,7 @@ export type Database = {
           fundo_id: string | null
           moeda: string | null
           titulo_id: string | null
+          acao_id: string | null
         }
         Insert: {
           id?: string
@@ -466,6 +596,7 @@ export type Database = {
           fundo_id?: string | null
           moeda?: string | null
           titulo_id?: string | null
+          acao_id?: string | null
         }
         Update: {
           id?: string
@@ -503,6 +634,7 @@ export type Database = {
           fundo_id?: string | null
           moeda?: string | null
           titulo_id?: string | null
+          acao_id?: string | null
         }
         Relationships: [
           {
@@ -866,6 +998,8 @@ export type Database = {
           emissor_id: string | null
           instituicao_id: string | null
           poupanca_lote_id: string | null
+          acao_id: string | null
+          custos_operacao: number | null
           codigo_custodia: string | null
           nome_ativo: string | null
           data: string
@@ -891,6 +1025,8 @@ export type Database = {
           emissor_id?: string | null
           instituicao_id?: string | null
           poupanca_lote_id?: string | null
+          acao_id?: string | null
+          custos_operacao?: number | null
           codigo_custodia?: string | null
           nome_ativo?: string | null
           data: string
@@ -916,6 +1052,8 @@ export type Database = {
           emissor_id?: string | null
           instituicao_id?: string | null
           poupanca_lote_id?: string | null
+          acao_id?: string | null
+          custos_operacao?: number | null
           codigo_custodia?: string | null
           nome_ativo?: string | null
           data?: string

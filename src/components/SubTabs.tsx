@@ -6,7 +6,8 @@ const tabs = [
   { label: "Renda Fixa", url: "/carteira/renda-fixa" },
   { label: "Fundos de Investimentos", url: "/carteira/fundos" },
   { label: "Moedas", url: "/carteira/moedas" },
-  // MVP2: Renda Variável, Tesouro Direto
+  { label: "Renda Variável", url: "/carteira/renda-variavel" },
+  // MVP2: Tesouro Direto
 ];
 
 export function SubTabs() {

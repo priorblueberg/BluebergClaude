@@ -436,7 +436,7 @@ export const CarteiraVisaoGeral = () => {
 };
 
 export { default as CarteiraRendaFixa } from "./CarteiraRendaFixaPage";
-export const CarteiraRendaVariavel = () => <PageStub title="Renda Variável" />;
+export { default as CarteiraRendaVariavel } from "./CarteiraAcoesPage";
 export { default as CarteiraFundos } from "./CarteiraFundosPage";
 export { default as CarteiraMoedas } from "./CarteiraMoedasPage";
 export const CarteiraTesouroDireto = () => <PageStub title="Tesouro Direto" />;
