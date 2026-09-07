@@ -12,9 +12,22 @@
 //   Yahoo Finance  -> preco diario (a mesma fonte que daily-market-sync ja usa no Ibovespa)
 //   BRAPI          -> proventos e eventos corporativos
 //
-// A BRAPI e quem serve para provento porque ela separa DIVIDENDO de JCP - e essa distincao
-// decide o liquido, ja que JCP tem 15% de IR retido na fonte e dividendo nao. O Yahoo entrega
-// so o total do dia, sem tipo.
+// A BRAPI e quem serve para provento porque separa DIVIDENDO de JCP e traz a data de
+// pagamento. O Yahoo entrega so o total do dia, sem tipo.
+//
+// MAS a BRAPI sem token responde 401 para a maioria dos tickers - medido em 07/09/2026:
+// PETR4, VALE3 e ITUB4 passavam; ITSA4, BBAS3, WEGE3, TAEE11 e BBDC4 nao. Por isso duas
+// coisas aqui:
+//
+//   1. `BRAPI_TOKEN` (secret da funcao, nunca no codigo). Com ele a BRAPI cobre tudo.
+//   2. Se a BRAPI falhar - sem token, plano vencido, API fora - o provento vem do YAHOO,
+//      que cobre qualquer ticker. Perde-se o tipo e a data de pagamento, nao o valor.
+//      O calculo do P&L nao usa o tipo (o JCP entra bruto, como no Gorila), entao a carteira
+//      continua correta com o fallback.
+//
+// Uma diferenca de convencao entre as duas, que o fallback precisa desfazer: o Yahoo AJUSTA o
+// provento historico pelos splits posteriores e a BRAPI da o nominal da epoca. A tabela guarda
+// sempre o NOMINAL, entao o valor do Yahoo e multiplicado de volta pelo fator antes de gravar.
 //
 // Medido em 07/09/2026 com PETR4: somando os proventos da BRAPI por data-ex, as duas fontes
 // batem na sexta casa em 6 de 7 datas. A setima (23/12/2025) diverge em R$ 0,0089 por acao.
@@ -31,8 +44,10 @@ const CORS = {
 const SUFIXO_B3 = ".SA";
 const UA = { "User-Agent": "Mozilla/5.0" };
 
-/** A BRAPI sem token permite 20 requisicoes por minuto; o sync diario fica muito abaixo. */
+/** Sem token sao 20 requisicoes por minuto e poucos tickers; com token, tudo. */
 const BRAPI = "https://brapi.dev/api/quote";
+/** Secret da funcao. Vai no header, nunca na URL - query string vaza em log de proxy. */
+const BRAPI_TOKEN = Deno.env.get("BRAPI_TOKEN") ?? "";
 
 type Cotacao = {
   ticker: string; data: string; fechamento: number;
@@ -84,8 +99,23 @@ async function yahoo(ticker: string, desde: string | null) {
   const porDataEx = new Map<string, number>();
   for (const [k, v] of Object.entries(divs)) porDataEx.set(dataLocal(Number(k), off), v.amount);
 
+  // Os splits vinham na resposta e eram jogados fora. Sem eles o fallback grava provento com
+  // fator 1 e o motor nao aplica desdobramento nenhum - numa ITSA4, que tem 8, a quantidade
+  // sai errada e o provento historico junto.
+  const sp: Record<string, { numerator: number; denominator: number }> = res.events?.splits ?? {};
+  const splitsYahoo = Object.entries(sp).map(([k, v]) => ({
+    ticker,
+    // O Yahoo nao diz se foi desdobramento, grupamento ou bonificacao - so a razao. Fator > 1
+    // aumenta a quantidade, < 1 reduz; e o que o motor precisa saber.
+    tipo: Number(v.numerator) >= Number(v.denominator) ? "DESDOBRAMENTO" : "GRUPAMENTO",
+    fator: Number(v.numerator) / Number(v.denominator),
+    data_ex: dataLocal(Number(k), off),
+    fonte: "yahoo",
+  })).filter((e) => Number.isFinite(e.fator) && e.fator > 0);
+
   return {
     cotacoes,
+    splitsYahoo,
     nome: meta.longName || meta.shortName || ticker,
     moeda: meta.currency ?? "BRL",
     bolsa: meta.exchangeName ?? null,
@@ -109,7 +139,9 @@ const TIPO_EVENTO: Record<string, string> = {
 const soData = (s: string | null | undefined) => (s ? String(s).slice(0, 10) : null);
 
 async function brapi(ticker: string) {
-  const r = await fetch(`${BRAPI}/${ticker}?dividends=true`, { headers: UA });
+  const headers: Record<string, string> = { ...UA };
+  if (BRAPI_TOKEN) headers.Authorization = `Bearer ${BRAPI_TOKEN}`;
+  const r = await fetch(`${BRAPI}/${ticker}?dividends=true`, { headers });
   if (!r.ok) throw new Error(`BRAPI HTTP ${r.status} para ${ticker}`);
   const j = await r.json();
   const dd = j?.results?.[0]?.dividendsData ?? {};
@@ -135,6 +167,33 @@ async function brapi(ticker: string) {
   })).filter((e: { tipo: string | null; fator: number }) => e.tipo && Number.isFinite(e.fator) && e.fator > 0);
 
   return { proventos, eventos };
+}
+
+/**
+ * Proventos a partir do Yahoo, para quando a BRAPI nao responde.
+ *
+ * O Yahoo da o total do dia ja AJUSTADO pelos splits posteriores; a tabela guarda o nominal da
+ * epoca. Entao multiplicamos de volta pelo fator - sem isso, um provento anterior a um
+ * desdobramento 2:1 entraria pela metade e o motor, que ja converte nominal para unidades de
+ * hoje, o dividiria de novo.
+ *
+ * Sem tipo (fica OUTRO) e sem data de pagamento. Nenhum dos dois entra no calculo do P&L.
+ */
+function proventosDoYahoo(
+  ticker: string,
+  yahooPorData: Map<string, number>,
+  eventos: { fator: number; data_ex: string | null }[],
+) {
+  const fatorDepoisDe = (data: string) =>
+    eventos.reduce((f, e) => (e.data_ex && e.data_ex > data ? f * e.fator : f), 1);
+  return [...yahooPorData.entries()].map(([data_ex, valorAjustado]) => ({
+    ticker,
+    tipo: "OUTRO",
+    valor: valorAjustado * fatorDepoisDe(data_ex),
+    data_ex,
+    data_pagamento: null,
+    fonte: "yahoo",
+  })).filter((p) => Number.isFinite(p.valor) && p.valor > 0);
 }
 
 /**
@@ -248,7 +307,28 @@ Deno.serve(async (req) => {
           )).error);
         }
 
-        const b = await brapi(alvo.ticker);
+        // A BRAPI e a fonte preferida (tipo + data de pagamento). Se ela falhar, o provento
+        // vem do Yahoo: melhor uma carteira certa sem o rotulo do que uma carteira sem
+        // provento nenhum.
+        let b: { proventos: Record<string, unknown>[]; eventos: Record<string, unknown>[] };
+        let fonteProvento = "brapi";
+        try {
+          b = await brapi(alvo.ticker) as typeof b;
+        } catch (eBrapi) {
+          fonteProvento = `yahoo (brapi falhou: ${eBrapi instanceof Error ? eBrapi.message : eBrapi})`;
+          // Os splits saem do PROPRIO Yahoo. Ler do banco nao serviria: numa primeira carga
+          // ele esta vazio, e ai o provento ajustado entraria como se fosse nominal.
+          const { data: evtSalvos } = await db.from("eventos_corporativos_acoes")
+            .select("fator, data_ex").eq("ticker", alvo.ticker);
+          const eventosParaConverter = y.splitsYahoo.length
+            ? y.splitsYahoo
+            : ((evtSalvos ?? []) as { fator: number; data_ex: string | null }[]);
+          b = {
+            proventos: proventosDoYahoo(alvo.ticker, y.dividendosYahoo, eventosParaConverter),
+            eventos: y.splitsYahoo,
+          };
+        }
+
         if (b.proventos.length) {
           exigir("proventos_acoes", (await db.from("proventos_acoes").upsert(b.proventos, {
             onConflict: "ticker,tipo,valor,data_ex,data_pagamento", ignoreDuplicates: true,
@@ -273,10 +353,13 @@ Deno.serve(async (req) => {
           cotacoes_no_banco: gravadas ?? null,
           primeira: y.cotacoes[0]?.data ?? null,
           ultima: y.cotacoes.at(-1)?.data ?? null,
+          fonte_do_provento: fonteProvento,
           proventos_lidos: b.proventos.length,
           proventos_no_banco: gravProv ?? null,
           eventos: b.eventos.length,
-          divergencias_brapi_x_yahoo: conferirComYahoo(b.proventos, y.dividendosYahoo, b.eventos),
+          divergencias_brapi_x_yahoo: fonteProvento === "brapi"
+            ? conferirComYahoo(b.proventos as never, y.dividendosYahoo, b.eventos as never)
+            : "n/a - provento veio do proprio Yahoo",
         });
       } catch (e) {
         relatorio.push({ ticker: alvo.ticker, erro: e instanceof Error ? e.message : String(e) });
