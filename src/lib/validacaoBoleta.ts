@@ -37,15 +37,20 @@ export async function ehDiaUtil(dataISO: string): Promise<boolean> {
  * comecava em 29/12/2023, o ultimo dia util de 2023, e nao em 02/01/2024.
  *
  * Em 07/09/2026 as series recuaram para aceitar titulos de 2023 (uma debenture comprada em
- * 06/2023 puxou o piso da carteira), entao esta data acompanhou: 30/12/2022, ultimo dia util
- * de 2022.
+ * 06/2023 puxou o piso da carteira), entao esta data acompanhou: 29/12/2022.
+ *
+ * O DIA E O DO MERCADO, NAO O DO BANCO. A B3 encerra o ano um dia util antes do calendario
+ * bancario: em 2022 o ultimo pregao foi 29/12 e o BCB ainda publicou CDI em 30/12; em 2023,
+ * ultimo pregao em 28/12 e CDI ate 29/12. Quem lanca saldo de abertura copia do extrato da
+ * corretora, que fecha no ultimo pregao - e usar a data do mercado nao tira nada de ninguem,
+ * porque ela e ANTERIOR a bancaria: quem preferir 30/12/2022 continua podendo.
  *
  * Ao mexer aqui, confira antes que as series cubram a data NOVA e o que vem antes dela: o
  * `pisoDoCalendario` recua 45 dias para fechar o ciclo de IPCA, e serie faltando nao da erro,
  * so faz o motor calcular com o que tem. Hoje CDI, Selic, TR, dolar e euro comecam em
  * 01/11/2022, e o calendario em 01/01/2022.
  */
-export const DATA_MINIMA_CARTEIRA = "2022-12-30";
+export const DATA_MINIMA_CARTEIRA = "2022-12-29";
 
 /**
  * Mensagem se a data da operacao estiver fora da janela permitida, ou null se estiver dentro.
