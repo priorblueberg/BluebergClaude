@@ -9,21 +9,32 @@
 //
 // Duas fontes, de proposito:
 //
-//   Yahoo Finance  -> preco diario (a mesma fonte que daily-market-sync ja usa no Ibovespa)
-//   BRAPI          -> proventos e eventos corporativos
+//   Yahoo Finance  -> preco diario, EVENTOS CORPORATIVOS, e o fallback de provento
+//   BRAPI          -> proventos, com tipo (DIVIDENDO/JCP) e data de pagamento
 //
-// A BRAPI e quem serve para provento porque separa DIVIDENDO de JCP e traz a data de
-// pagamento. O Yahoo entrega so o total do dia, sem tipo.
+// A BRAPI e a preferida para PROVENTO porque separa DIVIDENDO de JCP e traz a data de
+// pagamento; o Yahoo entrega so o total do dia, sem tipo.
 //
-// MAS a BRAPI sem token responde 401 para a maioria dos tickers - medido em 07/09/2026:
-// PETR4, VALE3 e ITUB4 passavam; ITSA4, BBAS3, WEGE3, TAEE11 e BBDC4 nao. Por isso duas
-// coisas aqui:
+// Ja para EVENTO CORPORATIVO a fonte e o YAHOO, por dois motivos medidos em ITSA4 (07/09/2026):
 //
-//   1. `BRAPI_TOKEN` (secret da funcao, nunca no codigo). Com ele a BRAPI cobre tudo.
-//   2. Se a BRAPI falhar - sem token, plano vencido, API fora - o provento vem do YAHOO,
-//      que cobre qualquer ticker. Perde-se o tipo e a data de pagamento, nao o valor.
-//      O calculo do P&L nao usa o tipo (o JCP entra bruto, como no Gorila), entao a carteira
-//      continua correta com o fallback.
+//   - Cobertura: o Yahoo lista 12 bonificacoes desde 2009; a BRAPI, 3 desde 2023. Sem as 9
+//     antigas, quem comprou antes de 2023 fica com a quantidade errada.
+//   - Data: os `stockDividends` da BRAPI vem com `exDate` nulo, entao caimos no
+//     `lastDatePrior` - que e a ultima data COM direito, o dia ANTERIOR a data-ex. A mesma
+//     bonificacao aparece como 18/12/2025 na BRAPI e 19/12/2025 no Yahoo. Um dia de desvio
+//     erra a quantidade de quem operou exatamente nesse intervalo.
+//
+// Cada fonte no que faz melhor, em vez de uma so para tudo.
+//
+// Sem token a BRAPI so atende o sandbox - PETR4, MGLU3, VALE3 e ITUB4 - e responde 401 no
+// resto (medido em 07/09/2026, e confirmado na documentacao dela). Por isso:
+//
+//   1. `BRAPI_TOKEN` (secret da funcao, nunca no codigo). Vai no header Authorization, que e
+//      o que a propria BRAPI recomenda: na query string o token vaza para o historico do
+//      navegador e para o log do servidor.
+//   2. Se a BRAPI falhar - sem token, plano vencido, API fora - o provento vem do YAHOO.
+//      Perde-se o tipo e a data de pagamento, nao o valor. O calculo do P&L nao usa o tipo
+//      (o JCP entra bruto, como no Gorila), entao a carteira continua correta.
 //
 // Uma diferenca de convencao entre as duas, que o fallback precisa desfazer: o Yahoo AJUSTA o
 // provento historico pelos splits posteriores e a BRAPI da o nominal da epoca. A tabela guarda
@@ -46,6 +57,8 @@ const UA = { "User-Agent": "Mozilla/5.0" };
 
 /** Sem token sao 20 requisicoes por minuto e poucos tickers; com token, tudo. */
 const BRAPI = "https://brapi.dev/api/quote";
+/** Endpoint dedicado a proventos e eventos corporativos. */
+const BRAPI_V2 = "https://brapi.dev/api/v2/stocks/dividends";
 /** Secret da funcao. Vai no header, nunca na URL - query string vaza em log de proxy. */
 const BRAPI_TOKEN = Deno.env.get("BRAPI_TOKEN") ?? "";
 
@@ -141,10 +154,25 @@ const soData = (s: string | null | undefined) => (s ? String(s).slice(0, 10) : n
 async function brapi(ticker: string) {
   const headers: Record<string, string> = { ...UA };
   if (BRAPI_TOKEN) headers.Authorization = `Bearer ${BRAPI_TOKEN}`;
-  const r = await fetch(`${BRAPI}/${ticker}?dividends=true`, { headers });
-  if (!r.ok) throw new Error(`BRAPI HTTP ${r.status} para ${ticker}`);
-  const j = await r.json();
-  const dd = j?.results?.[0]?.dividendsData ?? {};
+
+  // Endpoint v2, dedicado a proventos. O v1 (`/api/quote?dividends=true`) devolvia so 3
+  // eventos corporativos de ITSA4; segundo a documentacao, o historico completo vem por aqui
+  // no plano Pro (o Startup cobre 12 meses). Se o v2 falhar, cai no v1 - a estrutura muda de
+  // `results[].data` para `results[].dividendsData`, entao lemos as duas.
+  let dd: Record<string, unknown[]> = {};
+  let via = "v2";
+  const r2 = await fetch(`${BRAPI_V2}?symbols=${ticker}`, { headers });
+  if (r2.ok) {
+    const j2 = await r2.json();
+    dd = (j2?.results?.[0]?.data ?? j2?.results?.[0]?.dividendsData ?? {}) as typeof dd;
+  }
+  if (!dd || !((dd.cashDividends?.length ?? 0) + (dd.stockDividends?.length ?? 0))) {
+    via = "v1";
+    const r = await fetch(`${BRAPI}/${ticker}?dividends=true`, { headers });
+    if (!r.ok) throw new Error(`BRAPI HTTP ${r.status} para ${ticker} (v2 HTTP ${r2.status})`);
+    const j = await r.json();
+    dd = (j?.results?.[0]?.dividendsData ?? {}) as typeof dd;
+  }
 
   const proventos = (dd.cashDividends ?? []).map((x: Record<string, unknown>) => ({
     ticker,
@@ -166,7 +194,7 @@ async function brapi(ticker: string) {
     fonte: "brapi",
   })).filter((e: { tipo: string | null; fator: number }) => e.tipo && Number.isFinite(e.fator) && e.fator > 0);
 
-  return { proventos, eventos };
+  return { proventos, eventos, via };
 }
 
 /**
@@ -307,27 +335,44 @@ Deno.serve(async (req) => {
           )).error);
         }
 
-        // A BRAPI e a fonte preferida (tipo + data de pagamento). Se ela falhar, o provento
-        // vem do Yahoo: melhor uma carteira certa sem o rotulo do que uma carteira sem
-        // provento nenhum.
-        let b: { proventos: Record<string, unknown>[]; eventos: Record<string, unknown>[] };
+        // EVENTO CORPORATIVO vem sempre do Yahoo - ver o cabecalho: mais completo e com a
+        // data-ex correta. Nao depende de a BRAPI responder.
+        const eventos = y.splitsYahoo;
+
+        // PROVENTO: a BRAPI e a preferida (tipo + data de pagamento). Se ela falhar, vem do
+        // Yahoo - melhor uma carteira certa sem o rotulo do que uma carteira sem provento.
+        let proventos: Record<string, unknown>[];
         let fonteProvento = "brapi";
+        let diagnosticoBrapi = "";
         try {
-          b = await brapi(alvo.ticker) as typeof b;
+          const rb = await brapi(alvo.ticker);
+          proventos = rb.proventos;
+          // Medicao, nao uso: quantos eventos a BRAPI conhece por este endpoint, para decidir
+          // com dado se ela pode substituir o Yahoo como fonte de evento corporativo.
+          diagnosticoBrapi = `${rb.via}: ${rb.proventos.length} proventos, ${rb.eventos.length} eventos`;
         } catch (eBrapi) {
           fonteProvento = `yahoo (brapi falhou: ${eBrapi instanceof Error ? eBrapi.message : eBrapi})`;
-          // Os splits saem do PROPRIO Yahoo. Ler do banco nao serviria: numa primeira carga
-          // ele esta vazio, e ai o provento ajustado entraria como se fosse nominal.
-          const { data: evtSalvos } = await db.from("eventos_corporativos_acoes")
-            .select("fator, data_ex").eq("ticker", alvo.ticker);
-          const eventosParaConverter = y.splitsYahoo.length
-            ? y.splitsYahoo
-            : ((evtSalvos ?? []) as { fator: number; data_ex: string | null }[]);
-          b = {
-            proventos: proventosDoYahoo(alvo.ticker, y.dividendosYahoo, eventosParaConverter),
-            eventos: y.splitsYahoo,
-          };
+          proventos = proventosDoYahoo(alvo.ticker, y.dividendosYahoo, eventos);
         }
+        const b = { proventos, eventos };
+
+        // UMA fonte por ticker, sempre.
+        //
+        // O indice unico inclui o `tipo`, e o Yahoo grava OUTRO onde a BRAPI grava JCP: para o
+        // banco sao linhas diferentes, mas e o MESMO dinheiro. Deixar as duas conviverem faz o
+        // motor somar o provento duas vezes - medido em ITSA4, onde 2026-03-20 apareceu como
+        // `yahoo/OUTRO=0,116` e `brapi/JCP=0,116` lado a lado.
+        //
+        // Por isso, ao gravar de uma fonte, os registros da outra saem. Roda ANTES do insert
+        // para nao existir um instante com as duas no banco.
+        const fonteAtual = fonteProvento.startsWith("yahoo") ? "yahoo" : "brapi";
+        exigir("limpeza de proventos da outra fonte", (await db.from("proventos_acoes")
+          .delete().eq("ticker", alvo.ticker).neq("fonte", fonteAtual)).error);
+        // Evento e sempre do Yahoo: o que veio da BRAPI em cargas anteriores sai, senao a
+        // mesma bonificacao fica duas vezes (em datas com um dia de diferenca) e o motor
+        // multiplica a quantidade duas vezes.
+        exigir("limpeza de eventos da BRAPI", (await db.from("eventos_corporativos_acoes")
+          .delete().eq("ticker", alvo.ticker).neq("fonte", "yahoo")).error);
 
         if (b.proventos.length) {
           exigir("proventos_acoes", (await db.from("proventos_acoes").upsert(b.proventos, {
@@ -345,6 +390,8 @@ Deno.serve(async (req) => {
           .select("*", { count: "exact", head: true }).eq("ticker", alvo.ticker);
         const { count: gravProv } = await db.from("proventos_acoes")
           .select("*", { count: "exact", head: true }).eq("ticker", alvo.ticker);
+        const { count: gravEvt } = await db.from("eventos_corporativos_acoes")
+          .select("*", { count: "exact", head: true }).eq("ticker", alvo.ticker);
 
         relatorio.push({
           ticker: alvo.ticker,
@@ -354,9 +401,14 @@ Deno.serve(async (req) => {
           primeira: y.cotacoes[0]?.data ?? null,
           ultima: y.cotacoes.at(-1)?.data ?? null,
           fonte_do_provento: fonteProvento,
+          brapi_diagnostico: diagnosticoBrapi || "n/a",
           proventos_lidos: b.proventos.length,
           proventos_no_banco: gravProv ?? null,
-          eventos: b.eventos.length,
+          // Se estes dois divergirem, sobrou registro de outra fonte ou de outra carga - foi
+          // assim que a duplicacao de ITSA4 apareceu.
+          confere: b.proventos.length === (gravProv ?? -1) ? "ok" : "ATENCAO: lido != gravado",
+          eventos_lidos: b.eventos.length,
+          eventos_no_banco: gravEvt ?? null,
           divergencias_brapi_x_yahoo: fonteProvento === "brapi"
             ? conferirComYahoo(b.proventos as never, y.dividendosYahoo, b.eventos as never)
             : "n/a - provento veio do proprio Yahoo",
