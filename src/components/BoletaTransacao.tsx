@@ -95,6 +95,7 @@ const CATEGORIAS_IMPLEMENTADAS = ["Renda Fixa", "Fundos de Investimentos", "Moed
 
 // Moeda: compra e venda de saldo em moeda estrangeira, sem juros.
 const TIPOS_MOVIMENTACAO_MOEDA = ["Compra", "Venda"];
+const TIPOS_MOVIMENTACAO_ACAO = ["Compra", "Venda"];
 
 // Fundo nao tem "Resgate Total" na boleta: quem encerra a posicao e o resgate
 // que zera as cotas, como no mercado. Come-cotas e saida lancada pelo cotista.
@@ -748,7 +749,7 @@ export default function BoletaTransacao({
   }, [editId, editLoaded, categorias]);
 
   // Step visibility
-  const showTipoMovimentacao = !!categoriaId && (isRendaFixa || isFundo || isMoeda);
+  const showTipoMovimentacao = !!categoriaId && (isRendaFixa || isFundo || isMoeda || isAcao);
   const showAplicacaoFields = showTipoMovimentacao && isRendaFixa && !!produtoId && (isAplicacao || (isEditing && !!tipoMovimentacao && !ehSaidaRF));
 
   // Na edicao de uma saida, casa a custodia pelo codigo da movimentacao. E o que destrava o
@@ -853,6 +854,9 @@ export default function BoletaTransacao({
     return v / c;
   }, [valor, cotaOp]);
   const showMoedaFields = isMoeda && !!tipoMovimentacao;
+  // Como em moedas: os campos so fazem sentido depois de saber se e compra ou venda - o
+  // rotulo do valor e a checagem de saldo dependem disso.
+  const showAcaoFields = isAcao && !!tipoMovimentacao;
   const showPoupancaFields = isPoupanca && isAplicacao;
 
   const resetForm = () => {
@@ -1731,10 +1735,10 @@ export default function BoletaTransacao({
                 }}
                 placeholder="Selecione o tipo de movimentação"
                 disabled={isEditing}
-                options={(isMoeda ? TIPOS_MOVIMENTACAO_MOEDA : isFundo ? TIPOS_MOVIMENTACAO_FUNDO : TIPOS_MOVIMENTACAO).map((t) => ({
+                options={(isAcao ? TIPOS_MOVIMENTACAO_ACAO : isMoeda ? TIPOS_MOVIMENTACAO_MOEDA : isFundo ? TIPOS_MOVIMENTACAO_FUNDO : TIPOS_MOVIMENTACAO).map((t) => ({
                   value: t,
                   label: t,
-                  disabled: !isFundo && !isMoeda && t !== "Aplicação" && t !== "Resgate",
+                  disabled: !isFundo && !isMoeda && !isAcao && t !== "Aplicação" && t !== "Resgate",
                 }))}
               />
             </Field>
@@ -1755,7 +1759,7 @@ export default function BoletaTransacao({
         )}
 
         {/* ── Ações ── */}
-        {isAcao && (
+        {showAcaoFields && (
           <>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Data da Transação" required>
