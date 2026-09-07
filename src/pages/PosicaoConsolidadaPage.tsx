@@ -6,6 +6,9 @@ import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { calcularRendaFixaDiario, permiteVendaNoSecundario, type DailyRow } from "@/lib/rendaFixaEngine";
 import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
+import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
+import { buildCdiSeries } from "@/lib/cdiCalculations";
+import AlocacaoBloco from "@/components/AlocacaoBloco";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
 import { calcularCambioDiario, cambioRowsToDailyRows } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -73,12 +76,16 @@ interface PosicaoRow {
 let _cachedVersion: number | null = null;
 let _cachedRows: PosicaoRow[] = [];
 let _cachedRentabilidade = 0;
+let _cachedAlocacaoInst: GrupoMetricas[] = [];
+let _cachedCdiTotal: number | null = null;
 
 export default function PosicaoConsolidadaPage() {
   const { user } = useAuth();
   const { appliedVersion, dataReferenciaISO, applyDataReferencia } = useDataReferencia();
   const [rows, setRows] = useState<PosicaoRow[]>(_cachedRows);
   const [carteiraRentabilidade, setCarteiraRentabilidade] = useState(_cachedRentabilidade);
+  const [alocacaoInstituicao, setAlocacaoInstituicao] = useState<GrupoMetricas[]>(_cachedAlocacaoInst);
+  const [cdiAcumuladoTotal, setCdiAcumuladoTotal] = useState<number | null>(_cachedCdiTotal);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -171,7 +178,14 @@ export default function PosicaoConsolidadaPage() {
       ]);
 
       const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
-      const cdiRecords = (cdiRes.data || []).map((c: any) => ({ data: c.data, taxa_anual: Number(c.taxa_anual) }));
+      // `dia_util` vem junto porque buildCdiSeries e calcularAlocacaoPorGrupo pedem CdiRecord
+      // completo; o motor de renda fixa ignora o campo a mais.
+      const diaUtilPorData = new Map<string, boolean>(calendario.map((c) => [c.data, c.dia_util]));
+      const cdiRecords = (cdiRes.data || []).map((c: any) => ({
+        data: c.data as string,
+        taxa_anual: Number(c.taxa_anual),
+        dia_util: diaUtilPorData.get(c.data) ?? true,
+      }));
       const cdiMap = new Map<string, number>();
       for (const c of cdiRecords) cdiMap.set(c.data, c.taxa_anual);
       const selicRecords = ((selicRes as any).data || []).map((s: any) => ({ data: s.data, taxa_anual: Number(s.taxa_anual) }));
@@ -414,6 +428,42 @@ export default function PosicaoConsolidadaPage() {
         _cachedRentabilidade = 0;
       }
 
+      // Alocacao por instituicao. Veio do dashboard em 07/09/2026, a pedido do Daniel, e e
+      // calculada aqui em vez de importada de la porque o motor ja rodou por produto logo
+      // acima: `allProductRows` esta na mesma ordem de `posicaoRows`, entao os indices casam.
+      if (allProductRows.length > 0) {
+        const gruposIdx = new Map<string, number[]>();
+        posicaoRows.forEach((r, i) => {
+          const inst = r.custodiante || "—";
+          if (!gruposIdx.has(inst)) gruposIdx.set(inst, []);
+          gruposIdx.get(inst)!.push(i);
+        });
+
+        const linhas = calcularAlocacaoPorGrupo({
+          gruposIdx,
+          allProductRows,
+          calendario,
+          cdiRecords,
+          dataInicio: minDate,
+          dataCalculo: dataReferenciaISO,
+          dataReferencia: dataReferenciaISO,
+        });
+        setAlocacaoInstituicao(linhas);
+        _cachedAlocacaoInst = linhas;
+
+        // CDI do periodo inteiro, para a linha de total: o mesmo criterio que
+        // calcularAlocacaoPorGrupo aplica a cada grupo.
+        const serie = buildCdiSeries(cdiRecords, minDate, dataReferenciaISO);
+        const cdiTotal = serie.length > 0 ? serie[serie.length - 1].cdi_acumulado : null;
+        setCdiAcumuladoTotal(cdiTotal);
+        _cachedCdiTotal = cdiTotal;
+      } else {
+        setAlocacaoInstituicao([]);
+        _cachedAlocacaoInst = [];
+        setCdiAcumuladoTotal(null);
+        _cachedCdiTotal = null;
+      }
+
       setRows(posicaoRows);
       _cachedRows = posicaoRows;
       _cachedVersion = appliedVersion;
@@ -576,6 +626,25 @@ export default function PosicaoConsolidadaPage() {
             </TableBody>
           </Table>
       </TabelaCartao>
+
+      {/* Alocação por instituição: saiu do dashboard em 07/09/2026 e vive aqui. */}
+      <div className="mt-6">
+        <AlocacaoBloco
+          titulo="Posição Consolidada por Instituição"
+          colunaLabel="Instituição"
+          linhas={alocacaoInstituicao}
+          totalPatrimonio={alocacaoInstituicao.reduce((s, l) => s + l.patrimonio, 0)}
+          totalGanho={totalGanho}
+          totalRent={carteiraRentabilidade}
+          totalCdi={cdiAcumuladoTotal}
+          totalSobreCdi={
+            cdiAcumuladoTotal != null && cdiAcumuladoTotal !== 0
+              ? (carteiraRentabilidade / cdiAcumuladoTotal) * 100
+              : null
+          }
+          dataLabel={new Date(dataReferenciaISO + "T00:00:00").toLocaleDateString("pt-BR")}
+        />
+      </div>
 
       {/* Boleta */}
       {dialogRow && user && (
