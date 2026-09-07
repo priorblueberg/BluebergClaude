@@ -1,0 +1,256 @@
+/**
+ * Motor de posição em ações (engine ACOES).
+ *
+ * Uma posição em ação é quantidade x preço - a mesma matemática do fundo, trocando cota por
+ * preço e aplicação/resgate por compra/venda. Por isso este motor NÃO reimplementa a conta:
+ * ele traduz e chama o motor de fundo, como o de câmbio já faz. Duplicar a lógica é como as
+ * cópias divergiram antes neste projeto.
+ *
+ * O que ação tem e fundo não tem são duas coisas, e cada uma é resolvida de um jeito:
+ *
+ * 1. DESDOBRAMENTO / GRUPAMENTO / BONIFICAÇÃO mudam a quantidade sem mudar o valor.
+ *    Em vez de tratar como caso especial no meio do laço, colocamos tudo em "unidades de
+ *    hoje": a quantidade de cada compra é multiplicada pelo fator dos eventos POSTERIORES a
+ *    ela, e o preço de cada dia é dividido pelo mesmo fator. O produto não muda em nenhuma
+ *    data - `qtd x preço` é o mesmo antes e depois - e o evento simplesmente deixa de existir
+ *    para o motor. Um split de 2 para 1 vira "sempre teve o dobro de ações valendo metade".
+ *
+ * 2. PROVENTO é dinheiro que sai da empresa sem mudar a quantidade que você tem. Ele derruba
+ *    o preço na data-ex, e é por isso que precisa entrar no cálculo: sem ele, o dia-ex vira
+ *    uma queda de rentabilidade que não aconteceu de verdade.
+ *
+ *    O valor da POSIÇÃO usa o preço puro. A RENTABILIDADE usa uma segunda série, "total
+ *    return", em que o provento é somado de volta ao preço do dia. São duas passadas pelo
+ *    mesmo motor com entradas diferentes - não duas implementações.
+ *
+ * Data-ex ou data de pagamento? Para o cálculo, **data-ex**, sempre: é o dia em que o preço
+ * cai, e é a queda que precisa ser compensada. A data de pagamento (que costuma vir meses
+ * depois) importa para saber quando o dinheiro entrou na conta, e por isso é guardada e
+ * devolvida - mas quem reconhece o provento na data de pagamento produz uma rentabilidade que
+ * cai no dia-ex e sobe meses depois, o que não descreve nada que aconteceu.
+ */
+import {
+  calcularFundoDiario, fundoRowsToDailyRows, type FundoDailyRow,
+} from "./fundoEngine";
+import type { DailyRow } from "./rendaFixaEngine";
+
+const COMPRAS = new Set(["Compra", "Aplicação", "Aplicação Inicial"]);
+const VENDAS = new Set(["Venda", "Resgate", "Resgate Total"]);
+
+/** JCP tem 15% de IR retido na fonte; dividendo e rendimento de FII não têm. */
+export const IR_JCP = 0.15;
+
+export interface AcaoMovimentacao {
+  data: string;
+  tipo: string;
+  /** Valor financeiro da operação, em reais. */
+  valor: number;
+  /** Quantidade de ações; em branco, derivada pelo preço do dia. */
+  quantidade?: number | null;
+  /** Corretagem, emolumentos e afins. Entram no custo da posição. */
+  custos?: number | null;
+}
+
+export interface Provento {
+  tipo: "DIVIDENDO" | "JCP" | "RENDIMENTO" | "OUTRO";
+  /** Por ação, no valor NOMINAL da época. */
+  valor: number;
+  data_ex: string;
+  data_pagamento?: string | null;
+}
+
+export interface EventoCorporativo {
+  tipo: "DESDOBRAMENTO" | "GRUPAMENTO" | "BONIFICACAO";
+  /** 2 para um desdobramento 2:1; 0,01 para um grupamento 1:100. */
+  fator: number;
+  data_ex: string;
+}
+
+export interface AcoesEngineInput {
+  dataInicio: string;
+  dataCalculo: string;
+  calendario: { data: string; dia_util: boolean }[];
+  /** Fechamento por pregão, no valor NOMINAL do dia. */
+  precos: { data: string; fechamento: number }[];
+  movimentacoes: AcaoMovimentacao[];
+  proventos?: Provento[];
+  eventos?: EventoCorporativo[];
+  /** JCP líquido de IR no resultado. Default: true, que é o que cai na conta. */
+  descontarIrDoJcp?: boolean;
+}
+
+export interface AcaoDailyRow {
+  data: string;
+  diaUtil: boolean;
+  /** Preço nominal do pregão. */
+  preco: number;
+  precoEstimado: boolean;
+  compras: number;
+  qtdComprada: number;
+  vendas: number;
+  qtdVendida: number;
+  /** Quantidade em unidades de HOJE (já com desdobramentos aplicados). */
+  quantidade: number;
+  /** Quantidade x preço. */
+  valorPosicao: number;
+  custoMedio: number;
+  valorInvestido: number;
+  /** Provento com data-ex neste dia, bruto e líquido de IR. */
+  proventoBruto: number;
+  proventoLiquido: number;
+  proventoAcumulado: number;
+  /** Ganho só de preço, sem provento. */
+  ganhoPreco: number;
+  /** Ganho de preço + provento líquido. */
+  ganhoDiario: number;
+  ganhoAcumulado: number;
+  /** Time-weighted, já com o provento somado de volta no dia-ex. */
+  rentabilidadeAcumuladaPct: number;
+  rentDiariaPct: number;
+}
+
+/**
+ * Fator que converte uma quantidade da data `d` para unidades de hoje.
+ *
+ * É o produto dos eventos com data-ex DEPOIS de `d`. Quem comprou antes de um desdobramento
+ * 2:1 tem hoje o dobro; quem comprou depois não é afetado.
+ */
+function fatorDesde(data: string, eventos: EventoCorporativo[]): number {
+  return eventos.reduce((f, e) => (e.data_ex > data ? f * e.fator : f), 1);
+}
+
+/** Soma dos proventos por data-ex, já em unidades de hoje. */
+function proventosPorData(proventos: Provento[], eventos: EventoCorporativo[], descontarIr: boolean) {
+  const bruto = new Map<string, number>();
+  const liquido = new Map<string, number>();
+  for (const p of proventos) {
+    if (!p.data_ex) continue;
+    // O provento é por ação da época. Como a quantidade foi multiplicada pelo fator, o valor
+    // por ação tem de ser dividido por ele - senão o total recebido dobra junto com o split.
+    const f = fatorDesde(p.data_ex, eventos);
+    const b = p.valor / f;
+    const ir = descontarIr && p.tipo === "JCP" ? IR_JCP : 0;
+    bruto.set(p.data_ex, (bruto.get(p.data_ex) ?? 0) + b);
+    liquido.set(p.data_ex, (liquido.get(p.data_ex) ?? 0) + b * (1 - ir));
+  }
+  return { bruto, liquido };
+}
+
+export function calcularAcoesDiario(input: AcoesEngineInput): AcaoDailyRow[] {
+  const eventos = (input.eventos ?? []).filter((e) => e.data_ex && Number.isFinite(e.fator) && e.fator > 0);
+  const proventos = input.proventos ?? [];
+  const descontarIr = input.descontarIrDoJcp ?? true;
+
+  // Preços em unidades de hoje: dividir pelo fator dos eventos posteriores.
+  const precosAj = input.precos.map((p) => ({
+    data: p.data,
+    valor_cota: p.fechamento / fatorDesde(p.data, eventos),
+  }));
+  const precoNominal = new Map(input.precos.map((p) => [p.data, p.fechamento]));
+
+  // Movimentações em unidades de hoje. O custo da operação entra no valor da compra e sai do
+  // valor da venda: é dinheiro que saiu do bolso nos dois casos.
+  const movs = input.movimentacoes
+    .filter((m) => COMPRAS.has(m.tipo) || VENDAS.has(m.tipo))
+    .map((m) => {
+      const f = fatorDesde(m.data, eventos);
+      const ehCompra = COMPRAS.has(m.tipo);
+      const custos = Number(m.custos ?? 0);
+      const precoDia = precoNominal.get(m.data);
+      const qtdNominal = m.quantidade ?? (precoDia ? m.valor / precoDia : null);
+      return {
+        data: m.data,
+        tipo: ehCompra ? "Aplicação" : "Resgate",
+        valor: ehCompra ? m.valor + custos : m.valor - custos,
+        qtd_cotas: qtdNominal != null ? qtdNominal * f : null,
+        data_cotizacao: null,
+      };
+    });
+
+  const base = { dataInicio: input.dataInicio, dataCalculo: input.dataCalculo, calendario: input.calendario,
+                 movimentacoes: movs, fundo: { dias_cotizacao_aplicacao: 0, dias_cotizacao_resgate: 0 } };
+
+  // 1a passada: preço puro. Dá posição, quantidade, custo médio e valor investido.
+  const posicao = calcularFundoDiario({ ...base, cotas: precosAj });
+
+  const { bruto, liquido } = proventosPorData(proventos, eventos, descontarIr);
+
+  // 2a passada: série total-return. O provento do dia-ex é somado de volta ao preço, o que
+  // desfaz exatamente a queda que ele causou - e é isso que a rentabilidade precisa enxergar.
+  const totalReturn: { data: string; valor_cota: number }[] = [];
+  let fatorTR = 1;
+  for (let i = 0; i < precosAj.length; i++) {
+    const hoje = precosAj[i].valor_cota;
+    const ontem = i > 0 ? precosAj[i - 1].valor_cota : null;
+    const prov = liquido.get(precosAj[i].data) ?? 0;
+    if (ontem && ontem > 0) fatorTR *= (hoje + prov) / ontem;
+    totalReturn.push({ data: precosAj[i].data, valor_cota: precosAj[0].valor_cota * fatorTR });
+  }
+  const rentab = calcularFundoDiario({ ...base, cotas: totalReturn });
+  const rentPorData = new Map(rentab.map((r) => [r.data, r]));
+
+  let proventoAcum = 0;
+  let ganhoAcum = 0;
+
+  return posicao.map((r: FundoDailyRow) => {
+    const rr = rentPorData.get(r.data);
+    const pBruto = (bruto.get(r.data) ?? 0) * r.saldoCotas;
+    const pLiquido = (liquido.get(r.data) ?? 0) * r.saldoCotas;
+    proventoAcum += pLiquido;
+    const ganhoDiario = r.ganhoDiario + pLiquido;
+    ganhoAcum += ganhoDiario;
+
+    return {
+      data: r.data,
+      diaUtil: r.diaUtil,
+      preco: precoNominal.get(r.data) ?? r.valorCota * fatorDesde(r.data, eventos),
+      precoEstimado: r.cotaEstimada,
+      compras: r.aplicacoes,
+      qtdComprada: r.qtdCotasCompra,
+      vendas: r.resgatesBrutos,
+      qtdVendida: r.qtdCotasResgate,
+      quantidade: r.saldoCotas,
+      valorPosicao: r.saldoBruto,
+      custoMedio: r.custoMedioCota,
+      valorInvestido: r.valorInvestido,
+      proventoBruto: pBruto,
+      proventoLiquido: pLiquido,
+      proventoAcumulado: proventoAcum,
+      ganhoPreco: r.ganhoDiario,
+      ganhoDiario,
+      ganhoAcumulado: ganhoAcum,
+      rentabilidadeAcumuladaPct: rr?.rentabilidadeAcumuladaPct ?? 0,
+      rentDiariaPct: rr?.rentDiariaPct ?? 0,
+    };
+  });
+}
+
+/** Linhas no formato que o motor de carteira consolida. */
+export function acoesRowsToDailyRows(rows: AcaoDailyRow[]): DailyRow[] {
+  return fundoRowsToDailyRows(
+    rows.map((r) => ({
+      data: r.data,
+      diaUtil: r.diaUtil,
+      valorCota: r.preco,
+      variacaoCotaPct: r.rentDiariaPct,
+      aplicacoes: r.compras,
+      qtdCotasCompra: r.qtdComprada,
+      resgatesBrutos: r.vendas,
+      qtdCotasResgate: r.qtdVendida,
+      saldoCotas: r.quantidade,
+      saldoBruto: r.valorPosicao,
+      baseMW: 0,
+      valorInvestido: r.valorInvestido,
+      custoMedioCota: r.custoMedio,
+      ganhoDiario: r.ganhoDiario,
+      ganhoAcumulado: r.ganhoAcumulado,
+      rentDiariaPct: r.rentDiariaPct,
+      rentabilidadeAcumuladaPct: r.rentabilidadeAcumuladaPct,
+      rentDiariaMWPct: 0,
+      rentabilidadeAcumuladaMWPct: r.rentabilidadeAcumuladaPct,
+      cotaEstimada: r.precoEstimado,
+    })),
+  );
+}
+
+export default { calcularAcoesDiario, acoesRowsToDailyRows };
