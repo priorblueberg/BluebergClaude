@@ -29,10 +29,23 @@ export async function ehDiaUtil(dataISO: string): Promise<boolean> {
 }
 
 /**
- * Primeiro dia em que uma carteira pode ter operacao. As series de mercado (CDI, calendario,
- * cotacoes) comecam em 02/01/2024; antes disso o motor nao tem com o que calcular.
+ * Primeiro dia em que uma carteira pode ter operacao.
+ *
+ * E o ULTIMO DIA UTIL DO ANO ANTERIOR ao primeiro ano coberto, de proposito: quem ja tinha
+ * papel antes lanca o saldo como aplicacao inicial nesse dia, e a posicao entra no ano novo
+ * ja rentabilizando desde o primeiro dia util. Era assim quando o piso era 2024 - o CDI
+ * comecava em 29/12/2023, o ultimo dia util de 2023, e nao em 02/01/2024.
+ *
+ * Em 07/09/2026 as series recuaram para aceitar titulos de 2023 (uma debenture comprada em
+ * 06/2023 puxou o piso da carteira), entao esta data acompanhou: 30/12/2022, ultimo dia util
+ * de 2022.
+ *
+ * Ao mexer aqui, confira antes que as series cubram a data NOVA e o que vem antes dela: o
+ * `pisoDoCalendario` recua 45 dias para fechar o ciclo de IPCA, e serie faltando nao da erro,
+ * so faz o motor calcular com o que tem. Hoje CDI, Selic, TR, dolar e euro comecam em
+ * 01/11/2022, e o calendario em 01/01/2022.
  */
-export const DATA_MINIMA_CARTEIRA = "2024-01-02";
+export const DATA_MINIMA_CARTEIRA = "2022-12-30";
 
 /**
  * Mensagem se a data da operacao estiver fora da janela permitida, ou null se estiver dentro.
