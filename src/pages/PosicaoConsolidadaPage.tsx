@@ -3,8 +3,8 @@ import { Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { calcularRendaFixaDiario, type DailyRow } from "@/lib/rendaFixaEngine";
-import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca } from "@/lib/ipcaSeries";
+import { calcularRendaFixaDiario, permiteVendaNoSecundario, type DailyRow } from "@/lib/rendaFixaEngine";
+import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
 import { calcularCambioDiario, cambioRowsToDailyRows } from "@/lib/cambioEngine";
@@ -153,7 +153,7 @@ export default function PosicaoConsolidadaPage() {
       const poupancaCodigos = poupancaProducts.map((p) => p.codigo_custodia);
 
       const [calRes, cdiRes, movRes, selicRes, lotesRes, trRes, poupRendRes] = await Promise.all([
-        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
+        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util").gte("data", pisoDoCalendario(minDate)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
         allCodigos.length > 0
           ? fetchAllRows((de, ate) => supabase.from("movimentacoes").select("data, data_cotizacao, tipo_movimentacao, valor, quantidade, codigo_custodia").in("codigo_custodia", allCodigos).eq("user_id", user!.id).order("data").range(de, ate)).then((data) => ({ data }))
@@ -241,6 +241,8 @@ export default function PosicaoConsolidadaPage() {
           dataCalculo: calcEnd,
           taxa: product.taxa || 0,
           modalidade: product.modalidade || "",
+          // Debenture, CRI e CRA rendem no proprio dia da compra.
+          rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
           puInicial: product.preco_unitario || 1000,
           calendario,
           movimentacoes: movByCodigo.get(product.codigo_custodia) || [],

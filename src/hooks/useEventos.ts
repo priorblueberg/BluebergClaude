@@ -3,8 +3,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { calcularRendaFixaDiario, gerarDatasPagamentoJuros } from "@/lib/rendaFixaEngine";
-import { fatoresIpcaDoTitulo, carregarSeriesIpca, algumIndexadoAoIpca, type SeriesIpca } from "@/lib/ipcaSeries";
+import { calcularRendaFixaDiario, gerarDatasPagamentoJuros, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
+import { fatoresIpcaDoTitulo, carregarSeriesIpca, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 
 /**
  * Eventos da carteira: o que o dinheiro fez fora da variação de preço.
@@ -74,7 +74,7 @@ export function useEventos() {
 
       const { data: custodias } = await supabase
         .from("custodia")
-        .select("codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, indexador, preco_unitario, quantidade, resgate_total, pagamento, vencimento, valor_investido, fundo_id, instituicoes(nome), categorias(nome)")
+        .select("codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, indexador, preco_unitario, quantidade, resgate_total, pagamento, vencimento, valor_investido, fundo_id, instituicoes(nome), categorias(nome), produtos(nome)")
         .eq("user_id", user.id);
 
       // A tela e de eventos de RENDA FIXA. Fundo fica de fora: os eventos que ele produz sao
@@ -172,7 +172,7 @@ export function useEventos() {
 
         const [cal, cdi] = await Promise.all([
           fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-            .gte("data", menos(minData, 5)).lte("data", maxData).order("data").range(de, ate)),
+            .gte("data", pisoDoCalendario(minData)).lte("data", maxData).order("data").range(de, ate)),
           precisaCdi
             ? fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
                 .gte("data", menos(minData, 5)).lte("data", maxData).order("data").range(de, ate))
@@ -196,6 +196,8 @@ export function useEventos() {
             dataInicio: p.data_inicio,
             dataCalculo: fim > dataReferenciaISO ? dataReferenciaISO : fim,
             taxa: p.taxa || 0,
+            // Debenture, CRI e CRA rendem no proprio dia da compra.
+            rendeNoDiaDaCompra: permiteVendaNoSecundario((p as any).produtos?.nome),
             modalidade: p.modalidade || "",
             puInicial: p.preco_unitario || 1000,
             calendario,

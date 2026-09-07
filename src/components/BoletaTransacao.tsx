@@ -8,8 +8,8 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
-import { calcularRendaFixaDiario, opcoesPagamentoDoProduto } from "@/lib/rendaFixaEngine";
-import { fatoresIpcaSeNecessario } from "@/lib/ipcaSeries";
+import { calcularRendaFixaDiario, opcoesPagamentoDoProduto, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
+import { fatoresIpcaSeNecessario, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
@@ -517,7 +517,7 @@ export default function BoletaTransacao({
         const calQuery = fetchAllRows((de, ate) => supabase
           .from("calendario_dias_uteis")
           .select("data, dia_util")
-          .gte("data", selectedCustodia.data_inicio)
+          .gte("data", pisoDoCalendario(selectedCustodia.data_inicio))
           .lte("data", fimSerie)
           .order("data")
           .range(de, ate)).then((data) => ({ data }));
@@ -564,6 +564,10 @@ export default function BoletaTransacao({
           dataCalculo: dateISO,
           taxa: selectedCustodia.taxa!,
           modalidade: selectedCustodia.modalidade!,
+          // Debenture, CRI e CRA rendem no proprio dia da compra.
+          rendeNoDiaDaCompra: permiteVendaNoSecundario(
+            produtos.find((p) => p.id === selectedCustodia.produto_id)?.nome,
+          ),
           puInicial: selectedCustodia.preco_unitario!,
           calendario,
           movimentacoes,
@@ -596,7 +600,7 @@ export default function BoletaTransacao({
       try {
         const [calRes, movRes, rendRes] = await Promise.all([
           fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-            .gte("data", selectedCustodia.data_inicio).lte("data", dateISO).order("data").range(de, ate)),
+            .gte("data", pisoDoCalendario(selectedCustodia.data_inicio)).lte("data", dateISO).order("data").range(de, ate)),
           (ignorarId
             ? supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
                 .eq("codigo_custodia", selectedCustodia.codigo_custodia).eq("user_id", user.id)
@@ -1216,7 +1220,12 @@ export default function BoletaTransacao({
       const valorNum = parseCurrencyToNumber(valor);
       // Em centavos, pelo mesmo motivo de `valorResgateSuperaSaldo`: o valor do "Fechar
       // Posicao" vem arredondado e pode ficar milesimos acima do saldo cru.
-      if (saldoDisponivel !== null && Math.round(valorNum * 100) > Math.round(saldoDisponivel * 100)) {
+      // Debentures, CRI e CRA passam por cima do teto: vendidos no secundario, o preco pode
+      // estar acima da curva.
+      if (
+        !vendaNoSecundario && saldoDisponivel !== null &&
+        Math.round(valorNum * 100) > Math.round(saldoDisponivel * 100)
+      ) {
         toast.error("O valor do resgate excede o saldo disponível.");
         return;
       }
@@ -1241,6 +1250,9 @@ export default function BoletaTransacao({
           codigo_custodia: selectedCustodia.codigo_custodia,
           quantidade: null,
           valor_extrato: `R$ ${fmtBR(valorNum)}`,
+          // Venda no secundario por preco diferente da curva: o valor e um fato, e o
+          // recalculo nao pode sobrescreve-lo. Igual a curva, o fechamento segue dinamico.
+          valor_fixado: tipoMovimentacaoFinal === "Resgate Total" && ehVendaComPrecoProprio,
           user_id: user.id,
           origem: "manual",
         });
@@ -1523,9 +1535,27 @@ export default function BoletaTransacao({
   // 06/09/2026 numa poupanca: saldo R$ 12.005,68664670, campo R$ 12.005,69, bloqueio por
   // R$ 0,0033. Em centavos os dois viram 1200569 e a comparacao passa a dizer o que quer
   // dizer: barrar quem pede mais do que tem, nao quem pede exatamente tudo.
+  //
+  // Debentures, CRI e CRA sao a excecao: eles se vendem no mercado secundario, e o preco de
+  // venda pode estar ACIMA da curva. Ali o teto nao e erro de digitacao, e o proprio dado.
+  const vendaNoSecundario = permiteVendaNoSecundario(
+    produtos.find((p) => p.id === produtoId)?.nome,
+  );
+
   const valorResgateSuperaSaldo =
-    isResgate && saldoDisponivel !== null && valor !== "" &&
+    isResgate && !vendaNoSecundario && saldoDisponivel !== null && valor !== "" &&
     Math.round(parseCurrencyToNumber(valor) * 100) > Math.round(saldoDisponivel * 100);
+
+  /**
+   * Fechamento por valor diferente da curva, isto e, uma venda a preco de mercado.
+   * O valor precisa ser preservado do recalculo (`valor_fixado`), e a tela precisa dizer
+   * isso, para nao parecer que o numero foi aceito por engano.
+   */
+  const diferencaParaCurva =
+    vendaNoSecundario && fecharPosicao && saldoDisponivel !== null && valor !== ""
+      ? parseCurrencyToNumber(valor) - saldoDisponivel
+      : 0;
+  const ehVendaComPrecoProprio = Math.abs(diferencaParaCurva) >= 0.01;
 
   return (
     <div className="space-y-6">
@@ -2315,6 +2345,31 @@ export default function BoletaTransacao({
                           Fechar Posição
                         </label>
                       </div>
+                    )}
+
+                    {/* Venda no secundário: o valor sugerido é a curva, mas quem manda é o preço */}
+                    {vendaNoSecundario && fecharPosicao && (
+                      <Alert>
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription>
+                          {ehVendaComPrecoProprio ? (
+                            <>
+                              Venda no mercado secundário: o valor informado fica{" "}
+                              <strong>
+                                {diferencaParaCurva > 0 ? "acima" : "abaixo"} da curva em{" "}
+                                {fmtBrlDisplay(Math.abs(diferencaParaCurva))}
+                              </strong>
+                              . Ele será preservado e não recalculado.
+                            </>
+                          ) : (
+                            <>
+                              O valor sugerido é o da curva. Se vendeu no mercado secundário por
+                              outro preço, digite o valor efetivamente recebido - ele pode ser
+                              maior ou menor que o saldo.
+                            </>
+                          )}
+                        </AlertDescription>
+                      </Alert>
                     )}
 
                     {/* Alert if valor > saldo */}

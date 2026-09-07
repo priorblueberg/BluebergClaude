@@ -7,8 +7,8 @@
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
-import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
-import { fatoresIpcaSeNecessario, limparCacheIpca } from "@/lib/ipcaSeries";
+import { calcularRendaFixaDiario, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
+import { fatoresIpcaSeNecessario, limparCacheIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 
 /**
  * Calendario e CDI inteiros, lidos UMA vez e reaproveitados.
@@ -57,7 +57,10 @@ async function carregarSeries() {
 
 async function calendarioEntre(dataInicio: string, dataFim: string) {
   const { calendario } = await carregarSeries();
-  return calendario.filter((c) => c.data >= dataInicio && c.data <= dataFim);
+  // O piso recua um ciclo de IPCA inteiro: cortar o calendario na data de inicio faz o motor
+  // contar menos dias uteis no primeiro ciclo e inflar o pro-rata. Ver pisoDoCalendario.
+  const piso = pisoDoCalendario(dataInicio);
+  return calendario.filter((c) => c.data >= piso && c.data <= dataFim);
 }
 
 /** Fetch CDI records if the product uses CDI indexador */
@@ -120,6 +123,9 @@ async function syncManualResgatesTotais(
   custodiaRecord: SyncCustodiaBase
 ) {
   try {
+    // `valor_fixado` fica de fora: e uma venda no mercado secundario, onde o valor recebido
+    // e um fato, nao um calculo. Recalcular pela curva apagaria o preco real da venda.
+    // Ver PRODUTOS_NEGOCIAVEIS_SECUNDARIO em rendaFixaEngine.
     const { data: manualResgates } = await supabase
       .from("movimentacoes")
       .select("id, data")
@@ -127,6 +133,7 @@ async function syncManualResgatesTotais(
       .eq("user_id", userId)
       .eq("tipo_movimentacao", "Resgate Total")
       .eq("origem", "manual")
+      .eq("valor_fixado", false)
       .order("data");
 
     if (!manualResgates || manualResgates.length === 0) return;
@@ -200,6 +207,8 @@ async function syncManualResgatesTotais(
             dataInicio: custodiaRecord.data_inicio,
             dataCalculo: manualResgate.data,
             taxa: custodiaRecord.taxa || 0,
+            // Debenture, CRI e CRA rendem no proprio dia da compra.
+            rendeNoDiaDaCompra: (await produtosNegociaveisIds()).has(custodiaRecord.produto_id),
             modalidade: custodiaRecord.modalidade || "Prefixado",
             puInicial: custodiaRecord.preco_unitario || 1000,
             calendario,
@@ -331,6 +340,8 @@ async function syncResgateNoVencimento(
       dataInicio: custodiaRecord.data_inicio,
       dataCalculo: vencimento!,
       taxa: custodiaRecord.taxa || 0,
+      // Debenture, CRI e CRA rendem no proprio dia da compra.
+      rendeNoDiaDaCompra: (await produtosNegociaveisIds()).has(custodiaRecord.produto_id),
       modalidade: custodiaRecord.modalidade || "Prefixado",
       puInicial: custodiaRecord.preco_unitario || 1000,
       calendario,
@@ -597,6 +608,25 @@ function computeDataCalculo(dataReferencia: string, resgateTotal: string | null,
  * A alternativa era carregar o nome do produto junto de cada movimentacao, o que somaria uma
  * leitura por titulo no reprocessamento inteiro. Aqui e uma consulta por sessao.
  */
+let _idsNegociaveis: Set<string> | undefined;
+/**
+ * Ids dos produtos negociados no mercado secundario (debenture, CRI, CRA).
+ *
+ * O syncEngine so carrega o produto_id do papel, nao o nome, entao a lista de nomes de
+ * PRODUTOS_NEGOCIAVEIS_SECUNDARIO e resolvida uma vez e guardada - mesmo padrao do
+ * produtoPoupancaId aqui embaixo.
+ */
+export async function produtosNegociaveisIds(): Promise<Set<string>> {
+  if (_idsNegociaveis !== undefined) return _idsNegociaveis;
+  const { data } = await supabase.from("produtos").select("id, nome");
+  _idsNegociaveis = new Set(
+    (data ?? [])
+      .filter((p: { nome: string | null }) => permiteVendaNoSecundario(p.nome))
+      .map((p: { id: string }) => p.id),
+  );
+  return _idsNegociaveis;
+}
+
 let _idProdutoPoupanca: string | null | undefined;
 export async function produtoPoupancaId(): Promise<string | null> {
   if (_idProdutoPoupanca !== undefined) return _idProdutoPoupanca;
@@ -1128,6 +1158,7 @@ export async function reprocessMovimentacoesForCodigo(
     // O indexador decide se o motor precisa da serie de CDI ou dos fatores de IPCA. Lendo da
     // movimentacao, depois da coluna sair, ele vinha undefined e o CDI deixava de ser buscado.
     indexador: tituloReproc?.indexador ?? null,
+    produtoId: (aplicacaoInicial as { produto_id?: string | null }).produto_id ?? null,
   };
 
   // 4. Get the full calendar range needed
@@ -1160,6 +1191,9 @@ export async function reprocessMovimentacoesForCodigo(
       dataInicio: baseInfo.dataInicio,
       dataCalculo: mov.data,
       taxa: baseInfo.taxa,
+      // Debenture, CRI e CRA rendem no proprio dia da compra.
+      rendeNoDiaDaCompra: !!baseInfo.produtoId &&
+        (await produtosNegociaveisIds()).has(baseInfo.produtoId),
       modalidade: baseInfo.modalidade,
       puInicial: baseInfo.puInicial,
       calendario,

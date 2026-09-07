@@ -875,6 +875,7 @@ export type Database = {
           quantidade: number | null
           preco_unitario: number | null
           valor_extrato: string | null
+          valor_fixado: boolean
           created_at: string
           data_cotizacao: string | null
           fundo_id: string | null
@@ -899,6 +900,7 @@ export type Database = {
           quantidade?: number | null
           preco_unitario?: number | null
           valor_extrato?: string | null
+          valor_fixado?: boolean
           created_at?: string
           data_cotizacao?: string | null
           fundo_id?: string | null
@@ -923,6 +925,7 @@ export type Database = {
           quantidade?: number | null
           preco_unitario?: number | null
           valor_extrato?: string | null
+          valor_fixado?: boolean
           created_at?: string
           data_cotizacao?: string | null
           fundo_id?: string | null

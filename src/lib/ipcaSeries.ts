@@ -17,6 +17,37 @@ export function limparCacheIpca() {
   _porDia.clear();
 }
 
+/**
+ * Dias corridos a recuar ao carregar o calendario que alimenta o motor.
+ *
+ * O ciclo de IPCA de um titulo vai de aniversario a aniversario (o dia do vencimento), entao o
+ * ciclo que CONTEM a data da compra abriu ate ~31 dias antes dela. Se o calendario comeca
+ * depois dessa abertura, o motor conta menos dias uteis no primeiro ciclo e o pro-rata sai
+ * inflado - sem erro, sem aviso, so um numero errado.
+ *
+ * Medido em 06/09/2026 na debenture COMGAS (compra 14/06/2023, vencimento dia 15, portanto
+ * ciclo aberto em 15/05), variando SO o inicio do calendario:
+ *
+ *   desde 09/06/2023 -> P&L R$ 7.568,35   <- os 5 dias de folga que havia aqui
+ *   desde 01/06/2023 -> P&L R$ 7.517,79
+ *   desde 15/05/2023 -> P&L R$ 7.493,89   <- abertura do ciclo; estabiliza
+ *   desde 02/01/2023 -> P&L R$ 7.493,89
+ *
+ * Cinco dias nao cobrem um ciclo; quarenta e cinco cobrem qualquer um, com folga para o
+ * aniversario cair em fim de semana ou feriado. O custo e carregar ~30 linhas a mais.
+ */
+export const FOLGA_CICLO_IPCA_DIAS = 45;
+
+/**
+ * Primeira data de calendario a carregar para um papel que comeca em `dataInicio`.
+ * Use SEMPRE isto ao montar o calendario do motor - nunca a data de inicio crua.
+ */
+export function pisoDoCalendario(dataInicio: string): string {
+  const d = new Date(dataInicio + "T12:00:00");
+  d.setDate(d.getDate() - FOLGA_CICLO_IPCA_DIAS);
+  return d.toISOString().slice(0, 10);
+}
+
 export async function carregarSeriesIpca() {
   if (_cache) return _cache;
   const [comp, proj] = await Promise.all([

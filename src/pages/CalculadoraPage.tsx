@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { calcularRendaFixaDiario, DailyRow } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, DailyRow, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
-import { carregarSeriesIpca, fatoresIpcaDoTitulo, fatoresIpcaSeNecessario, algumIndexadoAoIpca, type SeriesIpca } from "@/lib/ipcaSeries";
+import { carregarSeriesIpca, fatoresIpcaDoTitulo, fatoresIpcaSeNecessario, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -103,7 +103,7 @@ export default function CalculadoraPage() {
           // Poupança calculation
           const [calRes, movRes, selicRes, lotesRes, trRes, poupRendRes] = await Promise.all([
             fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
+              .gte("data", pisoDoCalendario(product.data_inicio)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
             supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
               .eq("codigo_custodia", product.codigo_custodia).eq("user_id", user.id).order("data"),
             fetchAllRows((de, ate) => supabase.from("historico_selic").select("data, taxa_anual")
@@ -134,7 +134,7 @@ export default function CalculadoraPage() {
           // Renda Fixa calculation
           const [calRes, movRes, cdiRes] = await Promise.all([
             fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-              .gte("data", getDateMinus(product.data_inicio, 5)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
+              .gte("data", pisoDoCalendario(product.data_inicio)).lte("data", dataFim).order("data").range(de, ate)).then((data) => ({ data })),
             supabase.from("movimentacoes").select("data, tipo_movimentacao, valor")
               .eq("codigo_custodia", product.codigo_custodia).eq("user_id", user.id).order("data"),
             fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
@@ -148,6 +148,8 @@ export default function CalculadoraPage() {
             dataCalculo: dataFim,
             taxa: product.taxa || 0,
             modalidade: product.modalidade || "",
+            // Debenture, CRI e CRA rendem no proprio dia da compra.
+            rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
             puInicial: product.preco_unitario || 1000,
             calendario,
             movimentacoes: (movRes.data || []).map((m: any) => ({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) })),
@@ -210,7 +212,7 @@ export default function CalculadoraPage() {
         // datas de cupom dos papeis que vencem depois disso saiam erradas - eram os R$ 10,29
         // que faltavam nesta tela contra a Carteira e a Posicao Consolidada.
         fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", getDateMinus(dataInicio, 5)).lte("data", maxEndDate).order("data").range(de, ate)).then((data) => ({ data })),
+          .gte("data", pisoDoCalendario(dataInicio)).lte("data", maxEndDate).order("data").range(de, ate)).then((data) => ({ data })),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
           .gte("data", getDateMinus(dataInicio, 5)).lte("data", dataCalculo).order("data").range(de, ate)).then((data) => ({ data })),
       ]);
@@ -251,6 +253,8 @@ export default function CalculadoraPage() {
           dataCalculo: dataFim > dataCalculo ? dataCalculo : dataFim,
           taxa: product.taxa || 0,
           modalidade: product.modalidade || "",
+          // Debenture, CRI e CRA rendem no proprio dia da compra.
+          rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
           puInicial: product.preco_unitario || 1000,
           calendario,
           movimentacoes: movByCodigo.get(product.codigo_custodia) || [],

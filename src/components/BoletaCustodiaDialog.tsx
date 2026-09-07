@@ -5,7 +5,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
-import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
+import { pisoDoCalendario } from "@/lib/ipcaSeries";
 import {
   Dialog,
   DialogContent,
@@ -222,7 +223,7 @@ export default function BoletaCustodiaDialog({
         const calQuery = fetchAllRows((de, ate) => supabase
             .from("calendario_dias_uteis")
             .select("data, dia_util")
-            .gte("data", row.data_inicio)
+            .gte("data", pisoDoCalendario(row.data_inicio))
             .lte("data", fimSerie)
             .order("data")
             .range(de, ate)).then((data) => ({ data }));
@@ -267,6 +268,8 @@ export default function BoletaCustodiaDialog({
           dataCalculo: dateISO,
           taxa: row.taxa!,
           modalidade: row.modalidade!,
+          // Debenture, CRI e CRA rendem no proprio dia da compra.
+          rendeNoDiaDaCompra: permiteVendaNoSecundario(row.produto),
           puInicial: row.preco_unitario!,
           calendario,
           movimentacoes,
@@ -343,7 +346,14 @@ export default function BoletaCustodiaDialog({
 
     const dateISO = format(date, "yyyy-MM-dd");
 
-    if (tipo === "Resgate" && saldoDisponivel != null && valorNum > saldoDisponivel) {
+    // Debentures, CRI e CRA se vendem no secundario, e o preco pode estar ACIMA da curva.
+    // Ali o teto nao e erro de digitacao, e o proprio dado. Ver PRODUTOS_NEGOCIAVEIS_SECUNDARIO.
+    const vendaNoSecundario = permiteVendaNoSecundario(row.produto);
+
+    if (
+      tipo === "Resgate" && !vendaNoSecundario &&
+      saldoDisponivel != null && valorNum > saldoDisponivel
+    ) {
       toast.error("Valor excede o saldo disponível para resgate.");
       return;
     }
@@ -385,6 +395,11 @@ export default function BoletaCustodiaDialog({
           quantidade,
           valor: valorNum,
           valor_extrato: valorExtrato,
+          // Venda no secundario por preco diferente da curva: o valor e um fato, e o
+          // recalculo nao pode sobrescreve-lo. Igual a curva, o fechamento segue dinamico.
+          valor_fixado:
+            tipoMovimentacao === "Resgate Total" && vendaNoSecundario &&
+            saldoDisponivel != null && Math.abs(valorNum - saldoDisponivel) >= 0.01,
           nome_ativo: row.nome,
           origem: "manual",
         })

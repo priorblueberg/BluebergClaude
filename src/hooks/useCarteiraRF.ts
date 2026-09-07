@@ -10,8 +10,8 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { calcularRendaFixaDiario, DailyRow } from "@/lib/rendaFixaEngine";
-import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca } from "@/lib/ipcaSeries";
+import { calcularRendaFixaDiario, permiteVendaNoSecundario, DailyRow } from "@/lib/rendaFixaEngine";
+import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { CdiRecord } from "@/lib/cdiCalculations";
@@ -218,7 +218,7 @@ export function useCarteiraRF() {
       // das 1000 linhas por requisicao do PostgREST, que corta em silencio.
       const [calRes, cdiRes, ibovRes, selicRes, trRes, poupRendRes] = await Promise.all([
         fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", getDateMinus(pisoSeries, 5)).lte("data", maxEndDate).order("data").range(de, ate))
+          .gte("data", pisoDoCalendario(pisoSeries)).lte("data", maxEndDate).order("data").range(de, ate))
           .then((data) => ({ data })),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
           .gte("data", pisoSeries).lte("data", dataCalculo).order("data").range(de, ate))
@@ -290,6 +290,8 @@ export function useCarteiraRF() {
           dataCalculo: dataFim > dataCalculo ? dataCalculo : dataFim,
           taxa: product.taxa || 0,
           modalidade: product.modalidade || "",
+          // Debenture, CRI e CRA rendem no proprio dia da compra.
+          rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
           puInicial: product.preco_unitario || 1000,
           calendario,
           movimentacoes: movByCodigo.get(product.codigo_custodia) || [],
