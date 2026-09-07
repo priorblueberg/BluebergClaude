@@ -9,7 +9,8 @@
  * - Selic ≤ 8.5% a.a. → 70% da Selic ao mês + TR
  * - Rendimento ocorre apenas no "aniversário" (dia do mês da DATA-BASE)
  * - Depósito nos dias 29, 30 e 31 tem data-base no dia 1o do mês seguinte
- * - Resgate segue FIFO (First In, First Out)
+ * - Resgate PARCIAL segue FIFO (First In, First Out)
+ * - Resgate TOTAL fecha a posição: ver `fecharPosicao` abaixo
  */
 
 import type { DailyRow } from "./rendaFixaEngine";
@@ -132,6 +133,91 @@ function isAniversario(dataISO: string, diaAniversario: number): boolean {
 }
 
 /**
+ * Fecha a posicao no "Resgate Total" e devolve o que sobrar como UM lote residual.
+ *
+ * Nao e FIFO, e nao e engano: "Resgate Total" nao e um resgate de R$ X, e um "encerra isso
+ * aqui". Depois de encerrada, a posicao nao tem mais lotes para consumir. O que sobra - caso
+ * um aporte retroativo tenha entrado com data anterior ao resgate - reabre um saldo unico,
+ * e esse saldo nasce com a data-base **do primeiro aporte da posicao**.
+ *
+ * Medido contra o GorilaVIEW em 07/09/2026, tres casos cadastrados do zero, todos ao centavo
+ * em 03/09/2026 (aporte + "Vender tudo" + aporte retroativo lancado por ultimo):
+ *
+ * | 1o aporte    | data-base | aporte retroativo | Gorila      |
+ * |--------------|-----------|-------------------|-------------|
+ * | 29/02/2024   | dia 1o    | 10/06/2026        | 5.101,37    |
+ * | 31/01/2025   | dia 1o    | 10/06/2026        | 5.101,37    |
+ * | 10/01/2025   | dia 10    | 15/06/2026        | 5.067,58    |
+ *
+ * O terceiro e o que decide a regra. Nos dois primeiros o 1o aporte cai no dia 1o pela regra
+ * 29/30/31, entao "data-base do primeiro aporte" e "sempre dia 1o" dariam o mesmo numero. No
+ * terceiro a data-base e o dia 10, que NAO credita entre 20/08 e 03/09: o Gorila nao paga
+ * aniversario nenhum depois da venda, e o saldo fica parado nos R$ 5.067,58.
+ *
+ * O resgate PARCIAL segue FIFO por data - regra diferente, operacao diferente, medida em
+ * outros tres casos (Inter, e dois cadastrados no mesmo dia).
+ */
+function fecharPosicao(
+  todos: LoteState[],
+  ativos: LoteState[],
+  valorResgate: number,
+  data: string,
+): void {
+  const saldo = ativos.reduce((s, l) => s + l.valorAtual, 0);
+  const principal = ativos.reduce((s, l) => s + l.valorPrincipal, 0);
+  const ativosComSaldo = ativos.map((l) => ({ ...l, saldoAntes: l.valorAtual }));
+
+  for (const l of ativos) {
+    l.valorAtual = 0;
+    l.valorPrincipal = 0;
+    l.rendimentoAcumulado = 0;
+    l.status = "resgatado";
+  }
+
+  // O residuo NAO e `saldo - valorResgate`. O valor do resgate vem gravado com 2 casas (o
+  // Gorila exibe R$ 12.005,69) enquanto o saldo do lote tem mais (12.005,6875): a subtracao
+  // direta deixa meio centavo de arredondamento vivo como residuo, e esse meio centavo depois
+  // rende juros e vira erro na tela - R$ 5.101,36 onde o Gorila mostra R$ 5.101,37.
+  //
+  // Entao o residuo sai do que foi EFETIVAMENTE consumido: percorremos os lotes e, quando o
+  // que falta cobre o lote a menos de um centavo, consumimos o lote inteiro pelo saldo real.
+  // E a mesma tolerancia que o resgate parcial ja usa. A ordem nao muda o resultado (o residuo
+  // total independe dela, e o aniversario vem da regra abaixo); ela so faz o snap cair certo.
+  let restante = valorResgate;
+  let consumido = 0;
+  for (const l of [...ativosComSaldo].sort((a, b) => a.dataAplicacao.localeCompare(b.dataAplicacao))) {
+    if (restante <= 0) break;
+    if (restante >= l.saldoAntes - 0.01) {
+      consumido += l.saldoAntes;
+      restante -= l.saldoAntes;
+      if (restante < 0.01) restante = 0;
+    } else {
+      consumido += restante;
+      restante = 0;
+    }
+  }
+
+  const residuo = saldo - consumido;
+  if (residuo <= 0.005) return;
+
+  // O primeiro aporte da POSICAO, e nao o lote que sobreviveria a um FIFO.
+  const primeiro = [...todos].sort((a, b) => a.dataAplicacao.localeCompare(b.dataAplicacao))[0];
+
+  todos.push({
+    id: `residuo-${data}`,
+    dataAplicacao: data,
+    dataBase: primeiro.dataBase,
+    diaAniversario: primeiro.diaAniversario,
+    // Nominal liquido, como o Gorila exibe em "Valor investido": aportes menos o resgate.
+    valorPrincipal: Math.max(0, principal - valorResgate),
+    valorAtual: residuo,
+    rendimentoAcumulado: 0,
+    ultimoAniversario: null,
+    status: "ativo",
+  });
+}
+
+/**
  * Calcula a evolução diária da poupança, retornando DailyRow[] compatível
  * com o engine de renda fixa para integração com a carteira.
  */
@@ -167,13 +253,17 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
     lastSelic = sortedSelic[sortedSelic.length - 1].taxa_anual;
   }
 
-  // Build movimentações map
-  const movMap = new Map<string, { aplicacoes: number; resgates: number }>();
+  // Build movimentações map.
+  // `resgates` e `resgateTotal` andam separados porque sao operacoes DIFERENTES: o parcial
+  // consome lotes em FIFO, o total fecha a posicao. Ver `fecharPosicao`.
+  const movMap = new Map<string, { aplicacoes: number; resgates: number; resgateTotal: number }>();
   for (const m of movimentacoes) {
-    const entry = movMap.get(m.data) || { aplicacoes: 0, resgates: 0 };
+    const entry = movMap.get(m.data) || { aplicacoes: 0, resgates: 0, resgateTotal: 0 };
     if (m.tipo_movimentacao === "Aplicação" || m.tipo_movimentacao === "Aplicação Inicial") {
       entry.aplicacoes += m.valor;
-    } else if (m.tipo_movimentacao === "Resgate" || m.tipo_movimentacao === "Resgate Total") {
+    } else if (m.tipo_movimentacao === "Resgate Total") {
+      entry.resgateTotal += m.valor;
+    } else if (m.tipo_movimentacao === "Resgate") {
       entry.resgates += m.valor;
     }
     movMap.set(m.data, entry);
@@ -256,9 +346,10 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
     }
 
     // Process movimentações
-    const mov = movMap.get(date) || { aplicacoes: 0, resgates: 0 };
+    const mov = movMap.get(date) || { aplicacoes: 0, resgates: 0, resgateTotal: 0 };
+    const saidasDoDia = mov.resgates + mov.resgateTotal;
     totalAplicacoes += mov.aplicacoes;
-    totalResgates += mov.resgates;
+    totalResgates += saidasDoDia;
 
     // Process resgates: reduce lote values proportionally (FIFO within the single lote)
     if (mov.resgates > 0) {
@@ -287,9 +378,16 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
       }
     }
 
-    // Calculate totals
-    const liquido = activeLotes.reduce((sum, l) => sum + l.valorAtual, 0);
-    const valorInvestido = activeLotes.reduce((sum, l) => sum + l.valorPrincipal, 0);
+    // Resgate TOTAL: fecha a posicao. Ver `fecharPosicao` para o porque de nao ser FIFO.
+    if (mov.resgateTotal > 0.005) {
+      fecharPosicao(loteStates, activeLotes, mov.resgateTotal, date);
+    }
+
+    // Calculate totals. Relemos os lotes ativos porque o fechamento acima pode ter criado o
+    // lote residual, que `activeLotes` (capturado no inicio do dia) ainda nao conhece.
+    const lotesNoFimDoDia = activeLotesOnDate(date);
+    const liquido = lotesNoFimDoDia.reduce((sum, l) => sum + l.valorAtual, 0);
+    const valorInvestido = lotesNoFimDoDia.reduce((sum, l) => sum + l.valorPrincipal, 0);
 
     // Ganho diário
     const ganhoDiario = rendimentoDia;
@@ -309,11 +407,11 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
       liquido,
       principalCorrigido: 0,
       valorCota2: 1,
-      saldoCotas2: liquido + mov.resgates,
-      liquido2: liquido + mov.resgates,
+      saldoCotas2: liquido + saidasDoDia,
+      liquido2: liquido + saidasDoDia,
       aplicacoes: mov.aplicacoes,
       qtdCotasCompra: 0,
-      resgates: mov.resgates,
+      resgates: saidasDoDia,
       qtdCotasResgate: 0,
       ganhoDiario,
       ganhoAcumulado,
@@ -325,7 +423,7 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
       cupomAcumulado: 0,
       jurosPago: 0,
       valorInvestido,
-      resgateLimpo: mov.resgates,
+      resgateLimpo: saidasDoDia,
       precoUnitario: 0,
       qtdAplicacaoPU: 0,
       qtdResgatePU: 0,
@@ -334,7 +432,7 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
       qtdResgate2: 0,
       baseEconomica: valorInvestido,
       aplicacaoExCupom: mov.aplicacoes,
-      resgateExCupom: mov.resgates,
+      resgateExCupom: saidasDoDia,
       rentabilidadeDiaria: rentDiariaPct > 0 ? rentDiariaPct : null,
       rentDiariaPct,
       rentAcumulada2: rentAcum2,
@@ -342,8 +440,13 @@ export function calcularPoupancaDiario(input: PoupancaEngineInput): DailyRow[] {
 
     rows.push(row);
 
-    // Check resgate total
-    if (dataResgateTotal && date === dataResgateTotal) break;
+    // Encerrar a serie so quando a posicao REALMENTE zerou.
+    //
+    // O cadastro marca `resgate_total` na data do ultimo "Resgate Total" sempre que nao houver
+    // aplicacao com data POSTERIOR a ele. Mas um aporte retroativo - lancado depois, com data
+    // anterior ao resgate - deixa saldo vivo sem disparar aquela condicao. Truncar aqui
+    // congelava a posicao no dia do resgate e escondia os aniversarios seguintes.
+    if (dataResgateTotal && date === dataResgateTotal && liquido <= 0.01) break;
   }
 
   return rows;

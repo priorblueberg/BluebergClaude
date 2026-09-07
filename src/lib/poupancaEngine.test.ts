@@ -221,3 +221,154 @@ describe("multiplos aportes e FIFO no resgate", () => {
     expect(dia.liquido).toBeCloseTo(antes - 6000, 2);
   });
 });
+
+/**
+ * Rendimento REAL da poupanca por data-base (dias 1, 10 e 15), do BCB. So estes tres dias
+ * porque sao as data-bases dos casos abaixo; os testes de mecanica usam a serie fixa.
+ */
+const SERIE_REAL: [string, number][] = [
+  ["2024-02-01",0.5079], ["2024-02-10",0.5], ["2024-02-15",0.5668], ["2024-03-01",0.5333], ["2024-03-10",0.5809],
+  ["2024-03-15",0.5522], ["2024-04-01",0.6028], ["2024-04-10",0.584], ["2024-04-15",0.5828], ["2024-05-01",0.5874],
+  ["2024-05-10",0.549], ["2024-05-15",0.6149], ["2024-06-01",0.5367], ["2024-06-10",0.5925], ["2024-06-15",0.5401],
+  ["2024-07-01",0.5743], ["2024-07-10",0.5752], ["2024-07-15",0.5748], ["2024-08-01",0.5711], ["2024-08-10",0.5673],
+  ["2024-08-15",0.5712], ["2024-09-01",0.5678], ["2024-09-10",0.5728], ["2024-09-15",0.5697], ["2024-10-01",0.5982],
+  ["2024-10-10",0.5816], ["2024-10-15",0.6081], ["2024-11-01",0.5652], ["2024-11-10",0.5661], ["2024-11-15",0.5663],
+  ["2024-12-01",0.5826], ["2024-12-10",0.6078], ["2024-12-15",0.5958], ["2025-01-01",0.6698], ["2025-01-10",0.6493],
+  ["2025-01-15",0.6719], ["2025-02-01",0.6331], ["2025-02-10",0.5743], ["2025-02-15",0.5745], ["2025-03-01",0.6097],
+  ["2025-03-10",0.6741], ["2025-03-15",0.6708], ["2025-04-01",0.6697], ["2025-04-10",0.6449], ["2025-04-15",0.6441],
+  ["2025-05-01",0.6721], ["2025-05-10",0.6725], ["2025-05-15",0.6744], ["2025-06-01",0.6707], ["2025-06-10",0.6728],
+  ["2025-06-15",0.6708], ["2025-07-01",0.6767], ["2025-07-10",0.6751], ["2025-07-15",0.677], ["2025-08-01",0.6731],
+  ["2025-08-10",0.6751], ["2025-08-15",0.6717], ["2025-09-01",0.6751], ["2025-09-10",0.675], ["2025-09-15",0.6749],
+  ["2025-10-01",0.6767], ["2025-10-10",0.673], ["2025-10-15",0.6768], ["2025-11-01",0.6642], ["2025-11-10",0.6731],
+  ["2025-11-15",0.665], ["2025-12-01",0.6751], ["2025-12-10",0.673], ["2025-12-15",0.6728], ["2026-01-01",0.6727],
+  ["2026-01-10",0.6727], ["2026-01-15",0.6746], ["2026-02-01",0.6213], ["2026-02-10",0.6231], ["2026-02-15",0.6189],
+  ["2026-03-01",0.6744], ["2026-03-10",0.674], ["2026-03-15",0.6721], ["2026-04-01",0.6687], ["2026-04-10",0.6305],
+  ["2026-04-15",0.6683], ["2026-05-01",0.6695], ["2026-05-10",0.6717], ["2026-05-15",0.6698], ["2026-06-01",0.6718],
+  ["2026-06-10",0.6734], ["2026-06-15",0.6731], ["2026-07-01",0.6738], ["2026-07-10",0.6703], ["2026-07-15",0.6739],
+  ["2026-08-01",0.6701], ["2026-08-10",0.6718], ["2026-08-15",0.6451], ["2026-09-01",0.6698]
+];
+
+const serieReal = () => SERIE_REAL.map(([data, rendimento_mensal]) => ({ data, rendimento_mensal }));
+
+function rodarCaso(
+  movs: { data: string; tipo_movimentacao: string; valor: number }[],
+  ate: string,
+  resgateTotalCadastro: string | null = null,
+) {
+  const inicio = movs.map((m) => m.data).sort()[0];
+  return calcularPoupancaDiario({
+    dataInicio: inicio,
+    dataCalculo: ate,
+    calendario: calendarioEntre(inicio, ate),
+    movimentacoes: movs,
+    lotes: buildPoupancaLotesFromMovs(movs),
+    selicRecords: [],
+    poupancaRendimentoRecords: serieReal(),
+    dataResgateTotal: resgateTotalCadastro,
+  });
+}
+
+const ultimo = (rows: ReturnType<typeof rodarCaso>) => rows[rows.length - 1];
+
+/**
+ * "Resgate Total" nao e um resgate de R$ X, e um fechamento de posicao: o que sobra de um
+ * aporte retroativo volta para a data-base do PRIMEIRO aporte, nao fica no lote sobrevivente.
+ *
+ * Os tres casos foram cadastrados no GorilaVIEW em 07/09/2026 e lidos na tela dele com data de
+ * calculo 03/09/2026. Cada um: aporte inicial, "Vender tudo", e o aporte retroativo lancado
+ * POR ULTIMO, com data anterior a venda.
+ */
+describe("Resgate Total fecha a posicao (medido no Gorila)", () => {
+  it("Santander: 1o aporte em 29/02/2024 (data-base dia 1o) da R$ 5.101,37", () => {
+    const rows = rodarCaso([
+      { data: "2024-02-29", tipo_movimentacao: "Aplicação Inicial", valor: 10000 },
+      { data: "2026-06-10", tipo_movimentacao: "Aplicação", valor: 5000 },
+      { data: "2026-08-20", tipo_movimentacao: "Resgate Total", valor: 12005.69 },
+    ], "2026-09-03", "2026-08-20");
+    expect(ultimo(rows).liquido).toBeCloseTo(5101.37, 2);
+  });
+
+  it("C6: 1o aporte em 31/01/2025 (data-base dia 1o) da R$ 5.101,37", () => {
+    const rows = rodarCaso([
+      { data: "2025-01-31", tipo_movimentacao: "Aplicação Inicial", valor: 10000 },
+      { data: "2026-06-10", tipo_movimentacao: "Aplicação", valor: 5000 },
+      { data: "2026-08-20", tipo_movimentacao: "Resgate Total", valor: 11264.70 },
+    ], "2026-09-03", "2026-08-20");
+    expect(ultimo(rows).liquido).toBeCloseTo(5101.37, 2);
+  });
+
+  /**
+   * O caso que DECIDE a regra. Nos dois de cima o 1o aporte cai no dia 1o pela regra 29/30/31,
+   * entao "data-base do primeiro aporte" e "sempre dia 1o" dariam o mesmo numero. Aqui a
+   * data-base e o dia 10, que nao credita entre 20/08 e 03/09: o saldo fica parado.
+   * Se o residuo fosse para o dia 1o daria R$ 5.101,53 - e estaria errado.
+   */
+  it("NUBANK: 1o aporte em 10/01/2025 (data-base dia 10) da R$ 5.067,58, sem credito nenhum", () => {
+    const rows = rodarCaso([
+      { data: "2025-01-10", tipo_movimentacao: "Aplicação Inicial", valor: 10000 },
+      { data: "2026-06-15", tipo_movimentacao: "Aplicação", valor: 5000 },
+      { data: "2026-08-20", tipo_movimentacao: "Resgate Total", valor: 11332.23 },
+    ], "2026-09-03", "2026-08-20");
+    expect(ultimo(rows).liquido).toBeCloseTo(5067.58, 2);
+
+    const depoisDaVenda = rows.filter((r) => r.data > "2026-08-20" && r.ganhoDiario > 0.00001);
+    expect(depoisDaVenda).toEqual([]);
+  });
+
+  it("o valor que o Gorila fixou no 'Vender tudo' e o saldo do 1o lote sozinho", () => {
+    // Confirma a modelagem do lote pelo outro lado, antes do resultado final.
+    const so1oLote = (data: string, ate: string) =>
+      ultimo(rodarCaso([{ data, tipo_movimentacao: "Aplicação Inicial", valor: 10000 }], ate)).liquido;
+    expect(so1oLote("2024-02-29", "2026-08-20")).toBeCloseTo(12005.69, 2);
+    expect(so1oLote("2025-01-31", "2026-08-20")).toBeCloseTo(11264.70, 2);
+    expect(so1oLote("2025-01-10", "2026-08-20")).toBeCloseTo(11332.23, 2);
+  });
+
+  it("quando o resgate total zera mesmo, a posicao fecha em zero e a serie para ali", () => {
+    const rows = rodarCaso([
+      { data: "2025-01-10", tipo_movimentacao: "Aplicação Inicial", valor: 10000 },
+      { data: "2026-08-20", tipo_movimentacao: "Resgate Total", valor: 11332.23 },
+    ], "2026-09-03", "2026-08-20");
+    expect(ultimo(rows).liquido).toBeCloseTo(0, 2);
+    expect(ultimo(rows).data).toBe("2026-08-20");
+  });
+
+  it("valor investido do residuo e o nominal liquido, como o Gorila exibe", () => {
+    const rows = rodarCaso([
+      { data: "2024-02-29", tipo_movimentacao: "Aplicação Inicial", valor: 10000 },
+      { data: "2026-06-10", tipo_movimentacao: "Aplicação", valor: 5000 },
+      { data: "2026-08-20", tipo_movimentacao: "Resgate Total", valor: 12005.69 },
+    ], "2026-09-03", "2026-08-20");
+    expect(ultimo(rows).valorInvestido).toBeCloseTo(2994.31, 2);
+  });
+});
+
+/**
+ * O resgate PARCIAL continua FIFO por data - operacao diferente, regra diferente. Os dois
+ * casos foram cadastrados no Gorila em 07/09/2026 exatamente para separar FIFO de LIFO, e no
+ * segundo a ordem de lancamento e diferente da ordem cronologica de proposito.
+ */
+describe("Resgate parcial segue FIFO por data (medido no Gorila)", () => {
+  it("BB: aporte retroativo, o mais antigo de todos, da R$ 8.985,14", () => {
+    const rows = rodarCaso([
+      { data: "2025-03-31", tipo_movimentacao: "Aplicação Inicial", valor: 10000 },
+      { data: "2025-01-10", tipo_movimentacao: "Aplicação", valor: 6000 },
+      { data: "2026-08-20", tipo_movimentacao: "Resgate", valor: 9000 },
+    ], "2026-09-03");
+    expect(ultimo(rows).liquido).toBeCloseTo(8985.14, 2);
+  });
+
+  it("Safra: retroativo no MEIO, lancamento fora da ordem, da R$ 8.790,79", () => {
+    const rows = rodarCaso([
+      { data: "2025-01-10", tipo_movimentacao: "Aplicação Inicial", valor: 5000 },
+      { data: "2025-05-31", tipo_movimentacao: "Aplicação", valor: 5000 },
+      { data: "2025-03-15", tipo_movimentacao: "Aplicação", valor: 5000 },
+      { data: "2026-08-20", tipo_movimentacao: "Resgate", valor: 8000 },
+    ], "2026-09-03");
+    expect(ultimo(rows).liquido).toBeCloseTo(8790.79, 2);
+
+    // A assinatura: so o lote de 31/05 (data-base dia 1o) sobrevive intacto e credita em 01/09.
+    const credito = rows.find((r) => r.data === "2026-09-01");
+    expect(credito!.ganhoDiario).toBeCloseTo(36.78, 2);
+  });
+});
