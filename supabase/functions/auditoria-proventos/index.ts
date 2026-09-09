@@ -59,6 +59,10 @@ const TOL_ABS = 0.00001; // so arredondamento de casa decimal
  *  como coincidencia. Tres e o minimo que distingue padrao de acaso. */
 const MIN_PARA_FATOR = 3;
 
+/** Quanto a diferenca pode se mexer sem que um descarte deixe de valer. Apertado de proposito:
+ *  o descarte foi decidido sobre um numero especifico, e numero diferente e caso diferente. */
+const TOL_DESCARTE = 0.0001;
+
 const mediana = (xs: number[]) => {
   if (!xs.length) return 1;
   const o = [...xs].sort((a, b) => a - b);
@@ -181,6 +185,16 @@ Deno.serve(async (req) => {
           a.parcelas++;
           if (p.fonte === "manual") a.manuais++;
           porDataNossa.set(k, a);
+        }
+
+        // Achados ja investigados e descartados para este papel. Ver a tabela para o porque
+        // de cada um - e para a trava que faz o descarte expirar se o numero mudar.
+        const { data: descartesDoPapel } = await db.from("auditoria_descartes")
+          .select("data_ex, tipo, diferenca, motivo, evidencia, descartado_em")
+          .eq("ticker", ticker);
+        const descartes = new Map<string, Record<string, unknown>>();
+        for (const d of (descartesDoPapel ?? []) as Record<string, unknown>[]) {
+          descartes.set(`${d.data_ex}|${d.tipo}`, d);
         }
 
         const [brapi, yahoo, b3] = await Promise.all([
@@ -444,6 +458,41 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── Aplicacao dos descartes ────────────────────────────────────────────────────
+        //
+        // O achado descartado SAI DA CONTAGEM mas NAO some: vai para uma secao propria, com o
+        // motivo e a evidencia. Sumir seria supressao silenciosa - o mesmo erro da tolerancia
+        // generosa, com outro nome.
+        //
+        // E o descarte so vale se o NUMERO continuar o mesmo. Mudou, ele volta a ser divergencia
+        // viva e o relatorio diz que o descarte caducou: o que foi investigado foi aquele caso,
+        // com aquele valor, e nao a data.
+        const vivos: Record<string, unknown>[] = [];
+        const descartados: Record<string, unknown>[] = [];
+
+        for (const a of achados) {
+          const d = descartes.get(`${a.data_ex}|${a.tipo}`);
+          if (!d) { vivos.push(a); continue; }
+
+          const antes = d.diferenca === null || d.diferenca === undefined ? null : Number(d.diferenca);
+          const agora = a.diferenca === undefined ? null : Number(a.diferenca);
+          const mesmoNumero = antes === null || agora === null
+            ? antes === agora
+            : Math.abs(agora - antes) <= TOL_DESCARTE;
+
+          if (mesmoNumero) {
+            descartados.push({ ...a, motivo: d.motivo, evidencia: d.evidencia, descartado_em: d.descartado_em });
+          } else {
+            vivos.push({
+              ...a,
+              descarte_caducou: true,
+              diferenca_no_descarte: antes,
+              nota: `havia um descarte para esta data (${d.motivo}), mas a diferenca mudou de `
+                  + `${antes} para ${agora}. O descarte nao vale mais - e outro caso.`,
+            });
+          }
+        }
+
         relatorio.push({
           ticker,
           isin,
@@ -462,8 +511,10 @@ Deno.serve(async (req) => {
           grupos_de_razao: diagGrupos,
           // O contador ignora o que ja foi classificado como esperado: um numero que sobe por
           // causa de provento futuro treina quem le a ignorar o numero.
-          divergencias: achados.filter((a) => !a.esperado).length,
-          achados,
+          divergencias: vivos.filter((a) => !a.esperado).length,
+          achados: vivos,
+          // Visiveis de proposito, fora da contagem. Quem le precisa poder discordar do descarte.
+          descartados,
         });
       } catch (e) {
         relatorio.push({ ticker, erro: e instanceof Error ? e.message : String(e) });
