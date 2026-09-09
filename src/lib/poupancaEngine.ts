@@ -475,6 +475,66 @@ export function buildPoupancaLotesFromMovs(
     }));
 }
 
+/** Lote como ele fica GRAVADO em `poupanca_lotes`: já com os resgates descontados. */
+export interface LotePersistido {
+  data_aplicacao: string;
+  dia_aniversario: number;
+  valor_principal: number;
+  valor_atual: number;
+}
+
+/**
+ * Monta os lotes para GRAVAR, aplicando os resgates por FIFO.
+ *
+ * Irmã de `buildPoupancaLotesFromMovs`, e a diferença entre as duas é de propósito:
+ *
+ *   buildPoupancaLotesFromMovs  lotes PRÉ-FIFO, para alimentar o motor - que aplica o resgate
+ *                               ele mesmo, dia a dia. Descontar aqui contaria o resgate duas
+ *                               vezes.
+ *   montarLotesPersistidos      lotes PÓS-FIFO, que é o estado que a tabela guarda.
+ *
+ * Isto vivia dentro do `syncPoupancaLotes`, no syncEngine, e de lá não dava para testar - aquela
+ * função fala com o banco. Foi assim que passou despercebido, até 09/09/2026, que ela gravava o
+ * dia CRU do depósito em vez da data-base. A regra dos dias 29, 30 e 31 existia a poucas linhas
+ * daqui e ela não a conhecia.
+ */
+export function montarLotesPersistidos(
+  movimentacoes: { data: string; tipo_movimentacao: string; valor: number }[],
+): LotePersistido[] {
+  const lotes: LotePersistido[] = [];
+
+  for (const m of movimentacoes) {
+    if (m.tipo_movimentacao === "Aplicação Inicial" || m.tipo_movimentacao === "Aplicação") {
+      lotes.push({
+        data_aplicacao: m.data,
+        // A DATA-BASE, não o dia do depósito: 29, 30 e 31 vão para o dia 1o do mês seguinte.
+        dia_aniversario: Number(dataBaseDoDeposito(m.data).slice(8, 10)),
+        valor_principal: m.valor,
+        valor_atual: m.valor,
+      });
+    } else if (m.tipo_movimentacao === "Resgate" || m.tipo_movimentacao === "Resgate Total") {
+      let restante = m.valor;
+      for (const lote of lotes) {
+        if (restante <= 0) break;
+        if (lote.valor_atual <= 0) continue;
+
+        if (restante >= lote.valor_atual - 0.01) {
+          restante -= lote.valor_atual;
+          lote.valor_atual = 0;
+          lote.valor_principal = 0;
+        } else {
+          const proporcao = restante / lote.valor_atual;
+          lote.valor_principal -= lote.valor_principal * proporcao;
+          lote.valor_atual -= restante;
+          restante = 0;
+        }
+      }
+    }
+  }
+
+  return lotes.filter((l) => l.valor_atual > 0.01);
+}
+
 /**
  * Algoritmo FIFO para resgate de poupança.
  * Consome lotes do mais antigo para o mais novo.

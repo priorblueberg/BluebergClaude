@@ -6,7 +6,7 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
+import { calcularPoupancaDiario, buildPoupancaLotesFromMovs, montarLotesPersistidos } from "@/lib/poupancaEngine";
 import { calcularRendaFixaDiario, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaSeNecessario, limparCacheIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 
@@ -436,48 +436,11 @@ async function syncPoupancaLotes(codigoCustodia: string, userId: string, custodi
     .eq("codigo_custodia", codigoCustodia)
     .eq("user_id", userId);
 
-  // Build lotes from applications
-  interface TempLote {
-    data_aplicacao: string;
-    dia_aniversario: number;
-    valor_principal: number;
-    valor_atual: number;
-  }
-
-  const lotes: TempLote[] = [];
-
-  for (const m of allMovs) {
-    if (["Aplicação Inicial", "Aplicação"].includes(m.tipo_movimentacao)) {
-      const dia = new Date(m.data + "T00:00:00").getDate();
-      lotes.push({
-        data_aplicacao: m.data,
-        dia_aniversario: dia,
-        valor_principal: m.valor,
-        valor_atual: m.valor,
-      });
-    } else if (["Resgate", "Resgate Total"].includes(m.tipo_movimentacao)) {
-      // FIFO consumption
-      let restante = m.valor;
-      for (const lote of lotes) {
-        if (restante <= 0) break;
-        if (lote.valor_atual <= 0) continue;
-        
-        if (restante >= lote.valor_atual - 0.01) {
-          restante -= lote.valor_atual;
-          lote.valor_atual = 0;
-          lote.valor_principal = 0;
-        } else {
-          const proporcao = restante / lote.valor_atual;
-          lote.valor_principal -= lote.valor_principal * proporcao;
-          lote.valor_atual -= restante;
-          restante = 0;
-        }
-      }
-    }
-  }
-
-  // Insert active lotes
-  const activeLotes = lotes.filter(l => l.valor_atual > 0.01);
+  // A montagem dos lotes (aporte vira lote, resgate consome por FIFO) vive no `poupancaEngine`,
+  // junto da regra da data-base. Aqui ela so era testavel pelo banco, e foi por isso que gravou
+  // o dia CRU do deposito em `dia_aniversario` ate 09/09/2026: a regra dos dias 29, 30 e 31
+  // estava a poucas linhas dela, no outro arquivo, e esta copia nao a conhecia.
+  const activeLotes = montarLotesPersistidos(allMovs);
   if (activeLotes.length === 0) return;
 
   const lotesToInsert = activeLotes.map(l => ({

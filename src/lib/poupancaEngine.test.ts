@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { dataBaseDoDeposito, calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "./poupancaEngine";
+import {
+  dataBaseDoDeposito, calcularPoupancaDiario, buildPoupancaLotesFromMovs, montarLotesPersistidos,
+} from "./poupancaEngine";
 
 /**
  * Referencia: quatro depositos de R$ 10.000,00 cadastrados no GorilaVIEW em 06/09/2026 e lidos
@@ -186,6 +188,30 @@ describe("multiplos aportes e FIFO no resgate", () => {
     expect(lotes[1].dia_aniversario).toBe(20);
   });
 
+  /**
+   * Os dois casos acima sao dias 10 e 20 - dentro da faixa 1 a 28, onde a data-base E o dia do
+   * deposito. Eles nao exercitam a regra que existe: 29, 30 e 31 vao para o dia 1o do mes
+   * seguinte.
+   *
+   * Essa lacuna deixou passar, ate 09/09/2026, um `syncPoupancaLotes` que gravava o dia CRU em
+   * `poupanca_lotes.dia_aniversario`. Nao mudava numero, porque todo consumidor reconstroi os
+   * lotes das movimentacoes e ignora a coluna - mas era dado gravado contradizendo a regra,
+   * esperando o dia em que alguem confiasse nele.
+   */
+  it("deposito em 29, 30 e 31 tem data-base no dia 1o do mes seguinte", () => {
+    const emDia = (data: string) =>
+      buildPoupancaLotesFromMovs([{ data, tipo_movimentacao: "Aplicação", valor: 1000 }])[0];
+
+    expect(emDia("2025-01-29").dia_aniversario).toBe(1);
+    expect(emDia("2025-01-30").dia_aniversario).toBe(1);
+    expect(emDia("2025-01-31").dia_aniversario).toBe(1);
+    // Vira o ano junto: 31/12 tem data-base em 01/01 do ano seguinte.
+    expect(emDia("2025-12-31").dia_aniversario).toBe(1);
+    // A fronteira, medida contra o Gorila em 06/09/2026: 28 ainda e dia normal.
+    expect(emDia("2025-02-28").dia_aniversario).toBe(28);
+  });
+
+
   it("os dois lotes rendem nos seus proprios aniversarios", () => {
     const rows = rodarLotes("2025-04-30");
     const comGanho = rows.filter((r) => r.ganhoDiario > 0.00001).map((r) => r.data);
@@ -370,5 +396,53 @@ describe("Resgate parcial segue FIFO por data (medido no Gorila)", () => {
     // A assinatura: so o lote de 31/05 (data-base dia 1o) sobrevive intacto e credita em 01/09.
     const credito = rows.find((r) => r.data === "2026-09-01");
     expect(credito!.ganhoDiario).toBeCloseTo(36.78, 2);
+  });
+});
+
+/**
+ * O lote como ele fica GRAVADO. Era aqui que a regra faltava.
+ *
+ * O bloco acima cobre `buildPoupancaLotesFromMovs`, que sempre soube da data-base. Quem nao
+ * sabia era a montagem do `syncPoupancaLotes`, a UNICA que grava `poupanca_lotes` - e ela vivia
+ * dentro de uma funcao que fala com o banco, fora do alcance de qualquer teste. Passou
+ * despercebida ate 09/09/2026.
+ *
+ * Nao mudava numero: todo consumidor reconstroi os lotes das movimentacoes e ignora a coluna.
+ * Mudava a VERDADE do que estava gravado, esperando alguem confiar nela.
+ */
+describe("montarLotesPersistidos", () => {
+  const aplicar = (data: string, valor = 10000) =>
+    ({ data, tipo_movimentacao: "Aplicação", valor });
+
+  it("grava a data-base, nao o dia do deposito", () => {
+    const lotes = montarLotesPersistidos([aplicar("2022-12-30")]);
+    expect(lotes).toHaveLength(1);
+    expect(lotes[0].dia_aniversario).toBe(1);
+    expect(lotes[0].data_aplicacao).toBe("2022-12-30"); // a data em si nao muda
+  });
+
+  it("mantem o dia do deposito quando ele e 1 a 28", () => {
+    expect(montarLotesPersistidos([aplicar("2023-01-02")])[0].dia_aniversario).toBe(2);
+    expect(montarLotesPersistidos([aplicar("2025-02-28")])[0].dia_aniversario).toBe(28);
+  });
+
+  it("desconta o resgate por FIFO, do lote mais antigo para o mais novo", () => {
+    const lotes = montarLotesPersistidos([
+      aplicar("2025-01-10", 1000),
+      aplicar("2025-02-10", 1000),
+      { data: "2025-03-10", tipo_movimentacao: "Resgate", valor: 1500 },
+    ]);
+    // O primeiro lote zera e sai; o segundo fica com o que sobrou.
+    expect(lotes).toHaveLength(1);
+    expect(lotes[0].data_aplicacao).toBe("2025-02-10");
+    expect(lotes[0].valor_atual).toBeCloseTo(500, 2);
+  });
+
+  it("some com o lote zerado, em vez de guardar linha morta", () => {
+    const lotes = montarLotesPersistidos([
+      aplicar("2025-01-10", 1000),
+      { data: "2025-03-10", tipo_movimentacao: "Resgate Total", valor: 1000 },
+    ]);
+    expect(lotes).toHaveLength(0);
   });
 });
