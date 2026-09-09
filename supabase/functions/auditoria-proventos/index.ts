@@ -55,6 +55,17 @@ const TOL_DIAS = 3;
 const TOL_REL = 0.005;   // 0,5%
 const TOL_ABS = 0.00001; // so arredondamento de casa decimal
 
+/** Quantas datas precisam concordar na mesma razao para que ela seja tratada como FATOR, e nao
+ *  como coincidencia. Tres e o minimo que distingue padrao de acaso. */
+const MIN_PARA_FATOR = 3;
+
+const mediana = (xs: number[]) => {
+  if (!xs.length) return 1;
+  const o = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(o.length / 2);
+  return o.length % 2 ? o[m] : (o[m - 1] + o[m]) / 2;
+};
+
 async function pegaJson(url: string, comToken = false) {
   const h: Record<string, string> = { ...UA };
   if (comToken && BRAPI_TOKEN) h.Authorization = `Bearer ${BRAPI_TOKEN}`;
@@ -181,6 +192,17 @@ Deno.serve(async (req) => {
         const achados: Record<string, unknown>[] = [];
 
         // ── 1. valor: soma das nossas parcelas x total do Yahoo na mesma data-ex ────────────
+        // O PAREAMENTO acontece antes de qualquer julgamento, porque duas correcoes so sao
+        // possiveis olhando o conjunto - e nenhuma delas e "afrouxar a tolerancia".
+        //
+        // Afrouxar seria o remedio errado. A tolerancia ja foi generosa uma vez, em 08/09/2026,
+        // e escondeu 12 das 14 divergencias reais de ITSA4. O que se faz aqui e RETIRAR a parte
+        // sistematica e manter a resolucao fina sobre o que sobra.
+        const pares: { dataEx: string; nossa: { total: number; parcelas: number; manuais: number }; bruto: number }[] = [];
+        /** Os grupos de razao formados. Exposto de proposito: e o que explica por que
+  *  certas datas foram normalizadas em vez de acusadas. */
+        let diagGrupos: unknown = null;
+
         if (yahoo) {
           const usadas = new Set<string>();
           for (const [dataEx, nossa] of [...porDataNossa].sort()) {
@@ -201,20 +223,7 @@ Deno.serve(async (req) => {
             }
             cand.forEach((c) => usadas.add(c));
             const bruto = cand.reduce((s, c) => s + (yahoo.get(c) ?? 0), 0) * fatorDesde(dataEx);
-            const dif = bruto - nossa.total;
-            if (Math.abs(dif) > Math.max(TOL_ABS, TOL_REL * nossa.total)) {
-              achados.push({
-                tipo: dif > 0 ? "falta_em_nos" : "sobra_em_nos",
-                data_ex: dataEx,
-                nosso: +nossa.total.toFixed(8),
-                yahoo: +bruto.toFixed(8),
-                diferenca: +dif.toFixed(8),
-                parcelas_nossas: nossa.parcelas,
-                nota: dif > 0
-                  ? "o Yahoo tem mais - provavel parcela faltando na nossa base"
-                  : "temos mais que o Yahoo - pode ser furo DELE (ja aconteceu em PETR4)",
-              });
-            }
+            pares.push({ dataEx, nossa, bruto });
           }
           for (const y of [...yahoo.keys()].sort()) {
             if (y >= desde && !usadas.has(y)) {
@@ -224,6 +233,190 @@ Deno.serve(async (req) => {
               });
             }
           }
+
+          // ── O que e FATOR e o que e BURACO ──────────────────────────────────────────────
+          //
+          // O Yahoo entrega o provento AJUSTADO pelos eventos posteriores, e desfazemos esse
+          // ajuste com os NOSSOS fatores. Quando o fator implicito dele difere do nosso, as
+          // datas erram pela MESMA razao - e a auditoria acusava uma divergencia por data,
+          // afogando as reais.
+          //
+          // Medido em ITSA4 em 09/09/2026, isolando evento a evento:
+          //
+          //   evento        nosso fator   fator implicito do Yahoo
+          //   19/12/2025    1,02          1,020000     (identico)
+          //   03/12/2024    1,05          1,054618
+          //   28/11/2023    1,05          1,054450
+          //
+          // Nenhum dos dois esta errado: sao fatores de coisas diferentes. O nosso e de
+          // QUANTIDADE (5 acoes por 100, que e contratual); o dele e de PRECO, que precisa
+          // incluir tambem as subscricoes do aumento de capital.
+          //
+          // O RESIDUO E UM DEGRAU, NAO UMA CONSTANTE, e essa e a parte que erra quem tenta
+          // corrigir com uma normalizacao global: cada evento acrescenta a sua discrepancia,
+          // entao as datas anteriores a 2023 erram por 1,0087, as de 2024 por 1,0044 e as de
+          // 2025 por nada. Uma mediana unica cai no meio do degrau e nao detecta nada - foi o
+          // que aconteceu na primeira versao desta correcao.
+          //
+          // Por isso: AGRUPAR as razoes. Grupo com pelo menos MIN_PARA_FATOR datas na mesma
+          // razao e fator; data que destoa do grupo continua sendo divergencia, com a mesma
+          // resolucao de antes. E o oposto de afrouxar a tolerancia - que ja foi tentado em
+          // 08/09/2026 e escondeu 12 das 14 divergencias reais deste mesmo papel.
+          const comRazao = pares.filter((p) => p.bruto > 0 && p.nossa.total > 0)
+            .map((p) => ({ ...p, razao: p.nossa.total / p.bruto }))
+            .sort((a, b) => a.razao - b.razao);
+
+          // O agrupamento compara com o PRIMEIRO elemento do grupo, nao com a mediana corrente.
+          //
+          // Isso nao e detalhe: com a mediana, o grupo cresce e a referencia sobe junto, entao
+          // uma sequencia densa vai sendo encadeada indefinidamente. Foi o que aconteceu na
+          // primeira tentativa, em 09/09/2026 - as razoes de ITSA4 iam de 1,0000 a 1,0087 em
+          // passos menores que a tolerancia, e as 41 datas viraram UM grupo de mediana 1,0044.
+          // Como 0,44% fica abaixo da tolerancia, nada foi tratado como fator e as 13 datas
+          // continuaram aparecendo uma a uma - exatamente o que esta correcao existe para
+          // resolver.
+          //
+          // Ancorando no primeiro, a largura do grupo nunca passa de TOL_REL.
+          const grupos: { razao: number; datas: string[]; razoes: number[] }[] = [];
+          for (const p of comRazao) {
+            const ultimo = grupos[grupos.length - 1];
+            if (ultimo && Math.abs(p.razao / ultimo.razoes[0] - 1) <= TOL_REL) {
+              ultimo.datas.push(p.dataEx);
+              ultimo.razoes.push(p.razao);
+              ultimo.razao = mediana(ultimo.razoes);
+            } else {
+              grupos.push({ razao: p.razao, datas: [p.dataEx], razoes: [p.razao] });
+            }
+          }
+
+          // Fator aplicado a cada data: o do seu grupo, quando o grupo e grande o bastante e
+          // destoa de 1. Nas demais, 1 - ou seja, nada muda.
+          diagGrupos = grupos.map((g) => ({ razao: +g.razao.toFixed(6), n: g.datas.length }));
+          const fatorDaData = new Map<string, number>();
+          // O que identifica um fator e a CONSISTENCIA entre muitas datas, nao a distancia
+          // dele para 1. Um grupo de 26 datas na mesma razao exata e um fator ainda que a razao
+          // seja 1,0044 - e em ITSA4 ela e: e a discrepancia da bonificacao de 03/12/2024, onde
+          // o Yahoo usa 1,054618 e nos usamos 1,05.
+          //
+          // Exigir distancia maior que a tolerancia deixava esse degrau de fora, e ele reaparecia
+          // como 0,0042 de diferenca sem explicacao na reconciliacao.
+          //
+          // O risco assumido: se varias datas tivessem o MESMO erro real, ele seria normalizado
+          // junto. Por isso a linha de fator e sempre reportada, com quantas datas ela cobre -
+          // para que a normalizacao seja visivel e questionavel, nao silenciosa.
+          for (const g of grupos) {
+            const ehFator = g.datas.length >= MIN_PARA_FATOR;
+            for (const d of g.datas) fatorDaData.set(d, ehFator ? g.razao : 1);
+            if (ehFator && Math.abs(g.razao - 1) > 1e-4) {
+              achados.push({
+                tipo: "fator_divergente",
+                esperado: true,
+                razao: +g.razao.toFixed(6),
+                datas_no_grupo: g.datas.length,
+                de: g.datas.slice().sort()[0],
+                ate: g.datas.slice().sort()[g.datas.length - 1],
+                nota: `${g.datas.length} datas com a MESMA razao entre nos e o Yahoo. Nao e `
+                    + "provento faltando: o nosso fator e de quantidade, o dele de preco "
+                    + "(inclui subscricao). Estas datas ja estao normalizadas por esta razao.",
+              });
+            }
+          }
+
+          for (const { dataEx, nossa, bruto } of pares) {
+            const esperado = bruto * (fatorDaData.get(dataEx) ?? 1);
+            const dif = esperado - nossa.total;
+            if (Math.abs(dif) > Math.max(TOL_ABS, TOL_REL * nossa.total)) {
+              achados.push({
+                tipo: dif > 0 ? "falta_em_nos" : "sobra_em_nos",
+                data_ex: dataEx,
+                nosso: +nossa.total.toFixed(8),
+                yahoo: +esperado.toFixed(8),
+                diferenca: +dif.toFixed(8),
+                parcelas_nossas: nossa.parcelas,
+                nota: dif > 0
+                  ? "o Yahoo tem mais - provavel parcela faltando na nossa base"
+                  : "temos mais que o Yahoo - pode ser furo DELE (ja aconteceu em PETR4)",
+              });
+            }
+          }
+
+          // ── Reconciliacao do total ──────────────────────────────────────────────────────
+          //
+          // Responde "esta faltando dinheiro?" antes de "em que data?", e essa e a pergunta que
+          // importa. As duas fontes podem ATRIBUIR o mesmo dinheiro a datas diferentes sem que
+          // nada esteja faltando.
+          //
+          // O caso concreto e a PETR4: ela arquiva a correcao pela Selic sob data-ex PROPRIA (as
+          // linhas RENDIMENTO de abril, todo ano), enquanto o Yahoo a devolve para a data-ex
+          // original da declaracao. Por data aparecem "faltas" de 1 a 2%; a soma da janela diz
+          // se falta dinheiro de verdade. Discutivelmente o nosso esta mais certo - a correcao
+          // e um evento proprio, com data-ex propria.
+          //
+          // A soma percorre TUDO na janela, nao so as datas pareadas: somar so o que casou
+          // deixaria de fora justamente a data da correcao, que e o que se quer explicar. E
+          // data-ex futura fica de fora dos dois lados - nos ja temos o declarado, e o Yahoo so
+          // publica quando ocorre.
+          // A soma do lado do Yahoo sai dos PARES, nao das datas dele.
+          //
+          // O pareamento tolera ate TOL_DIAS de diferenca entre as duas fontes, e o fator esta
+          // indexado pela data NOSSA. Percorrer as datas do Yahoo faria a normalizacao escapar
+          // justamente nos pares em que as datas nao coincidem - e o total voltaria a nao
+          // fechar, por um motivo que nao tem nada a ver com provento faltando.
+          //
+          // As datas do Yahoo que nao paream entram sem fator: nao ha par de onde tira-lo, e
+          // elas ja aparecem na lista como `so_no_yahoo`.
+          let totalNosso = 0;
+          for (const [d, a] of porDataNossa) if (d <= hoje) totalNosso += a.total;
+
+          let totalYahoo = 0;
+          for (const { dataEx, bruto } of pares) {
+            if (dataEx > hoje) continue;
+            totalYahoo += bruto * (fatorDaData.get(dataEx) ?? 1);
+          }
+          for (const [d, v] of yahoo) {
+            if (d < desde || d > hoje || usadas.has(d)) continue;
+            totalYahoo += v * fatorDesde(d);
+          }
+
+          // O veredito NAO e "bate / nao bate", e sim "a lista explica o total?".
+          //
+          // A diferenca importa: um teto de 0,5% sobre a soma da janela e frouxo demais para
+          // uma parcela pequena. Em ITSA4 a diferenca total ficou em 0,0193 contra um teto de
+          // 0,0196 - "bateria" por 3 milesimos, com uma parcela faltando de verdade. Dizer
+          // "esta tudo certo" ali seria repetir, na conta do total, o mesmo erro da tolerancia
+          // generosa que ja escondeu 12 divergencias deste papel em 08/09/2026.
+          //
+          // Entao compara-se o total com a SOMA DO QUE FOI LISTADO. Se batem, a lista da conta
+          // do buraco. Se o total e maior, ha algo que nao esta na lista - e e ai que se olha.
+          const difTotal = totalYahoo - totalNosso;
+          const somaListada = achados
+            .filter((a) => a.tipo === "falta_em_nos" || a.tipo === "sobra_em_nos")
+            .reduce((acc, a) => acc + Number(a.diferenca ?? 0), 0);
+          const sobra = difTotal - somaListada;
+          // O resto e comparado com o TOTAL, nao com a diferenca.
+          //
+          // Ele nao e uma unica sobra: e a soma dos residuos de todas as datas que ficaram
+          // ABAIXO da tolerancia individual e por isso nao entraram na lista. Cada um e menor
+          // que TOL_REL do seu valor, entao a soma e limitada por TOL_REL do total - essa e a
+          // escala certa. Em ITSA4 sao 0,0089 sobre 3,93, ou 0,23%: ruido da aproximacao pela
+          // mediana, nao dinheiro.
+          //
+          // E continua apertado onde importa: uma parcela faltando de verdade aparece na lista e
+          // e SUBTRAIDA antes deste teste, entao ela nao se esconde aqui.
+          const explicado = Math.abs(sobra) <= Math.max(TOL_ABS, TOL_REL * Math.max(totalNosso, 1e-9));
+
+          achados.push({
+            tipo: "reconciliacao",
+            esperado: explicado,
+            nosso: +totalNosso.toFixed(8),
+            yahoo: +totalYahoo.toFixed(8),
+            diferenca_total: +difTotal.toFixed(8),
+            soma_das_datas_listadas: +somaListada.toFixed(8),
+            nao_explicado: +sobra.toFixed(8),
+            nota: explicado
+              ? "as datas listadas explicam a diferenca total da janela"
+              : "a diferenca total NAO e explicada pelas datas listadas - ha algo fora da lista",
+          });
         }
 
         // ── 2. contagem: parcelas declaradas na B3 x parcelas que temos ─────────────────────
@@ -266,6 +459,7 @@ Deno.serve(async (req) => {
               : "nao cobre este ISIN (unit nao aparece: a B3 publica por classe)",
           },
           datas_ex_auditadas: porDataNossa.size,
+          grupos_de_razao: diagGrupos,
           // O contador ignora o que ja foi classificado como esperado: um numero que sobe por
           // causa de provento futuro treina quem le a ignorar o numero.
           divergencias: achados.filter((a) => !a.esperado).length,
