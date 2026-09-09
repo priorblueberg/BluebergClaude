@@ -372,6 +372,9 @@ export type Database = {
           moeda: string
           bolsa: string | null
           ativo: boolean
+          sincronizar_cotacoes: boolean
+          tipo: string | null
+          subtipo: string | null
           created_at: string
         }
         Insert: {
@@ -382,6 +385,9 @@ export type Database = {
           moeda?: string
           bolsa?: string | null
           ativo?: boolean
+          sincronizar_cotacoes?: boolean
+          tipo?: string | null
+          subtipo?: string | null
           created_at?: string
         }
         Update: {
@@ -392,6 +398,9 @@ export type Database = {
           moeda?: string
           bolsa?: string | null
           ativo?: boolean
+          sincronizar_cotacoes?: boolean
+          tipo?: string | null
+          subtipo?: string | null
           created_at?: string
         }
         Relationships: []

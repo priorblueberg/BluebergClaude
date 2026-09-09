@@ -31,26 +31,29 @@ export async function ehDiaUtil(dataISO: string): Promise<boolean> {
 /**
  * Primeiro dia em que uma carteira pode ter operacao.
  *
- * E o ULTIMO DIA UTIL DO ANO ANTERIOR ao primeiro ano coberto, de proposito: quem ja tinha
- * papel antes lanca o saldo como aplicacao inicial nesse dia, e a posicao entra no ano novo
- * ja rentabilizando desde o primeiro dia util. Era assim quando o piso era 2024 - o CDI
- * comecava em 29/12/2023, o ultimo dia util de 2023, e nao em 02/01/2024.
+ * E o PRIMEIRO DIA UTIL DE 2023 - 02/01/2023, uma segunda-feira. Nada pode ser lancado antes
+ * disso, em nenhum produto.
  *
- * Em 07/09/2026 as series recuaram para aceitar titulos de 2023 (uma debenture comprada em
- * 06/2023 puxou o piso da carteira), entao esta data acompanhou: 29/12/2022.
+ * A regra mudou em 08/09/2026, e a anterior durou menos de um dia. Ela era o ultimo dia util
+ * BANCARIO de 2022 (30/12), para que quem ja tinha papel lancasse o saldo de abertura na
+ * vespera e entrasse o ano novo ja rentabilizando. A ideia funcionava, mas fazia a ferramenta
+ * calcular num ano que ela nao cobre, so para acomodar o saldo inicial - e a primeira posicao
+ * de teste em 30/12/2022 expos um caso de borda na poupanca, cuja data-base do dia 30 vai para
+ * o dia 1o e nao existe na serie do BCB.
  *
- * O DIA E O DO MERCADO, NAO O DO BANCO. A B3 encerra o ano um dia util antes do calendario
- * bancario: em 2022 o ultimo pregao foi 29/12 e o BCB ainda publicou CDI em 30/12; em 2023,
- * ultimo pregao em 28/12 e CDI ate 29/12. Quem lanca saldo de abertura copia do extrato da
- * corretora, que fecha no ultimo pregao - e usar a data do mercado nao tira nada de ninguem,
- * porque ela e ANTERIOR a bancaria: quem preferir 30/12/2022 continua podendo.
+ * A decisao do Daniel foi separar as duas coisas: a ferramenta calcula 2023 em diante e ponto;
+ * saldo anterior a 2023 sera tratado por um caminho proprio, ainda a definir. Enquanto esse
+ * caminho nao existe, NAO ha como registrar posicao anterior a 2023 - e isso e intencional.
+ *
+ * O piso vale para a data de OPERACAO. Vencimento de titulo nao passa por aqui: e futuro por
+ * definicao, e usa a propria data da operacao como minimo.
  *
  * Ao mexer aqui, confira antes que as series cubram a data NOVA e o que vem antes dela: o
  * `pisoDoCalendario` recua 45 dias para fechar o ciclo de IPCA, e serie faltando nao da erro,
  * so faz o motor calcular com o que tem. Hoje CDI, Selic, TR, dolar e euro comecam em
- * 01/11/2022, e o calendario em 01/01/2022.
+ * 01/11/2022, e o calendario em 01/01/2022 - todos com folga sobre 02/01/2023.
  */
-export const DATA_MINIMA_CARTEIRA = "2022-12-29";
+export const DATA_MINIMA_CARTEIRA = "2023-01-02";
 
 /**
  * Mensagem se a data da operacao estiver fora da janela permitida, ou null se estiver dentro.
@@ -61,9 +64,10 @@ export const DATA_MINIMA_CARTEIRA = "2022-12-29";
  */
 export function foraDaJanela(dataISO: string, maxISO: string): string | null {
   if (dataISO < DATA_MINIMA_CARTEIRA)
-    return `A data não pode ser anterior a ${fmtData(DATA_MINIMA_CARTEIRA)}, início das carteiras.`;
+    return `A data não pode ser anterior a ${fmtData(DATA_MINIMA_CARTEIRA)}, primeiro dia útil de 2023 e início do cálculo da ferramenta.`;
   if (dataISO > maxISO)
-    return `A data não pode ser posterior a ${fmtData(maxISO)}, a última data com cálculo fechado.`;
+    return `Ainda não há dado divulgado para ${fmtData(dataISO)}. A última data com informação `
+      + `fechada é ${fmtData(maxISO)}, e a operação só pode ser lançada até lá.`;
   return null;
 }
 

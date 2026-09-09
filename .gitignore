@@ -27,3 +27,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Artefatos de ferramenta, nao de projeto: `deno check` (usado para validar as edge functions,
+# que o `npm run checar` nao cobre) e o cache do supabase CLI.
+deno.lock
+supabase/.temp/

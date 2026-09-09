@@ -1,9 +1,4 @@
 // Diagnostico da BRAPI: mede o que ela realmente entrega, usando o token que esta no secret.
-//
-// Existe porque a pergunta "da para usar so a BRAPI?" nao se responde lendo documentacao nem
-// perguntando para a IA dela - se responde chamando os endpoints e contando o que volta. E o
-// token nao pode sair do ambiente para um teste manual, entao o teste vem ate ele.
-//
 // Nao grava nada. So relata.
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -18,7 +13,7 @@ async function pega(url: string) {
   const txt = await r.text();
   let j: unknown = null;
   try { j = JSON.parse(txt); } catch { /* resposta nao-JSON */ }
-  return { status: r.status, json: j as Record<string, unknown> | null, cru: txt.slice(0, 300) };
+  return { status: r.status, json: j as Record<string, unknown> | null, cru: txt.slice(0, 400) };
 }
 
 Deno.serve(async (req) => {
@@ -26,48 +21,27 @@ Deno.serve(async (req) => {
 
   const body = await req.json().catch(() => ({}));
   const ticker = String(body?.ticker ?? "PETR4").toUpperCase().trim();
+  const desde = String(body?.desde ?? "2026-01-01");
   const out: Record<string, unknown> = { ticker, token_configurado: BRAPI_TOKEN.length > 0 };
 
-  // 1) Serie historica completa: cobre desde quando?
+  // Payload CRU dos proventos. A pergunta e se a BRAPI traz mais linhas do que gravamos - o
+  // indice unico e (ticker, tipo, valor, data_ex, data_pagamento), entao duas parcelas iguais
+  // no mesmo pagamento colapsariam em uma sem deixar rastro.
   try {
-    const r = await pega(`https://brapi.dev/api/v2/stocks/historical?symbols=${ticker}&range=max&interval=1d`);
+    const r = await pega(`https://brapi.dev/api/v2/stocks/dividends?symbols=${ticker}`);
     const res = (r.json?.results as Record<string, unknown>[] | undefined)?.[0];
-    const hist = (res?.historicalDataPrice ?? res?.data ?? res?.history) as Record<string, unknown>[] | undefined;
-    out.historical = {
+    const bloco = (res?.data ?? res) as Record<string, unknown> | undefined;
+    const cash = (bloco?.cashDividends ?? []) as Record<string, unknown>[];
+    const recentes = cash.filter((d) => String(d.exDate ?? "") >= desde);
+    out.dividends = {
       status: r.status,
-      chaves_do_resultado: res ? Object.keys(res) : null,
-      pregoes: hist?.length ?? null,
-      primeiro: hist?.[0] ?? null,
-      ultimo: hist?.at(-1) ?? null,
-      amostra_bruta: hist ? null : r.cru,
+      chaves_do_bloco: bloco ? Object.keys(bloco) : null,
+      total_cashDividends: cash.length,
+      qtd_recentes: recentes.length,
+      recentes_na_integra: recentes,
     };
   } catch (e) {
-    out.historical = { erro: String(e) };
-  }
-
-  // 2) A janela do desdobramento de PETR4 em setembro/2005. Se o preco cair perto de 4x de um
-  //    pregao para o outro, o evento existe na serie mesmo sem constar em stockDividends -
-  //    e ai da para deduzir o split do proprio preco.
-  try {
-    const r = await pega(`https://brapi.dev/api/v2/stocks/historical?symbols=${ticker}`
-      + `&startDate=2005-08-25&endDate=2005-09-15&interval=1d&sortOrder=asc`);
-    const res = (r.json?.results as Record<string, unknown>[] | undefined)?.[0];
-    const hist = (res?.historicalDataPrice ?? res?.data ?? res?.history) as Record<string, unknown>[] | undefined;
-    out.janela_split_2005 = {
-      status: r.status,
-      pontos: hist?.length ?? null,
-      serie: hist?.map((d) => ({ data: d.date ?? d.data, fech: d.close ?? d.fechamento })) ?? r.cru,
-    };
-  } catch (e) {
-    out.janela_split_2005 = { erro: String(e) };
-  }
-
-  // 3) O dicionario da API menciona algum campo de split fora de stockDividends?
-  try {
-    const r = await pega(`https://brapi.dev/api/v2/dictionary?search=split`);
-    out.dicionario_split = { status: r.status, amostra: r.cru };
-  } catch (e) {
-    out.dicionario_split = { erro: String(e) };
+    out.dividends = { erro: String(e) };
   }
 
   return new Response(JSON.stringify(out, null, 2), {

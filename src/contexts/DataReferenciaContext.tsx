@@ -6,8 +6,27 @@ interface DataReferenciaContextType {
   dataReferencia: Date;
   setDataReferencia: (date: Date) => void;
   dataReferenciaISO: string; // yyyy-MM-dd
-  /** Penultimo dia util. Teto da data de referencia. */
+  /**
+   * Teto da CONSULTA: hoje (D0). Pode conter dado provisorio - ver `maxDataOficial`.
+   *
+   * Decisao do Daniel em 08/09/2026: a rentabilidade de hoje pode ser consultada mesmo com a
+   * fonte ainda nao tendo publicado o dia. Os motores ja sabem lidar com isso - percorrem o
+   * calendario ate a data de calculo e repetem o ultimo valor conhecido, marcando o dia como
+   * estimado para NAO fabricar variacao (`cotaEstimada` no fundoEngine).
+   */
   maxDate: Date;
+  /**
+   * Teto do CADASTRO de operacao: o ultimo dia em que todas as fontes ja fecharam.
+   *
+   * Consultar com dado provisorio e aceitavel; gravar operacao contra ele nao e. O numero da
+   * consulta se corrige sozinho quando o oficial chega, mas a operacao fica gravada com o que
+   * havia no momento.
+   *
+   * ACOES SAO EXCECAO e nao passam por este teto (decisao do Daniel em 08/09/2026): o preco da
+   * compra ou venda e DIGITADO pelo cliente, nao sai da nossa serie. Dado provisorio ali afeta
+   * so a marcacao a mercado, nunca o lancamento.
+   */
+  maxDataOficial: Date;
   /** Incremented each time the user applies the date — use as useEffect dep */
   appliedVersion: number;
   /** Call to trigger global recalculation */
@@ -37,17 +56,25 @@ export function penultimoDiaUtilAprox(hoje: Date): Date {
 }
 
 export function DataReferenciaProvider({ children }: { children: ReactNode }) {
-  // Penultimo dia util: e a data mais recente sem buraco em nenhuma fonte, e por isso o teto.
+  // Duas datas diferentes, e a distincao entre elas e a regra inteira.
   //
-  // O amarrador e a cota de fundo: a CVM publica a do dia D no dia util D+1. Entao no ultimo
-  // dia util a cota dele ainda nao saiu. Em 05/09/2026 (sabado) o ultimo dia util era 04/09 e
-  // a serie de cotas parava em 03/09 - era exatamente esse dia faltando que respondia pelos
-  // R$ 227,88 de divergencia contra o Gorila, cuja fonte de cota chega antes da nossa.
+  // `maxDate` (consulta) e HOJE. `maxDataOficial` (cadastro) e o penultimo dia util - a data
+  // mais recente sem buraco em nenhuma fonte.
   //
-  // Recuando mais um dia util, todas as fontes ja fecharam e os dois lados olham a mesma foto.
-  // Decisao do Daniel em 05/09/2026.
+  // O amarrador do oficial e a cota de fundo: a CVM publica a do dia D no dia util D+1. Entao
+  // no ultimo dia util a cota dele ainda nao saiu. Em 05/09/2026 (sabado) o ultimo dia util era
+  // 04/09 e a serie de cotas parava em 03/09 - era exatamente esse dia faltando que respondia
+  // pelos R$ 227,88 de divergencia contra o Gorila, cuja fonte de cota chega antes da nossa.
+  //
+  // Ate 08/09/2026 o penultimo dia util era o teto das DUAS coisas, e por isso nao dava para
+  // ver a rentabilidade de hoje. A separacao veio da decisao do Daniel: consulta vai ate D0
+  // com dado provisorio, cadastro continua exigindo dado fechado.
+  //
+  // O DEFAULT continua no dia oficial, de proposito: abrir a ferramenta num numero que muda
+  // sozinho amanha confunde mais do que ajuda. D0 fica a um clique, para quem quer.
   const [dataReferencia, setDataReferencia] = useState<Date>(() => penultimoDiaUtilAprox(new Date()));
-  const [maxDate, setMaxDate] = useState<Date>(() => penultimoDiaUtilAprox(new Date()));
+  const [maxDataOficial, setMaxDataOficial] = useState<Date>(() => penultimoDiaUtilAprox(new Date()));
+  const [maxDate, setMaxDate] = useState<Date>(() => startOfDay(new Date()));
   const [appliedVersion, setAppliedVersion] = useState(0);
   const [isRecalculating, setIsRecalculating] = useState(false);
   // Se o usuario ja escolheu uma data, a chegada do calendario nao pode puxar a escolha dele.
@@ -64,11 +91,11 @@ export function DataReferenciaProvider({ children }: { children: ReactNode }) {
       .order("data", { ascending: false })
       .limit(2)
       .then(({ data }) => {
-        // [0] e o ultimo dia util, [1] o penultimo - que e o teto.
+        // [0] e o ultimo dia util, [1] o penultimo - que e o teto do CADASTRO.
         const penultimo = data?.[1]?.data;
         if (!vivo || !penultimo) return; // sem calendario, fica a aproximacao
         const exato = startOfDay(parseISO(penultimo));
-        setMaxDate(exato);
+        setMaxDataOficial(exato);
         if (!escolhidaPeloUsuario.current) setDataReferencia(exato);
       });
     return () => {
@@ -98,6 +125,7 @@ export function DataReferenciaProvider({ children }: { children: ReactNode }) {
         setDataReferencia: definirDataReferencia,
         dataReferenciaISO,
         maxDate,
+        maxDataOficial,
         appliedVersion,
         applyDataReferencia,
         isRecalculating,

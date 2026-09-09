@@ -172,14 +172,9 @@ export default function BoletaTransacao({
 }) {
   const { user } = useAuth();
   const isAdmin = useIsAdmin();
-  const { dataReferenciaISO, applyDataReferencia, maxDate } = useDataReferencia();
-  /**
-   * Janela em que uma operacao pode ser lancada: do inicio das carteiras ate a ultima data de
-   * calculo. Os campos de data ficam limitados a ela, e a validacao repete o limite porque o
-   * usuario pode digitar em vez de usar o seletor.
-   */
-  const maxDataISO = `${maxDate.getFullYear()}-${String(maxDate.getMonth() + 1).padStart(2, "0")}-${String(maxDate.getDate()).padStart(2, "0")}`;
-  const limitesData = { min: DATA_MINIMA_CARTEIRA, max: maxDataISO };
+  const { dataReferenciaISO, applyDataReferencia, maxDate, maxDataOficial } = useDataReferencia();
+  const isoDe = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [produtos, setProdutos] = useState<Produto[]>([]);
@@ -249,6 +244,26 @@ export default function BoletaTransacao({
   const isMoeda = categoriaSelecionada?.nome === "Moedas";
   const isAcao = categoriaSelecionada?.nome === "Renda Variável";
   const isPoupanca = produtoSelecionado?.nome === "Poupança";
+
+  /**
+   * Janela em que uma operacao pode ser lancada. O piso e o inicio da ferramenta; o TETO
+   * depende do produto, e e ai que mora a regra.
+   *
+   * Consulta de rentabilidade vai ate D0 com dado provisorio. CADASTRO, nao: gravar uma
+   * operacao contra um dado que ainda vai mudar deixa a operacao errada para sempre, enquanto
+   * a consulta se corrige sozinha. Entao o teto do cadastro e `maxDataOficial`, o ultimo dia
+   * em que todas as fontes ja fecharam.
+   *
+   * ACAO E EXCECAO, e vai ate D0 (decisao do Daniel em 08/09/2026): o preco da compra ou venda
+   * e DIGITADO pelo cliente, nao sai da nossa serie. Ali o provisorio afeta so a marcacao a
+   * mercado da posicao, nunca o lancamento - diferente de fundo, onde a quantidade de cotas
+   * SAI da cota do dia, e de renda fixa, cujo PU sai da curva.
+   *
+   * Os campos de data ficam limitados a essa janela, e a validacao repete o limite porque o
+   * usuario pode digitar em vez de usar o seletor.
+   */
+  const maxDataISO = isoDe(isAcao ? maxDate : maxDataOficial);
+  const limitesData = { min: DATA_MINIMA_CARTEIRA, max: maxDataISO };
   // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
   // Alem disso, LC, RDB, RDC e DPGE nao pagam cupom nem para admin: a boleta do Gorila nem
   // oferece periodicidade neles (ver PRODUTOS_SEM_CUPOM no motor).
