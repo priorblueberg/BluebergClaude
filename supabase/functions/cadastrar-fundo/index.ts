@@ -170,6 +170,100 @@ Deno.serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({}));
+
+    // ── Carga do CATALOGO ────────────────────────────────────────────────────────────────────
+    //
+    //   POST { catalogo: true }        grava
+    //   POST { catalogo: true, seco: true }  so conta, sem gravar
+    //
+    // Mesma logica das acoes: o catalogo serve para ENCONTRAR o fundo pelo nome, e a serie de
+    // cotas so nasce quando alguem usa o ativo. Por isso as linhas entram magras - identidade e
+    // classificacao - e com `sincronizar_cotas = false`. Quem preenche a ficha inteira e liga a
+    // sincronizacao e o cadastro por CNPJ, mais abaixo nesta mesma funcao.
+    //
+    // Nao ha rotina periodica, e e deliberado: o catalogo de acoes deixou de ter uma em
+    // 10/09/2026 pelos mesmos motivos. Esta carga e manual, e roda quando alguem quiser.
+    if (body.catalogo === true) {
+      // `ignoreDuplicates` e o que protege os fundos JA carregados. Sem ele, a carga passaria
+      // por cima da ficha completa deles e desligaria a sincronizacao das cotas - a serie
+      // pararia de atualizar sem ninguem mexer em nada.
+      const linhas: Record<string, unknown>[] = [];
+      let lidas = 0;
+      const fora: Record<string, number> = {};
+      const descarta = (motivo: string) => { fora[motivo] = (fora[motivo] ?? 0) + 1; };
+
+      await percorrerCsv(
+        await membroRemoto(URL_CADASTRO, (n) => n === "registro_classe.csv"),
+        (linha, idx) => {
+          lidas++;
+          const c = (nome: string) => campo(linha, idx.get(nome) ?? -1).trim();
+          const tipo = c("TIPO_CLASSE").replace("Classes de Cotas de Fundos ", "");
+          const cnpjClasse = soDigitos(c("CNPJ_CLASSE"));
+          const publico = c("PUBLICO_ALVO");
+          const classificacao = c("CLASSIFICACAO");
+          const anbima = c("CLASSIFICACAO_ANBIMA");
+
+          if (cnpjClasse.length !== 14) return descarta("cnpj invalido");
+          if (c("SITUACAO") !== "Em Funcionamento Normal") return descarta("nao esta em funcionamento");
+          // Condominio fechado nao aceita aplicacao nova, e exclusivo pertence a um cotista so.
+          if (c("FORMA_CONDOMINIO") !== "Aberto") return descarta("condominio fechado");
+          if (c("EXCLUSIVO") === "S") return descarta("exclusivo");
+          // FII, FIAGRO e FIIM sao negociados em bolsa e ja vivem no catalogo de acoes. Deixa-los
+          // entrar aqui criaria o mesmo ativo duas vezes, com ticker de um lado e CNPJ do outro.
+          if (tipo === "FII" || tipo === "FIAGRO" || tipo === "FIIM") return descarta("negociado em bolsa");
+          if (publico !== "Público Geral" && publico !== "Qualificado") return descarta("publico restrito");
+
+          const denominacao = c("DENOMINACAO_SOCIAL");
+          if (!denominacao) return descarta("sem denominacao");
+
+          linhas.push({
+            cnpj_classe: cnpjClasse,
+            nome_curto: denominacao.slice(0, 120),
+            denominacao_social: denominacao,
+            tipo_classe: c("TIPO_CLASSE") || null,
+            classificacao: classificacao || null,
+            classificacao_anbima: anbima || null,
+            situacao: c("SITUACAO") || null,
+            publico_alvo: publico || null,
+            forma_condominio: c("FORMA_CONDOMINIO") || null,
+            exclusivo: c("EXCLUSIVO") || null,
+            data_inicio: c("DATA_INICIO") || null,
+            tributacao_longo_prazo: c("TRIBUTACAO_LONGO_PRAZO") || null,
+            entidade_investimento: c("ENTIDADE_INVESTIMENTO") || null,
+            // A regra do come-cotas por EXCLUSAO, como manda a IN RFB 1585/2015 art. 2o, e nao
+            // por "nao contem acoes". Previdencia tem regime proprio (art. 44) e a CVM so a
+            // revela na classificacao ANBIMA - no campo dela um PGBL de renda fixa aparece
+            // como "Renda Fixa" e passaria batido.
+            come_cotas: tipo === "FIF"
+              && !/^previd/i.test(anbima)
+              && (classificacao === "Renda Fixa" || classificacao === "Multimercado" || classificacao === "Cambial"),
+            engine: "FUNDO",
+            ativo: true,
+            sincronizar_cotas: false,
+          });
+        },
+      );
+
+      if (body.seco === true) {
+        return json({ ok: true, seco: true, lidas, no_recorte: linhas.length, descartadas: fora });
+      }
+      if (!linhas.length) throw new Error("catalogo veio vazio - nao vou gravar nada");
+
+      let gravadas = 0;
+      for (let i = 0; i < linhas.length; i += 500) {
+        const { error } = await sb.from("cadastro_de_fundos")
+          .upsert(linhas.slice(i, i + 500), { onConflict: "cnpj_classe", ignoreDuplicates: true });
+        if (error) throw new Error(`upsert (lote ${i / 500 + 1}): ${error.message}`);
+        gravadas += Math.min(500, linhas.length - i);
+      }
+      const { count: total } = await sb.from("cadastro_de_fundos")
+        .select("*", { count: "exact", head: true });
+      const { count: sincronizando } = await sb.from("cadastro_de_fundos")
+        .select("*", { count: "exact", head: true }).eq("sincronizar_cotas", true);
+      return json({ ok: true, lidas, no_recorte: linhas.length, enviadas: gravadas,
+                    no_catalogo: total, sincronizando_cotas: sincronizando, descartadas: fora });
+    }
+
     const cnpj = soDigitos(body.cnpj);
     if (cnpj.length !== 14) return json({ error: "Informe um CNPJ com 14 dígitos." }, 400);
 

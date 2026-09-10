@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { carregarFundo, PrecisaSubclasse } from "@/lib/carregarFundo";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,16 +48,6 @@ export default function CadastrarFundoModal({ open, onOpenChange, onCriado }: Pr
     }
   }, [open]);
 
-  const chamar = async (payload: Record<string, unknown>) => {
-    const { data, error } = await supabase.functions.invoke("cadastrar-fundo", { body: payload });
-    if (error) throw new Error(error.message);
-    if ((data as any)?.error) throw new Error((data as any).error);
-    return data as {
-      fundoId: string; nomeCurto: string | null; cotasInseridas: number;
-      proximoMes: string | null; precisaSubclasse?: string[];
-    };
-  };
-
   const handleSalvar = async () => {
     const digitos = cnpj.replace(/\D/g, "");
     if (digitos.length !== 14) {
@@ -68,32 +58,24 @@ export default function CadastrarFundoModal({ open, onOpenChange, onCriado }: Pr
     setProgresso("Buscando o fundo no cadastro da CVM...");
 
     try {
-      let total = 0;
-      let resposta = await chamar({ cnpj: digitos, desde: desde || null, subclasse: subclasse || null });
-
-      // Mesmo CNPJ publicando mais de uma subclasse: sem escolher, gravaria cota
-      // errada em silencio. O usuario decide qual e a dele.
-      if (resposta.precisaSubclasse?.length) {
-        setSubclasses(resposta.precisaSubclasse);
-        setProgresso(null);
-        setSalvando(false);
-        toast.warning("Este CNPJ publica mais de uma subclasse. Escolha qual é a sua.");
-        return;
-      }
-
-      total += resposta.cotasInseridas;
-      let voltas = 0;
-      while (resposta.proximoMes && voltas < 20) {
-        setProgresso(`Carregando cotas... ${total} até agora (${resposta.proximoMes}).`);
-        resposta = await chamar({ cnpj: digitos, subclasse: subclasse || null });
-        total += resposta.cotasInseridas;
-        voltas++;
-      }
-
-      toast.success(`Fundo cadastrado com ${total} cotas carregadas.`);
-      onCriado({ id: resposta.fundoId, nome: resposta.nomeCurto || "Fundo" });
+      const r = await carregarFundo(digitos, {
+        desde: desde || null,
+        subclasse: subclasse || null,
+        aoProgredir: (cotas, mes) => setProgresso(`Carregando cotas... ${cotas} até agora (${mes}).`),
+      });
+      toast.success(`Fundo cadastrado com ${r.cotas} cotas carregadas.`);
+      onCriado({ id: r.fundoId, nome: r.nomeCurto || "Fundo" });
       onOpenChange(false);
     } catch (e: any) {
+      // Mesmo CNPJ publicando mais de uma subclasse: sem escolher, gravaria cota errada em
+      // silencio. O usuario decide qual e a dele.
+      if (e instanceof PrecisaSubclasse) {
+        setSubclasses(e.opcoes);
+        setProgresso(null);
+        setSalvando(false);
+        toast.warning(e.message);
+        return;
+      }
       toast.error(e?.message || "Não foi possível cadastrar o fundo.");
     } finally {
       setSalvando(false);

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { format, parse, isValid } from "date-fns";
 import { PlusCircle, AlertTriangle, HelpCircle, CalendarIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -20,6 +20,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
 import FundoSelect from "@/components/FundoSelect";
+import { carregarFundo } from "@/lib/carregarFundo";
 import TituloSelect from "@/components/TituloSelect";
 import { MOEDAS } from "@/lib/catalogoDeMoedas";
 import AcaoSelect from "@/components/AcaoSelect";
@@ -226,7 +227,10 @@ export default function BoletaTransacao({
     dataCotizacao: string;
     cota: number | null;
     ultima: { data: string; valor: number } | null;
+    /** Primeiro dia da serie do fundo. `null` = nao ha serie carregada. */
+    primeira: string | null;
   } | null>(null);
+  const [carregandoSerie, setCarregandoSerie] = useState(false);
   // Moedas
   const [moedaSel, setMoedaSel] = useState("");
   // Acoes
@@ -392,18 +396,27 @@ export default function BoletaTransacao({
       });
   }, [isAdmin, editId]);
 
-  // Fundos disponiveis (base publica da CVM, compartilhada por todos).
-  useEffect(() => {
-    if (!isFundo) return;
-    supabase
+  // Os fundos JA CARREGADOS, que sao poucos e tem serie de cotas.
+  //
+  // O filtro por `sincronizar_cotas` nao e detalhe: desde 10/09/2026 esta tabela guarda tambem o
+  // CATALOGO da CVM, com 8.571 classes. Sem ele a boleta baixaria o catalogo inteiro toda vez
+  // que abrisse, e o `FundoSelect` filtraria 8.571 linhas em memoria a cada tecla. Quem varre o
+  // catalogo e a busca do proprio seletor, no servidor e sob demanda.
+  const carregarFundos = useCallback(async () => {
+    const { data } = await supabase
       .from("cadastro_de_fundos")
       .select("id, nome_curto, cnpj_classe")
       .eq("ativo", true)
-      .order("nome_curto")
-      .then(({ data }) => {
-        if (data) setFundos(data.map((f: any) => ({ id: f.id, nome: f.nome_curto, cnpj: f.cnpj_classe })));
-      });
-  }, [isFundo]);
+      .eq("sincronizar_cotas", true)
+      .order("nome_curto");
+    setFundos((data ?? []).map((f: { id: string; nome_curto: string; cnpj_classe: string }) =>
+      ({ id: f.id, nome: f.nome_curto, cnpj: f.cnpj_classe })));
+  }, []);
+
+  useEffect(() => {
+    if (!isFundo) return;
+    void carregarFundos();
+  }, [isFundo, carregarFundos]);
 
   // A cota mostrada e a MESMA que a gravacao vai usar: data de cotizacao pelo cadastro do
   // fundo, cota da serie da CVM naquela data. Sem isso a tela mostraria a cota do dia da
@@ -416,8 +429,8 @@ export default function BoletaTransacao({
     let vivo = true;
     (async () => {
       const dataCotizacao = await dataCotizacaoFundo(fundoId, data, tipoMovimentacao);
-      const { naData, ultima } = await cotaFundo(fundoId, dataCotizacao);
-      if (vivo) setCotaOp({ dataCotizacao, cota: naData, ultima });
+      const { naData, ultima, primeira } = await cotaFundo(fundoId, dataCotizacao);
+      if (vivo) setCotaOp({ dataCotizacao, cota: naData, ultima, primeira });
     })();
     return () => {
       vivo = false;
@@ -1316,7 +1329,7 @@ Confirma que o preço está certo?`,
         const valorNum = parseCurrencyToNumber(valor);
 
         const dataCotizacao = await dataCotizacaoFundo(fundoId, data, tipoMovimentacao);
-        const { naData: cotaDoDia, ultima: ultimaCota } = await cotaFundo(fundoId, dataCotizacao);
+        const { naData: cotaDoDia, ultima: ultimaCota, primeira: primeiraCota } = await cotaFundo(fundoId, dataCotizacao);
 
         // Em aplicacao e resgate a quantidade e exatamente valor / cota, sem spread nem taxa
         // que justifiquem outro numero (ao contrario do cambio) - por isso ela nao e digitada,
@@ -1334,7 +1347,9 @@ Confirma que o preço está certo?`,
             toast.error(
               ultimaCota
                 ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)}. A última é de ${fmtData(ultimaCota.data)}: lance a operação quando a cota sair.`
-                : "Não há cota disponível para esse fundo nessa data.",
+                : primeiraCota
+                  ? `A série deste fundo começa em ${fmtData(primeiraCota)}, depois de ${fmtData(dataCotizacao)}. Carregue a série desde a data da operação.`
+                  : "A série de cotas deste fundo ainda não foi carregada.",
             );
             return;
           }
@@ -1784,7 +1799,7 @@ Confirma que o preço está certo?`,
     <div className="space-y-6">
 
       {/* Form card */}
-      <div className="rounded-md border border-border bg-card p-6 max-w-2xl space-y-5">
+      <div className="w-full max-w-2xl min-w-0 rounded-md border border-border bg-card p-6 space-y-5">
         {/* Step 1 — Categoria + Tipo de Movimentação */}
         <div className="grid grid-cols-2 gap-4">
           <Field label="Categoria do Produto" required>
@@ -2055,6 +2070,8 @@ Confirma que o preço está certo?`,
                   onChange={setFundoId}
                   disabled={isEditing}
                   hasError={validationErrors.has("fundoId")}
+                  permitirCatalogo={!ehSaida}
+                  onCarregado={carregarFundos}
                 />
               )}
             </Field>
@@ -2128,13 +2145,62 @@ Confirma que o preço está certo?`,
               </div>
             )}
 
+            {/*
+              A validacao de cota fica, e ela esta certa: sem cota nao ha como derivar a
+              quantidade, e gravar a operacao deixaria a posicao errada. O que mudou e a SAIDA.
+              Antes as tres situacoes chegavam aqui como a mesma frase, e a de fundo novo virava
+              beco sem saida: o fundo aparecia na lista e nao aceitava lancamento, sem dizer o
+              que fazer a respeito.
+            */}
             {cotaOp && cotaOp.cota == null && !ehComeCotas && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertDescription className="text-xs">
-                  {cotaOp.ultima
-                    ? `O fundo ainda não divulgou a cota de ${fmtData(cotaOp.dataCotizacao)}. A última é de ${fmtData(cotaOp.ultima.data)}. Como a quantidade de cotas vem de valor ÷ cota, a operação só pode ser lançada quando a cota sair.`
-                    : "Não há cota disponível para esse fundo nessa data."}
+                <AlertDescription className="text-xs space-y-2">
+                  <p>
+                    {cotaOp.ultima
+                      ? `O fundo ainda não divulgou a cota de ${fmtData(cotaOp.dataCotizacao)}. A última é de ${fmtData(cotaOp.ultima.data)}. Como a quantidade de cotas vem de valor ÷ cota, a operação só pode ser lançada quando a cota sair.`
+                      : cotaOp.primeira
+                        ? `A série deste fundo na ferramenta começa em ${fmtData(cotaOp.primeira)}, depois de ${fmtData(cotaOp.dataCotizacao)}. Carregar a série desde a data da operação resolve, se a CVM publicar cota nesse período.`
+                        : "A série de cotas deste fundo ainda não foi carregada."}
+                  </p>
+                  {/*
+                    So faz sentido oferecer quando o problema e a serie ser CURTA, nao quando a
+                    cota do dia ainda nao saiu: nesse caso nao ha o que carregar, ha o que
+                    esperar.
+                  */}
+                  {!cotaOp.ultima && (
+                    <button
+                      type="button"
+                      disabled={carregandoSerie}
+                      onClick={async () => {
+                        const cnpj = fundos.find((f) => f.id === fundoId)?.cnpj;
+                        // Botao que nao faz nada e pior que botao ausente: se o CNPJ nao esta
+                        // na lista, a tela diz, em vez de parecer que clicar nao funcionou.
+                        if (!cnpj) {
+                          toast.error("Não encontrei o CNPJ deste fundo. Recarregue a página.");
+                          return;
+                        }
+                        setCarregandoSerie(true);
+                        try {
+                          const r = await carregarFundo(cnpj, { desde: cotaOp.dataCotizacao });
+                          await carregarFundos();
+                          const novo = await cotaFundo(fundoId, cotaOp.dataCotizacao);
+                          setCotaOp({ dataCotizacao: cotaOp.dataCotizacao, cota: novo.naData,
+                                      ultima: novo.ultima, primeira: novo.primeira });
+                          toast.success(`Série atualizada com ${r.cotas} cotas.`);
+                        } catch (e) {
+                          toast.error(e instanceof Error ? e.message : "Não foi possível carregar a série.");
+                        } finally {
+                          setCarregandoSerie(false);
+                        }
+                      }}
+                      className="rounded-md border border-current px-2 py-1 text-xs font-medium disabled:opacity-50"
+                    >
+                      {carregandoSerie
+                        ? "Carregando..."
+                        : `Carregar a série desde ${fmtData(cotaOp.dataCotizacao)}`}
+                    </button>
+                  )}
                 </AlertDescription>
               </Alert>
             )}
@@ -2797,7 +2863,10 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1.5">
+    // `min-w-0`: item de grid nasce com `min-width: auto` e cresce para caber o conteudo em vez
+    // de encolher. Sem isto, um nome de fundo comprido alarga a coluna e o modal inteiro ganha
+    // barra de rolagem horizontal.
+    <div className="min-w-0 space-y-1.5">
       <label className="text-xs font-medium text-foreground">
         {label}
         {required && <span className="text-destructive ml-0.5">*</span>}

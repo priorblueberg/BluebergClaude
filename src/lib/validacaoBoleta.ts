@@ -98,19 +98,27 @@ export async function cotacaoMoeda(moeda: string, dataISO: string) {
 
 /** Cota do fundo na data exata, ou a última publicada antes dela. */
 export async function cotaFundo(fundoId: string, dataISO: string) {
-  const { data } = await supabase
-    .from("cotas_fundos")
-    .select("data, valor_cota")
-    .eq("fundo_id", fundoId)
-    .lte("data", dataISO)
-    .order("data", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // `primeira` vem junto de proposito, e nao e detalhe de exibicao.
+  //
+  // Sem ela, tres situacoes diferentes chegam na tela como a mesma frase: o fundo nao tem serie
+  // carregada, a data e anterior ao comeco da serie, e a CVM ainda nao publicou a cota do dia.
+  // As tres pedem acao diferente de quem esta lancando - carregar o fundo, carregar mais para
+  // tras, ou esperar - e "nao ha cota disponivel para esse fundo nessa data" nao diz qual.
+  const [{ data: ateAData }, { data: aPrimeira }] = await Promise.all([
+    supabase.from("cotas_fundos").select("data, valor_cota")
+      .eq("fundo_id", fundoId).lte("data", dataISO)
+      .order("data", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("cotas_fundos").select("data")
+      .eq("fundo_id", fundoId).order("data").limit(1).maybeSingle(),
+  ]);
 
-  if (!data) return { naData: null as number | null, ultima: null as { data: string; valor: number } | null };
-  const linha = data as any;
-  const ultima = { data: linha.data as string, valor: Number(linha.valor_cota) };
-  return { naData: ultima.data === dataISO ? ultima.valor : null, ultima };
+  const primeira = (aPrimeira as { data: string } | null)?.data ?? null;
+  if (!ateAData) {
+    return { naData: null as number | null, ultima: null as { data: string; valor: number } | null, primeira };
+  }
+  const linha = ateAData as { data: string; valor_cota: number };
+  const ultima = { data: linha.data, valor: Number(linha.valor_cota) };
+  return { naData: ultima.data === dataISO ? ultima.valor : null, ultima, primeira };
 }
 
 /**
