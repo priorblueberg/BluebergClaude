@@ -343,8 +343,13 @@ export default function FundoSelect({
           {semNada && (
             <p className="px-3 py-3 text-xs text-muted-foreground">
               {curto && permitirCatalogo
-                ? `Digite ${MIN_BUSCA} caracteres para procurar entre os 8.571 fundos do catálogo.`
-                : "Nenhum fundo encontrado."}
+                ? `Digite ${MIN_BUSCA} caracteres para procurar pelo nome ou CNPJ.`
+                : permitirCatalogo
+                  // A busca e pelo nome ATUAL. Quase todo fundo mudou de nome na adaptacao a
+                  // Resolucao CVM 175, e a nota antiga do cliente traz o nome daquela epoca - mas
+                  // o CNPJ nao mudou.
+                  ? "Nenhum fundo encontrado. Se o fundo mudou de nome, busque pelo CNPJ: ele continua o mesmo."
+                  : "Nenhum fundo encontrado."}
             </p>
           )}
         </div>

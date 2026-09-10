@@ -23,6 +23,8 @@ type LinhaCvm = Record<string, string>;
 const URL_CADASTRO = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/registro_fundo_classe.zip";
 /** Cadastro ANTIGO (ICVM 555): fundos que nao chegaram a se adaptar, inclusive os cancelados. */
 const URL_CAD_FI = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/cad_fi.csv";
+/** Historico do cadastro antigo, um arquivo por campo (situacao, nome, classe...) com vigencia. */
+const URL_CAD_FI_HIST = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/cad_fi_hist.zip";
 
 const normalizar = (t: string) =>
   t.toUpperCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/\s+/g, " ").trim();
@@ -117,6 +119,58 @@ Deno.serve(async (req) => {
     //
     // Nao ha rotina periodica, e e deliberado: o catalogo de acoes deixou de ter uma em
     // 10/09/2026 pelos mesmos motivos. Esta carga e manual, e roda quando alguem quiser.
+    // ── Data de INICIO verdadeira dos fundos adaptados ─────────────────────────────────────
+    //
+    //   POST { catalogo: "datas" }  (+ seco: true)     rodar DEPOIS de { catalogo: "classes" }
+    //
+    // No `registro_classe`, a data de inicio (e ate a de constituicao) de uma classe adaptada a
+    // RCVM 175 e a data da ADAPTACAO: o Bradesco RF LP Eucalipto, de 2003, aparece como iniciado
+    // em 15/05/2025. Com isso a carga de cotas comecava em 2025 e a boleta dizia que o fundo "nao
+    // existia" em 2023. A data real esta no historico do cadastro antigo: o inicio do
+    // funcionamento normal em `cad_fi_hist_sit.csv`. So antecipa a data, nunca a adia.
+    if (body.catalogo === "datas") {
+      const noCatalogo = new Set<string>();
+      for (let de = 0; ; de += 1000) {
+        const { data, error } = await sb.from("cadastro_de_fundos").select("cnpj_classe")
+          .is("cvm_id_subclasse", null).range(de, de + 999);
+        if (error) throw error;
+        for (const r of (data ?? []) as { cnpj_classe: string }[]) noCatalogo.add(r.cnpj_classe);
+        if (!data || data.length < 1000) break;
+      }
+
+      const funcionamento = new Map<string, string>();
+      const qualquerSituacao = new Map<string, string>();
+      let lidas = 0;
+      await percorrerCsv(
+        await membroRemoto(URL_CAD_FI_HIST, (n) => n === "cad_fi_hist_sit.csv"),
+        (linha, idx) => {
+          lidas++;
+          const c = (nome: string) => campo(linha, idx.get(nome) ?? -1).trim();
+          const cnpj = soDigitos(c("CNPJ_FUNDO"));
+          if (!noCatalogo.has(cnpj)) return;
+          const desde = c("DT_INI_SIT");
+          if (!desde) return;
+          const alvo = /^EM FUNCIONAMENTO/i.test(c("SIT")) ? funcionamento : qualquerSituacao;
+          const atual = alvo.get(cnpj);
+          if (!atual || desde < atual) alvo.set(cnpj, desde);
+        },
+      );
+
+      const itens = [...noCatalogo]
+        .map((cnpj) => ({ cnpj, inicio: funcionamento.get(cnpj) ?? qualquerSituacao.get(cnpj) ?? null }))
+        .filter((i) => i.inicio);
+      const resumo = { modo: "datas", lidas, classes_no_catalogo: noCatalogo.size, com_data_no_historico: itens.length };
+      if (body.seco === true) return json({ ok: true, seco: true, ...resumo });
+
+      let corrigidos = 0;
+      for (let i = 0; i < itens.length; i += 1000) {
+        const { data, error } = await sb.rpc("corrigir_inicio_de_fundos", { itens: itens.slice(i, i + 1000) });
+        if (error) throw new Error(`corrigir_inicio_de_fundos (lote ${i / 1000 + 1}): ${error.message}`);
+        corrigidos += Number(data ?? 0);
+      }
+      return json({ ok: true, ...resumo, corrigidos });
+    }
+
     const modoCatalogo = body.catalogo === true ? "classes" : body.catalogo;
     if (modoCatalogo === "classes" || modoCatalogo === "subclasses" || modoCatalogo === "cancelados") {
       // `ignoreDuplicates` e o que protege os fundos JA carregados. Sem ele, a carga passaria
