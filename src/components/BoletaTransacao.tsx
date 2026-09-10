@@ -1811,6 +1811,41 @@ Confirma que o preço está certo?`,
     && cotaOp.primeira <= cotaOp.inicioDoFundo
     && cotaOp.dataCotizacao < cotaOp.primeira;
 
+  /*
+   * O campo do fundo muda de lugar conforme a movimentacao.
+   *
+   * Numa APLICACAO ele vem primeiro e sozinho: o resto da boleta so aparece depois que o fundo
+   * passou pela verificacao de cotas. Escolher um fundo sem serie fecha a boleta ("Adicionar")
+   * ou limpa o campo ("Cancelar"), e o que o usuario tivesse digitado antes seria perdido.
+   *
+   * Numa SAIDA ele vem depois da data: a lista so tem os fundos com cotas nela, entao o campo
+   * fica travado enquanto a data nao for informada.
+   */
+  const campoFundo = (
+    <Field label="Fundo" required>
+      {ehSaida && !data ? (
+        <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+          Informe a data da operação
+        </p>
+      ) : ehSaida && comSaldo && fundosDisponiveis.length === 0 ? (
+        <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+          Nenhum fundo em custódia nessa data
+        </p>
+      ) : (
+        <FundoSelect
+          fundos={fundosDisponiveis}
+          value={fundoId}
+          onChange={setFundoId}
+          disabled={isEditing}
+          hasError={validationErrors.has("fundoId")}
+          permitirCatalogo={!ehSaida}
+          onFecharBoleta={() => onFechar?.()}
+          abrirAoMontar={!ehSaida && !isEditing}
+        />
+      )}
+    </Field>
+  );
+
   return (
     <div className="space-y-6">
 
@@ -2052,7 +2087,15 @@ Confirma que o preço está certo?`,
         )}
 
         {/* ── Fundos de Investimentos ── */}
-        {showFundoFields && (
+        {showFundoFields && !ehSaida && campoFundo}
+        {showFundoFields && !ehSaida && !fundoId && (
+          <div className="flex gap-3">
+            <Button variant="outline" onClick={() => onFechar?.()}>
+              Cancelar
+            </Button>
+          </div>
+        )}
+        {showFundoFields && (ehSaida || !!fundoId) && (
           <>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Data da Transação" required>
@@ -2068,29 +2111,7 @@ Confirma que o preço está certo?`,
               </Field>
             </div>
 
-            {/* Numa saida so aparecem os fundos com cotas na data, por isso o campo vem
-                depois dela e fica travado enquanto a data nao for informada. */}
-            <Field label="Fundo" required>
-              {ehSaida && !data ? (
-                <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-                  Informe a data da operação
-                </p>
-              ) : ehSaida && comSaldo && fundosDisponiveis.length === 0 ? (
-                <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-                  Nenhum fundo em custódia nessa data
-                </p>
-              ) : (
-                <FundoSelect
-                  fundos={fundosDisponiveis}
-                  value={fundoId}
-                  onChange={setFundoId}
-                  disabled={isEditing}
-                  hasError={validationErrors.has("fundoId")}
-                  permitirCatalogo={!ehSaida}
-                  onFecharBoleta={() => onFechar?.()}
-                />
-              )}
-            </Field>
+            {ehSaida && campoFundo}
 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Valor da Cota">

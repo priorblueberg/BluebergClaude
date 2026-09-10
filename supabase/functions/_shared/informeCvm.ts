@@ -140,9 +140,13 @@ export async function cotasDoMes(mes: string, cnpj: string): Promise<CotaMes[]> 
     if (soDigitos(campo(linha, iCnpj)) !== cnpj) return;
     const cota = parseFloat(campo(linha, iCota));
     if (!Number.isFinite(cota) || cota <= 0) return;
+    const data = campo(linha, iData).trim();
+    // O piso ja vem da escolha dos meses, que nunca comeca antes de 01/2023. Esta conferencia e
+    // por linha, para o piso nao depender de o arquivo do mes trazer so datas daquele mes.
+    if (data < PISO_SERIE) return;
     achados.push({
       subclasse: iSub >= 0 ? campo(linha, iSub).trim() : "",
-      data: campo(linha, iData).trim(),
+      data,
       cota,
     });
   });

@@ -1,7 +1,7 @@
 // Sync das cotas de fundos, da CVM para `cotas_fundos`.
 //
 //   POST { }                                       rotina diaria: olha 3 meses para tras
-//   POST { desde: "2022-12-30" }                    BACKFILL: varre desde a data pedida
+//   POST { desde: "2023-01-02" }                    BACKFILL: varre desde a data pedida (nunca antes do piso)
 //   POST { desde: "2023-01-01", ate: "2023-12-31" } backfill fatiado, para nao estourar o tempo
 //
 // O `daily-market-sync` cobre CDI e series do BCB, mas nao as cotas de fundo, que vem do
@@ -37,6 +37,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const JANELA_MESES = 3;
+/** Data inicial da ferramenta. Backfill pedido antes dela comeca nela: cota anterior nao e usada. */
+const PISO_SERIE = "2023-01-02";
 const soDigitos = (s: string | null | undefined) => (s ?? "").replace(/[^0-9]/g, "");
 const competencia = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
 
@@ -123,7 +125,8 @@ Deno.serve(async (req) => {
     new Response(JSON.stringify(b), { status: s, headers: { ...CORS, "Content-Type": "application/json" } });
   try {
     const body = await req.json().catch(() => ({}));
-    const desdeParam = typeof body?.desde === "string" ? body.desde.slice(0, 10) : null;
+    const desdeBruto = typeof body?.desde === "string" ? body.desde.slice(0, 10) : null;
+    const desdeParam = desdeBruto && desdeBruto < PISO_SERIE ? PISO_SERIE : desdeBruto;
     const ateParam = typeof body?.ate === "string" ? body.ate.slice(0, 10) : null;
 
     const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { db: { schema: "invest" } });

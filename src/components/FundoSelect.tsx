@@ -70,6 +70,7 @@ export default function FundoSelect({
   hasError,
   permitirCatalogo = true,
   onFecharBoleta,
+  abrirAoMontar = false,
 }: {
   /** Os fundos ja carregados, que a boleta le do banco. Numa saida, os que tem saldo. */
   fundos: FundoOpcao[];
@@ -81,6 +82,8 @@ export default function FundoSelect({
   permitirCatalogo?: boolean;
   /** Fecha a boleta inteira. Usado por "Adicionar" e pelo aviso de carga em andamento. */
   onFecharBoleta?: () => void;
+  /** Foca a busca e abre a lista assim que o campo aparece. Numa aplicacao o fundo e o 1o passo. */
+  abrirAoMontar?: boolean;
 }) {
   const [busca, setBusca] = useState("");
   const [aberto, setAberto] = useState(false);
@@ -89,6 +92,7 @@ export default function FundoSelect({
   const [verificando, setVerificando] = useState(false);
   const [aviso, setAviso] = useState<Aviso | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const entrada = useRef<HTMLInputElement>(null);
   /**
    * O fundo escolhido pela busca. Sem isto o campo ficaria em branco depois de escolher: a prop
    * `fundos` so tem os fundos que a boleta leu ao abrir.
@@ -99,6 +103,13 @@ export default function FundoSelect({
     () => (escolhido?.id === value ? escolhido : fundos.find((f) => f.id === value) ?? null),
     [escolhido, fundos, value],
   );
+
+  // So na montagem: reabrir a cada render roubaria o foco de quem ja esta em outro campo. O foco
+  // dispara o `onFocus` do campo, que abre a lista com a dica de busca.
+  useEffect(() => {
+    if (abrirAoMontar && !value) entrada.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const fora = (e: MouseEvent) => {
@@ -271,6 +282,7 @@ export default function FundoSelect({
     <div ref={ref} className="relative">
       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
       <input
+        ref={entrada}
         value={busca}
         onChange={(e) => { setBusca(e.target.value); setAberto(true); }}
         onFocus={() => setAberto(true)}

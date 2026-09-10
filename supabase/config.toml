@@ -3,3 +3,7 @@ project_id = "ofuxkbzzibykelucsscv"
 # Um deploy sem esta linha religa o JWT e a carga para na primeira etapa, sem erro visivel.
 [functions.carga-cotas-fundo]
 verify_jwt = false
+
+# Chamada pelo pg_cron via pg_net, sem cabecalho de autorizacao.
+[functions.daily-fund-quotes-sync]
+verify_jwt = false
