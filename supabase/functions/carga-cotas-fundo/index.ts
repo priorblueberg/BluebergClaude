@@ -1,7 +1,8 @@
 // Carga da serie de cotas de UM fundo do catalogo, em segundo plano.
 //
-//   POST { cnpj }                primeira etapa, disparada pela boleta
-//   POST { cnpj, desde }         etapas seguintes, disparadas por esta propria funcao
+//   POST { fundoId }                 primeira etapa, disparada pela boleta
+//   POST { fundoId, desde }          etapas seguintes, disparadas por esta propria funcao
+//   POST { cnpj }                    legado: so para CNPJ sem subclasse
 //
 // ── Por que existe, separada de `cadastrar-fundo` ────────────────────────────────────────────
 //
@@ -16,9 +17,12 @@
 //
 // Ela e separada de `cadastrar-fundo` por seguranca, nao por gosto. O `disparar_funcao` chama sem
 // cabecalho de autorizacao, entao a funcao encadeada precisa aceitar chamada sem JWT. Desligar o
-// JWT da `cadastrar-fundo` exporia o modo catalogo, que regrava 8.571 linhas. Esta aqui faz uma
-// coisa so, e so para fundo que JA existe no catalogo: nao cria linha, e a cota que ela grava e
-// dado publico da CVM, com upsert idempotente.
+// JWT da `cadastrar-fundo` exporia o modo catalogo, que regrava milhares de linhas. Esta aqui faz
+// uma coisa so, e so para fundo que JA existe no catalogo: nao cria linha, e a cota que ela grava
+// e dado publico da CVM, com upsert idempotente.
+//
+// O fundo e identificado pelo `id` do catalogo, e nao pelo CNPJ: desde 10/09/2026 o catalogo
+// tem as subclasses, que dividem o CNPJ da classe.
 //
 // ── O lease ─────────────────────────────────────────────────────────────────────────────────
 //
@@ -29,8 +33,9 @@
 // "em carga" para sempre.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
-  cotasDoMes, MAX_MESES, mesesAPartirDe, ORCAMENTO_MS, PISO_SERIE, soDigitos,
+  cotasDoMes, fimDaSerie, MAX_MESES, mesesAPartirDe, ORCAMENTO_MS, PISO_SERIE, soDigitos,
 } from "../_shared/informeCvm.ts";
+import { verificarMudanca } from "../_shared/alertaDeMudanca.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -39,6 +44,9 @@ const CORS = {
 
 /** Folga de cada etapa. Uma etapa leva segundos; 3 minutos cobre fila do pg_net e partida fria. */
 const LEASE_MS = 3 * 60 * 1000;
+
+const COLUNAS =
+  "id, cnpj_classe, nome_curto, data_inicio, cvm_id_subclasse, carga_cotas_ate, situacao, data_inicio_situacao";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -54,21 +62,26 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const cnpj = soDigitos(body.cnpj);
-    if (cnpj.length !== 14) return json({ error: "Informe um CNPJ com 14 dígitos." }, 400);
 
-    const { data: fundo, error: eFundo } = await sb.from("cadastro_de_fundos")
-      .select("id, data_inicio, cvm_id_subclasse, carga_cotas_ate")
-      .eq("cnpj_classe", cnpj)
-      .maybeSingle();
-    if (eFundo) throw eFundo;
+    const base = sb.from("cadastro_de_fundos").select(COLUNAS);
+    let resposta;
+    if (typeof body.fundoId === "string") {
+      resposta = await base.eq("id", body.fundoId).maybeSingle();
+    } else {
+      const cnpjPedido = soDigitos(body.cnpj);
+      if (cnpjPedido.length !== 14) return json({ error: "Informe o fundo." }, 400);
+      resposta = await base.eq("cnpj_classe", cnpjPedido).is("cvm_id_subclasse", null).maybeSingle();
+    }
+    if (resposta.error) throw resposta.error;
+    const fundo = resposta.data;
     // Nao cria fundo. Quem cria e o catalogo ou o cadastro por CNPJ, ambos com JWT.
     if (!fundo) return json({ error: "Fundo fora do catálogo." }, 404);
     fundoId = fundo.id as string;
+    const cnpj = soDigitos(fundo.cnpj_classe as string);
 
     const continuacao = typeof body.desde === "string";
     // Um segundo clique em "Adicionar" enquanto a carga anda nao abre uma segunda cadeia.
-    if (!continuacao && fundo.carga_cotas_ate && new Date(fundo.carga_cotas_ate) > new Date()) {
+    if (!continuacao && fundo.carga_cotas_ate && new Date(fundo.carga_cotas_ate as string) > new Date()) {
       return json({ ok: true, jaEmAndamento: true });
     }
 
@@ -85,7 +98,9 @@ Deno.serve(async (req) => {
     const inicio = continuacao
       ? String(body.desde)
       : [PISO_SERIE, (fundo.data_inicio as string | null) ?? PISO_SERIE].sort().at(-1)!;
-    const { meses, depoisDaLista } = mesesAPartirDe(inicio);
+    // Fundo cancelado: o informe segue com cota zero por semanas e depois some.
+    const fim = fimDaSerie(fundo.situacao as string | null, fundo.data_inicio_situacao as string | null);
+    const { meses, depoisDaLista } = mesesAPartirDe(inicio, fim);
 
     let inseridas = 0;
     let interrompido: string | null = null;
@@ -104,7 +119,7 @@ Deno.serve(async (req) => {
         await sb.from("cadastro_de_fundos").update({
           carga_cotas_ate: null,
           carga_cotas_erro: `Este CNPJ publica mais de uma subclasse (${opcoes.join(", ")}). `
-            + "Cadastre o fundo pelo botão de cadastrar fundo, escolhendo a subclasse.",
+            + "Escolha a subclasse na busca.",
         }).eq("id", fundoId);
         return json({ ok: false, precisaSubclasse: opcoes });
       }
@@ -126,17 +141,32 @@ Deno.serve(async (req) => {
       const desde = `${proximo.slice(0, 4)}-${proximo.slice(4, 6)}-01`;
       const { error: eDisparo } = await sb.rpc("disparar_funcao", {
         nome: "carga-cotas-fundo",
-        corpo: { cnpj, desde },
+        corpo: { fundoId, desde },
       });
       if (eDisparo) throw eDisparo;
-    } else {
-      await sb.from("cadastro_de_fundos").update({
-        carga_cotas_ate: null,
-        carga_cotas_concluida_em: new Date().toISOString(),
-      }).eq("id", fundoId);
+      return json({ ok: true, cotasInseridas: inseridas, proximoMes: proximo, maxMeses: MAX_MESES });
     }
 
-    return json({ ok: true, cotasInseridas: inseridas, proximoMes: proximo, maxMeses: MAX_MESES });
+    await sb.from("cadastro_de_fundos").update({
+      carga_cotas_ate: null,
+      carga_cotas_concluida_em: new Date().toISOString(),
+    }).eq("id", fundoId);
+
+    // Serie completa: se ela termina antes do que deveria (fundo cancelado, virou subclasse de
+    // outro), quem tem posicao nele e avisado. Falhar aqui nao desfaz a carga.
+    let mudanca = null;
+    try {
+      mudanca = await verificarMudanca(sb, {
+        id: fundoId,
+        nome_curto: fundo.nome_curto as string | null,
+        cnpj_classe: fundo.cnpj_classe as string,
+        cvm_id_subclasse: fundo.cvm_id_subclasse as string | null,
+      });
+    } catch (e) {
+      console.error("verificarMudanca", e);
+    }
+
+    return json({ ok: true, cotasInseridas: inseridas, proximoMes: null, mudanca });
   } catch (e) {
     // Solta o lease e registra: sem isto, uma etapa que falha deixaria o fundo "em carga" ate o
     // prazo vencer, e o cliente nao saberia por que o fundo nao ficou disponivel.

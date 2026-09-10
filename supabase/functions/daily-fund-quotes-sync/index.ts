@@ -34,6 +34,8 @@
 // `ate` existe porque cada informe mensal tem ~11 MB e a leitura e sequencial: varrer quatro
 // anos de uma vez pode estourar o tempo da edge function. Fatiar por ano e o uso normal.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { ficaComNova } from "../_shared/informeCvm.ts";
+import { diasUteisDesde, verificarMudanca } from "../_shared/alertaDeMudanca.ts";
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const JANELA_MESES = 3;
@@ -105,18 +107,32 @@ type Achado = { cnpj: string; sub: string; data: string; cota: number };
 async function cotasDoMes(mes: string, cnpjs: Set<string>): Promise<Achado[]> {
   const url = `https://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS/inf_diario_fi_${mes}.zip`;
   if ((await fetch(url, { method: "HEAD" })).status === 404) return []; // mes nao publicado
-  const out: Achado[] = [];
+  // Mesmo fundo, subclasse e dia em dois regimes da CVM: ver `ficaComNova`.
+  const porChave = new Map<string, Achado & { tipo: string }>();
   await percorrerCsv(await membroRemoto(url, (n) => n.toLowerCase().endsWith(".csv")), (linha, idx) => {
     const iC = idx.get("CNPJ_FUNDO_CLASSE") ?? idx.get("CNPJ_FUNDO") ?? -1;
     const iD = idx.get("DT_COMPTC") ?? -1, iQ = idx.get("VL_QUOTA") ?? -1, iS = idx.get("ID_SUBCLASSE") ?? -1;
+    const iT = idx.get("TP_FUNDO_CLASSE") ?? idx.get("TP_FUNDO") ?? -1;
     if (iC < 0 || iD < 0 || iQ < 0) return;
     const cnpj = soDigitos(campo(linha, iC));
     if (!cnpjs.has(cnpj)) return;
+    // Cota zero ENTRA aqui: nao vai para a serie, mas e o sinal de fundo cancelado que o detector
+    // de mudanca precisa ver.
     const cota = parseFloat(campo(linha, iQ));
-    if (!Number.isFinite(cota) || cota <= 0) return;
-    out.push({ cnpj, sub: iS >= 0 ? campo(linha, iS).trim() : "", data: campo(linha, iD).trim(), cota });
+    if (!Number.isFinite(cota)) return;
+    const a = { cnpj, sub: iS >= 0 ? campo(linha, iS).trim() : "", data: campo(linha, iD).trim(), cota,
+                tipo: iT >= 0 ? campo(linha, iT) : "" };
+    const chave = `${a.cnpj}|${a.sub}|${a.data}`;
+    const atual = porChave.get(chave);
+    if (atual) {
+      // Entre uma cota valida e uma zerada no mesmo dia fica a valida; entre duas validas, a do
+      // regime novo.
+      const fica = (atual.cota > 0) !== (a.cota > 0) ? a.cota > 0 : ficaComNova(atual.tipo, a.tipo);
+      if (!fica) return;
+    }
+    porChave.set(chave, a);
   });
-  return out;
+  return [...porChave.values()];
 }
 
 Deno.serve(async (req) => {
@@ -135,13 +151,23 @@ Deno.serve(async (req) => {
     if (err) throw err;
     if (!fundos?.length) return json({ fundos: 0, inseridas: 0, detalhe: [] });
 
-    const porCnpj = new Map<string, { id: string; nome: string; sub: string | null; ultima: string }>();
+    type Acompanhado = {
+      id: string; nome: string; cnpj: string; sub: string | null; ultima: string;
+      fundo: { id: string; nome_curto: string | null; cnpj_classe: string; cvm_id_subclasse: string | null };
+    };
+    // Por CNPJ, uma LISTA: desde 10/09/2026 o catalogo tem subclasses, e duas subclasses do mesmo
+    // CNPJ podem estar sincronizando ao mesmo tempo.
+    const porCnpj = new Map<string, Acompanhado[]>();
+    const acompanhados: Acompanhado[] = [];
     for (const f of fundos) {
       const { data: u } = await sb.from("cotas_fundos").select("data").eq("fundo_id", f.id)
         .order("data", { ascending: false }).limit(1).maybeSingle();
-      porCnpj.set(soDigitos(f.cnpj_classe), {
-        id: f.id, nome: f.nome_curto ?? f.cnpj_classe, sub: f.cvm_id_subclasse, ultima: u?.data ?? "1900-01-01",
-      });
+      const a: Acompanhado = {
+        id: f.id, nome: f.nome_curto ?? f.cnpj_classe, cnpj: soDigitos(f.cnpj_classe), sub: f.cvm_id_subclasse,
+        ultima: u?.data ?? "1900-01-01", fundo: f,
+      };
+      acompanhados.push(a);
+      porCnpj.set(a.cnpj, [...(porCnpj.get(a.cnpj) ?? []), a]);
     }
 
     // So baixa os meses que algum fundo realmente precisa. Com todos em dia isso e UM arquivo
@@ -156,7 +182,7 @@ Deno.serve(async (req) => {
     const piso = desdeParam
       ? new Date(`${desdeParam.slice(0, 7)}-01T12:00:00`)
       : new Date(hoje.getFullYear(), hoje.getMonth() - (JANELA_MESES - 1), 1);
-    const maisAntiga = [...porCnpj.values()].reduce((a, f) => (f.ultima < a ? f.ultima : a), "9999-12-31");
+    const maisAntiga = acompanhados.reduce((a, f) => (f.ultima < a ? f.ultima : a), "9999-12-31");
     const desde = desdeParam ? piso
       : new Date(Number(maisAntiga.slice(0, 4)), Number(maisAntiga.slice(5, 7)) - 1, 1);
     const meses: string[] = [];
@@ -165,21 +191,37 @@ Deno.serve(async (req) => {
 
     const cnpjs = new Set(porCnpj.keys());
     const novasPorFundo = new Map<string, number>();
+    const zerosPorFundo = new Map<string, string[]>();
+    const subclassesNovasPorFundo = new Map<string, Set<string>>();
     let total = 0;
     for (const mes of meses) {
       const linhas = await cotasDoMes(mes, cnpjs);
       const lote: { fundo_id: string; data: string; valor_cota: number }[] = [];
       for (const l of linhas) {
-        const f = porCnpj.get(l.cnpj)!;
-        // Fundo com varias subclasses: so a escolhida, senao entra cota errada em silencio.
-        if (f.sub && l.sub !== f.sub) continue;
-        // No diario, pula o que ja passou; no backfill, o corte e a JANELA PEDIDA - senao nada
-        // do passado entraria, que e justamente o que se quer preencher.
-        if (desdeParam) {
-          if (l.data < desdeParam) continue;
-          if (ateParam && l.data > ateParam) continue;
-        } else if (l.data <= f.ultima) continue;
-        lote.push({ fundo_id: f.id, data: l.data, valor_cota: l.cota });
+        for (const f of porCnpj.get(l.cnpj) ?? []) {
+          // A subclasse tem que casar EXATAMENTE. Antes, fundo sem subclasse aceitava a linha de
+          // qualquer uma, e um CNPJ que passasse a publicar por subclasse gravaria a cota de uma
+          // delas por cima da serie antiga, sem erro. Agora isso vira sinal de mudanca.
+          if (l.sub !== (f.sub ?? "")) {
+            if (!f.sub && l.sub && l.data > f.ultima) {
+              const set = subclassesNovasPorFundo.get(f.id) ?? new Set<string>();
+              set.add(l.sub);
+              subclassesNovasPorFundo.set(f.id, set);
+            }
+            continue;
+          }
+          if (l.cota <= 0) {
+            if (l.data > f.ultima) zerosPorFundo.set(f.id, [...(zerosPorFundo.get(f.id) ?? []), l.data]);
+            continue;
+          }
+          // No diario, pula o que ja passou; no backfill, o corte e a JANELA PEDIDA - senao nada
+          // do passado entraria, que e justamente o que se quer preencher.
+          if (desdeParam) {
+            if (l.data < desdeParam) continue;
+            if (ateParam && l.data > ateParam) continue;
+          } else if (l.data <= f.ultima) continue;
+          lote.push({ fundo_id: f.id, data: l.data, valor_cota: l.cota });
+        }
       }
       if (!lote.length) continue;
       const { error } = await sb.from("cotas_fundos").upsert(lote, { onConflict: "fundo_id,data" });
@@ -188,8 +230,28 @@ Deno.serve(async (req) => {
       total += lote.length;
     }
 
-    const detalhe = [...porCnpj.values()].map((f) => ({ fundo: f.nome, antes: f.ultima, gravadas: novasPorFundo.get(f.id) ?? 0 }));
-    return json({ modo: desdeParam ? "backfill" : "diario", fundos: fundos.length, meses, gravadas: total, detalhe });
+    // Mudanca na composicao do fundo: so na rotina diaria, nao no backfill, que olha o passado.
+    // O detector nao adivinha para onde o fundo foi - ele so avisa quem tem posicao.
+    const mudancas: Record<string, unknown>[] = [];
+    if (!desdeParam) {
+      const reais = acompanhados.map((f) => f.ultima).filter((d) => d > "1900-01-01").sort();
+      const trintaDias = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+      const dias = await diasUteisDesde(sb, [reais[0] ?? trintaDias, trintaDias].sort()[0]);
+      for (const f of acompanhados) {
+        try {
+          const m = await verificarMudanca(sb, f.fundo, {
+            datasComCotaZero: zerosPorFundo.get(f.id),
+            subclassesNovas: [...(subclassesNovasPorFundo.get(f.id) ?? [])],
+          }, dias);
+          if (m) mudancas.push({ fundo: f.nome, ...m });
+        } catch (e) {
+          mudancas.push({ fundo: f.nome, erro: String((e as Error).message ?? e) });
+        }
+      }
+    }
+
+    const detalhe = acompanhados.map((f) => ({ fundo: f.nome, antes: f.ultima, gravadas: novasPorFundo.get(f.id) ?? 0 }));
+    return json({ modo: desdeParam ? "backfill" : "diario", fundos: fundos.length, meses, gravadas: total, detalhe, mudancas });
   } catch (e) {
     return json({ error: String((e as Error).message ?? e) }, 500);
   }

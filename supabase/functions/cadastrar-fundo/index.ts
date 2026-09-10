@@ -10,7 +10,7 @@
 // para caber no tempo da edge function; a resposta diz o proximo mes pendente.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
-  campo, competencia, cotasDoMes, MAX_MESES, membroRemoto, ORCAMENTO_MS, percorrerCsv, soDigitos,
+  campo, cotasDoMes, fimDaSerie, membroRemoto, mesesAPartirDe, ORCAMENTO_MS, percorrerCsv, PISO_SERIE, soDigitos,
 } from "../_shared/informeCvm.ts";
 
 const CORS = {
@@ -21,6 +21,37 @@ const CORS = {
 type LinhaCvm = Record<string, string>;
 
 const URL_CADASTRO = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/registro_fundo_classe.zip";
+/** Cadastro ANTIGO (ICVM 555): fundos que nao chegaram a se adaptar, inclusive os cancelados. */
+const URL_CAD_FI = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/cad_fi.csv";
+
+const normalizar = (t: string) =>
+  t.toUpperCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/\s+/g, " ").trim();
+
+/**
+ * Nome de busca da subclasse.
+ *
+ * Muitas se chamam so "SUBCLASSE A" ou "SUBCLASSE I" - ninguem acharia o fundo por esse nome. Se
+ * o nome da subclasse nao carrega o do fundo, ele vai na frente.
+ */
+function nomeDaSubclasse(classe: string, subclasse: string): string {
+  if (!subclasse) return classe.slice(0, 120);
+  const raiz = normalizar(classe).split(" ").slice(0, 2).join(" ");
+  if (raiz && normalizar(subclasse).includes(raiz)) return subclasse.slice(0, 120);
+  const sufixo = ` - ${subclasse}`;
+  return (classe.slice(0, Math.max(20, 120 - sufixo.length)) + sufixo).slice(0, 120);
+}
+
+/**
+ * Come-cotas por EXCLUSAO, como manda a IN RFB 1585/2015 art. 2o, e nao por "nao contem acoes".
+ * Previdencia tem regime proprio (art. 44) e a CVM so a revela na classificacao ANBIMA (ou, na
+ * subclasse, no campo proprio).
+ */
+function temComeCotas(tipo: string, classificacao: string, anbima: string, previdenciario = false): boolean {
+  return (tipo === "FIF" || tipo === "FI")
+    && !previdenciario
+    && !/^previd/i.test(anbima)
+    && (classificacao === "Renda Fixa" || classificacao === "Multimercado" || classificacao === "Cambial");
+}
 
 async function buscarCadastro(cnpj: string): Promise<{ classe: LinhaCvm; fundo: LinhaCvm | null }> {
   let classe: LinhaCvm | null = null;
@@ -68,17 +99,26 @@ Deno.serve(async (req) => {
 
     // ── Carga do CATALOGO ────────────────────────────────────────────────────────────────────
     //
-    //   POST { catalogo: true }        grava
-    //   POST { catalogo: true, seco: true }  so conta, sem gravar
+    //   POST { catalogo: "classes" }       classes adaptadas a RCVM 175 (true vale como "classes")
+    //   POST { catalogo: "subclasses" }    subclasses dessas classes
+    //   POST { catalogo: "cancelados" }    fundos antigos (ICVM 555) cancelados desde 02/01/2023
+    //   + { seco: true }                   so conta, sem gravar
     //
     // Mesma logica das acoes: o catalogo serve para ENCONTRAR o fundo pelo nome, e a serie de
     // cotas so nasce quando alguem usa o ativo. Por isso as linhas entram magras - identidade e
-    // classificacao - e com `sincronizar_cotas = false`. Quem preenche a ficha inteira e liga a
-    // sincronizacao e o cadastro por CNPJ, mais abaixo nesta mesma funcao.
+    // classificacao - e com `sincronizar_cotas = false`.
+    //
+    // Tres cargas separadas por orcamento de CPU: cada uma le um arquivo inteiro.
+    //
+    // As subclasses e os cancelados entraram em 10/09/2026, com a regra da mudanca de fundo. A
+    // subclasse nao tem CNPJ, e sem ela no catalogo o cliente nao acha o fundo novo quando o dele
+    // vira subclasse de outro. O cancelado e o fundo ANTIGO: quem aplicou em 2023 num FIC que
+    // deixou de existir em 2025 precisa acha-lo para lancar a posicao historica.
     //
     // Nao ha rotina periodica, e e deliberado: o catalogo de acoes deixou de ter uma em
     // 10/09/2026 pelos mesmos motivos. Esta carga e manual, e roda quando alguem quiser.
-    if (body.catalogo === true) {
+    const modoCatalogo = body.catalogo === true ? "classes" : body.catalogo;
+    if (modoCatalogo === "classes" || modoCatalogo === "subclasses" || modoCatalogo === "cancelados") {
       // `ignoreDuplicates` e o que protege os fundos JA carregados. Sem ele, a carga passaria
       // por cima da ficha completa deles e desligaria a sincronizacao das cotas - a serie
       // pararia de atualizar sem ninguem mexer em nada.
@@ -86,68 +126,181 @@ Deno.serve(async (req) => {
       let lidas = 0;
       const fora: Record<string, number> = {};
       const descarta = (motivo: string) => { fora[motivo] = (fora[motivo] ?? 0) + 1; };
+      const publicoAceito = (p: string) => p === "Público Geral" || p === "Qualificado";
+      // Em funcionamento, ou em liquidacao/cancelado DENTRO do periodo da ferramenta: esses ainda
+      // podem ser a posicao historica de alguem.
+      const situacaoAceita = (situacao: string, desde: string) =>
+        situacao === "Em Funcionamento Normal"
+        || ((/^em liquida/i.test(situacao) || /^cancelad/i.test(situacao)) && desde >= PISO_SERIE);
 
-      await percorrerCsv(
-        await membroRemoto(URL_CADASTRO, (n) => n === "registro_classe.csv"),
-        (linha, idx) => {
-          lidas++;
-          const c = (nome: string) => campo(linha, idx.get(nome) ?? -1).trim();
-          const tipo = c("TIPO_CLASSE").replace("Classes de Cotas de Fundos ", "");
-          const cnpjClasse = soDigitos(c("CNPJ_CLASSE"));
-          const publico = c("PUBLICO_ALVO");
-          const classificacao = c("CLASSIFICACAO");
-          const anbima = c("CLASSIFICACAO_ANBIMA");
+      if (modoCatalogo === "classes" || modoCatalogo === "subclasses") {
+        const classes = new Map<string, Record<string, string>>();
+        await percorrerCsv(
+          await membroRemoto(URL_CADASTRO, (n) => n === "registro_classe.csv"),
+          (linha, idx) => {
+            if (modoCatalogo === "classes") lidas++;
+            const c = (nome: string) => campo(linha, idx.get(nome) ?? -1).trim();
+            const tipo = c("TIPO_CLASSE").replace("Classes de Cotas de Fundos ", "");
+            const cnpjClasse = soDigitos(c("CNPJ_CLASSE"));
+            const publico = c("PUBLICO_ALVO");
+            const classificacao = c("CLASSIFICACAO");
+            const anbima = c("CLASSIFICACAO_ANBIMA");
+            const situacao = c("SITUACAO");
+            const desdeSituacao = c("DATA_INICIO_SITUACAO");
 
-          if (cnpjClasse.length !== 14) return descarta("cnpj invalido");
-          if (c("SITUACAO") !== "Em Funcionamento Normal") return descarta("nao esta em funcionamento");
-          // Condominio fechado nao aceita aplicacao nova, e exclusivo pertence a um cotista so.
-          if (c("FORMA_CONDOMINIO") !== "Aberto") return descarta("condominio fechado");
-          if (c("EXCLUSIVO") === "S") return descarta("exclusivo");
-          // FII, FIAGRO e FIIM sao negociados em bolsa e ja vivem no catalogo de acoes. Deixa-los
-          // entrar aqui criaria o mesmo ativo duas vezes, com ticker de um lado e CNPJ do outro.
-          if (tipo === "FII" || tipo === "FIAGRO" || tipo === "FIIM") return descarta("negociado em bolsa");
-          if (publico !== "Público Geral" && publico !== "Qualificado") return descarta("publico restrito");
+            if (cnpjClasse.length !== 14) return descarta("cnpj invalido");
+            // FII, FIAGRO e FIIM sao negociados em bolsa e ja vivem no catalogo de acoes. Deixa-los
+            // entrar aqui criaria o mesmo ativo duas vezes, com ticker de um lado e CNPJ do outro.
+            if (tipo === "FII" || tipo === "FIAGRO" || tipo === "FIIM") return descarta("negociado em bolsa");
+            if (!situacaoAceita(situacao, desdeSituacao)) return descarta("situacao fora do recorte");
 
-          const denominacao = c("DENOMINACAO_SOCIAL");
-          if (!denominacao) return descarta("sem denominacao");
+            const denominacao = c("DENOMINACAO_SOCIAL");
+            if (modoCatalogo === "subclasses") {
+              // Classe com subclasses deixa condominio, exclusividade e publico EM BRANCO: quem os
+              // define e cada subclasse. Por isso o filtro delas fica para a subclasse.
+              classes.set(c("ID_REGISTRO_CLASSE"), {
+                cnpj: cnpjClasse, tipo, tipoClasse: c("TIPO_CLASSE"), classificacao, anbima, denominacao,
+                trib: c("TRIBUTACAO_LONGO_PRAZO"), entidade: c("ENTIDADE_INVESTIMENTO"),
+              });
+              return;
+            }
 
-          linhas.push({
-            cnpj_classe: cnpjClasse,
-            nome_curto: denominacao.slice(0, 120),
-            denominacao_social: denominacao,
-            tipo_classe: c("TIPO_CLASSE") || null,
-            classificacao: classificacao || null,
-            classificacao_anbima: anbima || null,
-            situacao: c("SITUACAO") || null,
-            publico_alvo: publico || null,
-            forma_condominio: c("FORMA_CONDOMINIO") || null,
-            exclusivo: c("EXCLUSIVO") || null,
-            data_inicio: c("DATA_INICIO") || null,
-            tributacao_longo_prazo: c("TRIBUTACAO_LONGO_PRAZO") || null,
-            entidade_investimento: c("ENTIDADE_INVESTIMENTO") || null,
-            // A regra do come-cotas por EXCLUSAO, como manda a IN RFB 1585/2015 art. 2o, e nao
-            // por "nao contem acoes". Previdencia tem regime proprio (art. 44) e a CVM so a
-            // revela na classificacao ANBIMA - no campo dela um PGBL de renda fixa aparece
-            // como "Renda Fixa" e passaria batido.
-            come_cotas: tipo === "FIF"
-              && !/^previd/i.test(anbima)
-              && (classificacao === "Renda Fixa" || classificacao === "Multimercado" || classificacao === "Cambial"),
-            engine: "FUNDO",
-            ativo: true,
-            sincronizar_cotas: false,
-          });
-        },
-      );
+            // Condominio fechado nao aceita aplicacao nova, e exclusivo pertence a um cotista so.
+            if (c("FORMA_CONDOMINIO") !== "Aberto") return descarta("condominio fechado ou definido na subclasse");
+            if (c("EXCLUSIVO") === "S") return descarta("exclusivo");
+            if (!publicoAceito(publico)) return descarta("publico restrito");
+            if (!denominacao) return descarta("sem denominacao");
+
+            linhas.push({
+              cnpj_classe: cnpjClasse,
+              codigo_cvm: c("CODIGO_CVM") || null,
+              nome_curto: denominacao.slice(0, 120),
+              denominacao_social: denominacao,
+              tipo_classe: c("TIPO_CLASSE") || null,
+              classificacao: classificacao || null,
+              classificacao_anbima: anbima || null,
+              situacao: situacao || null,
+              data_inicio_situacao: desdeSituacao || null,
+              publico_alvo: publico || null,
+              forma_condominio: c("FORMA_CONDOMINIO") || null,
+              exclusivo: c("EXCLUSIVO") || null,
+              data_inicio: c("DATA_INICIO") || null,
+              tributacao_longo_prazo: c("TRIBUTACAO_LONGO_PRAZO") || null,
+              entidade_investimento: c("ENTIDADE_INVESTIMENTO") || null,
+              come_cotas: temComeCotas(tipo, classificacao, anbima),
+              engine: "FUNDO",
+              ativo: true,
+              sincronizar_cotas: false,
+            });
+          },
+        );
+
+        if (modoCatalogo === "subclasses") {
+          await percorrerCsv(
+            await membroRemoto(URL_CADASTRO, (n) => n === "registro_subclasse.csv"),
+            (linha, idx) => {
+              lidas++;
+              const s = (nome: string) => campo(linha, idx.get(nome) ?? -1).trim();
+              const classe = classes.get(s("ID_REGISTRO_CLASSE"));
+              if (!classe) return descarta("classe fora do recorte");
+              const situacao = s("SITUACAO");
+              const desdeSituacao = s("DATA_INICIO_SITUACAO");
+              if (!situacaoAceita(situacao, desdeSituacao)) return descarta("situacao fora do recorte");
+              if (s("FORMA_CONDOMINIO") !== "Aberto") return descarta("condominio fechado");
+              if (s("EXCLUSIVO") === "S") return descarta("exclusivo");
+              const publico = s("PUBLICO_ALVO");
+              if (!publicoAceito(publico)) return descarta("publico restrito");
+              const idSubclasse = s("ID_SUBCLASSE");
+              if (!idSubclasse) return descarta("sem id de subclasse");
+              const nomeSubclasse = s("DENOMINACAO_SOCIAL");
+
+              linhas.push({
+                cnpj_classe: classe.cnpj,
+                cvm_id_subclasse: idSubclasse,
+                codigo_cvm: s("CODIGO_CVM") || null,
+                nome_curto: nomeDaSubclasse(classe.denominacao, nomeSubclasse),
+                denominacao_social: nomeSubclasse || classe.denominacao,
+                tipo_classe: classe.tipoClasse || null,
+                classificacao: classe.classificacao || null,
+                classificacao_anbima: classe.anbima || null,
+                situacao: situacao || null,
+                data_inicio_situacao: desdeSituacao || null,
+                publico_alvo: publico || null,
+                forma_condominio: s("FORMA_CONDOMINIO") || null,
+                exclusivo: s("EXCLUSIVO") || null,
+                data_inicio: s("DATA_INICIO") || null,
+                tributacao_longo_prazo: classe.trib || null,
+                entidade_investimento: classe.entidade || null,
+                come_cotas: temComeCotas(classe.tipo, classe.classificacao, classe.anbima, s("PREVIDENCIARIO") === "S"),
+                engine: "FUNDO",
+                ativo: true,
+                sincronizar_cotas: false,
+              });
+            },
+          );
+        }
+      } else {
+        const resposta = await fetch(URL_CAD_FI);
+        if (!resposta.ok || !resposta.body) throw new Error(`cad_fi.csv HTTP ${resposta.status}`);
+        await percorrerCsv(
+          resposta.body.pipeThrough(new TextDecoderStream("iso-8859-1")) as ReadableStream<string>,
+          (linha, idx) => {
+            lidas++;
+            // Filtro barato antes do parse: 46 mil linhas, quase todas canceladas ha anos.
+            if (linha.indexOf("CANCELADA") < 0) return descarta("nao cancelado");
+            const c = (nome: string) => campo(linha, idx.get(nome) ?? -1).trim();
+            if (c("SIT") !== "CANCELADA") return descarta("nao cancelado");
+            if (c("TP_FUNDO") !== "FI") return descarta("tipo fora do recorte");
+            const cancelamento = c("DT_CANCEL");
+            if (!cancelamento || cancelamento < PISO_SERIE) return descarta("cancelado antes de 2023");
+            if (c("CONDOM") !== "Aberto") return descarta("condominio fechado");
+            if (c("FUNDO_EXCLUSIVO") === "S") return descarta("exclusivo");
+            const publico = c("PUBLICO_ALVO");
+            if (!publicoAceito(publico)) return descarta("publico restrito");
+            const cnpj = soDigitos(c("CNPJ_FUNDO"));
+            if (cnpj.length !== 14) return descarta("cnpj invalido");
+            const denominacao = c("DENOM_SOCIAL");
+            if (!denominacao) return descarta("sem denominacao");
+            const classificacao = c("CLASSE");
+            const anbima = c("CLASSE_ANBIMA");
+
+            linhas.push({
+              cnpj_classe: cnpj,
+              codigo_cvm: c("CD_CVM") || null,
+              nome_curto: denominacao.slice(0, 120),
+              denominacao_social: denominacao,
+              tipo_classe: "FI (ICVM 555)",
+              classificacao: classificacao || null,
+              classificacao_anbima: anbima || null,
+              situacao: "Cancelado",
+              data_inicio_situacao: cancelamento,
+              publico_alvo: publico || null,
+              forma_condominio: c("CONDOM") || null,
+              exclusivo: c("FUNDO_EXCLUSIVO") || null,
+              data_inicio: c("DT_INI_ATIV") || c("DT_CONST") || null,
+              tributacao_longo_prazo: c("TRIB_LPRAZO") || null,
+              cnpj_administrador: soDigitos(c("CNPJ_ADMIN")) || null,
+              administrador: c("ADMIN") || null,
+              cpf_cnpj_gestor: soDigitos(c("CPF_CNPJ_GESTOR")) || null,
+              gestor: c("GESTOR") || null,
+              come_cotas: temComeCotas("FI", classificacao, anbima),
+              engine: "FUNDO",
+              ativo: true,
+              sincronizar_cotas: false,
+            });
+          },
+        );
+      }
 
       if (body.seco === true) {
-        return json({ ok: true, seco: true, lidas, no_recorte: linhas.length, descartadas: fora });
+        return json({ ok: true, seco: true, modo: modoCatalogo, lidas, no_recorte: linhas.length, descartadas: fora });
       }
       if (!linhas.length) throw new Error("catalogo veio vazio - nao vou gravar nada");
 
       let gravadas = 0;
       for (let i = 0; i < linhas.length; i += 500) {
         const { error } = await sb.from("cadastro_de_fundos")
-          .upsert(linhas.slice(i, i + 500), { onConflict: "cnpj_classe", ignoreDuplicates: true });
+          .upsert(linhas.slice(i, i + 500), { onConflict: "cnpj_classe,cvm_id_subclasse", ignoreDuplicates: true });
         if (error) throw new Error(`upsert (lote ${i / 500 + 1}): ${error.message}`);
         gravadas += Math.min(500, linhas.length - i);
       }
@@ -155,7 +308,7 @@ Deno.serve(async (req) => {
         .select("*", { count: "exact", head: true });
       const { count: sincronizando } = await sb.from("cadastro_de_fundos")
         .select("*", { count: "exact", head: true }).eq("sincronizar_cotas", true);
-      return json({ ok: true, lidas, no_recorte: linhas.length, enviadas: gravadas,
+      return json({ ok: true, modo: modoCatalogo, lidas, no_recorte: linhas.length, enviadas: gravadas,
                     no_catalogo: total, sincronizando_cotas: sincronizando, descartadas: fora });
     }
 
@@ -165,16 +318,21 @@ Deno.serve(async (req) => {
     const desde: string | null = body.desde ?? null;              // AAAA-MM-DD
     const subclasseEscolhida: string | null = body.subclasse ?? null;
 
-    // 1. Cadastro (idempotente)
-    const { data: existente } = await sb
-      .from("cadastro_de_fundos")
-      .select("id, nome_curto, cvm_id_subclasse, data_inicio")
-      .eq("cnpj_classe", cnpj)
-      .maybeSingle();
+    // 1. Cadastro (idempotente). A linha e a do CNPJ E da subclasse: desde 10/09/2026 o catalogo
+    // tem uma linha por subclasse, e o CNPJ sozinho nao identifica mais o fundo.
+    const colunas = "id, nome_curto, cvm_id_subclasse, data_inicio, situacao, data_inicio_situacao";
+    const { data: existente, error: eExistente } = subclasseEscolhida
+      ? await sb.from("cadastro_de_fundos").select(colunas)
+        .eq("cnpj_classe", cnpj).eq("cvm_id_subclasse", subclasseEscolhida).maybeSingle()
+      : await sb.from("cadastro_de_fundos").select(colunas)
+        .eq("cnpj_classe", cnpj).is("cvm_id_subclasse", null).maybeSingle();
+    if (eExistente) throw eExistente;
 
     let fundoId = existente?.id ?? null;
     let nomeCurto = existente?.nome_curto ?? null;
     let dataInicioFundo = existente?.data_inicio ?? null;
+    let situacaoFundo: string | null = existente?.situacao ?? null;
+    let dataSituacaoFundo: string | null = existente?.data_inicio_situacao ?? null;
 
     if (!fundoId) {
       const { classe, fundo } = await buscarCadastro(cnpj);
@@ -232,6 +390,8 @@ Deno.serve(async (req) => {
       fundoId = inserido.id;
       nomeCurto = inserido.nome_curto;
       dataInicioFundo = inserido.data_inicio;
+      situacaoFundo = nova.situacao;
+      dataSituacaoFundo = nova.data_inicio_situacao;
     } else {
       // A linha ja existia. Antes do catalogo isso significava "fundo ja em uso"; desde
       // 10/09/2026 significa, quase sempre, "fundo que estava so no catalogo" - e o catalogo
@@ -240,11 +400,7 @@ Deno.serve(async (req) => {
       // Sem ligar a marca aqui, o fundo recem-carregado ficaria de fora da atualizacao diaria e
       // a serie dele congelaria no dia do cadastro. E, do lado da tela, ele nem apareceria na
       // lista de carregados. O sintoma seria "cadastrei e sumiu".
-      const remendo: Record<string, unknown> = { sincronizar_cotas: true };
-      if (subclasseEscolhida && !existente?.cvm_id_subclasse) {
-        remendo.cvm_id_subclasse = subclasseEscolhida;
-      }
-      await sb.from("cadastro_de_fundos").update(remendo).eq("id", fundoId);
+      await sb.from("cadastro_de_fundos").update({ sincronizar_cotas: true }).eq("id", fundoId);
     }
 
     if (body.apenasCadastro) return json({ fundoId, nomeCurto, cotasInseridas: 0, proximoMes: null });
@@ -263,7 +419,6 @@ Deno.serve(async (req) => {
     //
     // O maior entre os tres, entao, e nunca antes do piso: se o fundo comecou DEPOIS de
     // 02/01/2023, comecar no piso so varreria meses vazios ate a data de inicio dele.
-    const PISO_SERIE = "2023-01-02";
     const comecoUtil = [desde ?? PISO_SERIE, dataInicioFundo ?? PISO_SERIE, PISO_SERIE]
       .sort()
       .at(-1)!;
@@ -279,16 +434,8 @@ Deno.serve(async (req) => {
     // volta seguinte, o laco anda mes a mes a partir do ponto pedido em vez de saltar para o
     // maior dia ja gravado. O upsert torna a repeticao inofensiva.
     const inicioISO = desde ? comecoUtil : (ultima?.data ?? comecoUtil);
-    const cursor = new Date(inicioISO + "T00:00:00");
-    const hoje = new Date();
-    const meses: string[] = [];
-    while (cursor <= hoje && meses.length < MAX_MESES) {
-      meses.push(competencia(cursor));
-      cursor.setMonth(cursor.getMonth() + 1);
-      cursor.setDate(1);
-    }
-    // O que sobrou depois do ultimo mes da lista, se o orcamento nao interromper antes.
-    const depoisDaLista = cursor <= hoje ? competencia(cursor) : null;
+    // Fundo cancelado: o informe segue com cota zero por semanas e depois some.
+    const { meses, depoisDaLista } = mesesAPartirDe(inicioISO, fimDaSerie(situacaoFundo, dataSituacaoFundo));
 
     const { data: cfg } = await sb
       .from("cadastro_de_fundos").select("cvm_id_subclasse").eq("id", fundoId).single();

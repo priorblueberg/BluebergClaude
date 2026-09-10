@@ -4,6 +4,7 @@
  * Mantém custodia e controle_de_carteiras atualizadas
  * automaticamente quando movimentacoes são alteradas.
  */
+import { cotasCosturadas, TIPO_MUDANCA_DE_FUNDO, trechosDaPosicao } from "@/lib/posicaoDeFundo";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs, montarLotesPersistidos } from "@/lib/poupancaEngine";
@@ -1480,21 +1481,36 @@ export async function syncCustodiaFundo(
   }
 
   const primeira = movs[0] as any;
-  const fundoId = (movs.find((m: any) => m.fundo_id) as any)?.fundo_id;
-  if (!fundoId) return;
+  // A posicao pode ter passado por mais de um fundo ("Mudança de Fundo", CVM 175): a serie de
+  // cotas e costurada por trechos, e a custodia fica com o fundo ATUAL.
+  const trechos = trechosDaPosicao(movs as any[]);
+  if (!trechos.length) return;
+  const fundoId = trechos[trechos.length - 1].fundoId;
 
-  const { data: cotas } = await supabase
-    .from("cotas_fundos")
-    .select("data, valor_cota")
-    .eq("fundo_id", fundoId)
-    .order("data");
+  const cotasPorFundo = new Map<string, { data: string; valor_cota: number }[]>();
+  for (const id of new Set(trechos.map((t) => t.fundoId))) {
+    const linhas: { data: string; valor_cota: number }[] = [];
+    // Paginado: a serie passa das 1000 linhas que o PostgREST devolve, e o corte e silencioso.
+    for (let de = 0; ; de += 1000) {
+      const { data: pagina } = await supabase
+        .from("cotas_fundos")
+        .select("data, valor_cota")
+        .eq("fundo_id", id)
+        .order("data")
+        .range(de, de + 999);
+      linhas.push(...((pagina || []) as any[]).map((c) => ({ data: c.data, valor_cota: Number(c.valor_cota) })));
+      if (!pagina || pagina.length < 1000) break;
+    }
+    cotasPorFundo.set(id, linhas);
+  }
+  const cotas = cotasCosturadas(trechos, cotasPorFundo);
 
   /** Ultima cota divulgada ate a data (fundo nao divulga em dia sem movimento). */
   const cotaEm = (dataISO: string): number | null => {
     let achada: number | null = null;
-    for (const c of cotas || []) {
-      if ((c as any).data > dataISO) break;
-      achada = Number((c as any).valor_cota);
+    for (const c of cotas) {
+      if (c.data > dataISO) break;
+      achada = c.valor_cota;
     }
     return achada;
   };
@@ -1518,6 +1534,13 @@ export async function syncCustodiaFundo(
         .eq("id", m.id);
     }
     if (qtd == null) continue;
+
+    // O fundo mudou: a posicao passa a ter `qtd` cotas do fundo novo, com o mesmo custo.
+    if (m.tipo_movimentacao === TIPO_MUDANCA_DE_FUNDO) {
+      saldoCotas = qtd;
+      if (saldoCotas > 1e-8) dataZerou = null;
+      continue;
+    }
 
     if (ENTRADAS.includes(m.tipo_movimentacao)) {
       saldoCotas += qtd;

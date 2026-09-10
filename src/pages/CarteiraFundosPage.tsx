@@ -1,12 +1,22 @@
 import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
 import CarteiraCategoriaView, { type LinhaCarteira } from "@/components/CarteiraCategoriaView";
+import { useAlertas } from "@/hooks/useAlertas";
 
 export default function CarteiraFundosPage() {
   const { carteiraInfo, carteiraRows, allProductRows, productList, cdiRecords, loading } = useCarteiraFundos();
+  // Posicao com alerta de mudanca na composicao do fundo em aberto: a serie esta parada na
+  // ultima cota ate o cliente informar o que aconteceu, e a linha precisa dizer isso.
+  const { alertas } = useAlertas();
+  const aguardando = new Set(
+    alertas.filter((a) => a.tipo === "mudanca_de_fundo").flatMap((a) => (a.detalhe.codigos_custodia ?? []).map(String)),
+  );
 
   const linhas: LinhaCarteira[] = productList.filter((p) => p.existiuNaJanela !== false).map((p) => ({
     chave: String(p.analysisProduct.codigo_custodia),
     nome: p.nome,
+    detalhe: aguardando.has(String(p.analysisProduct.codigo_custodia))
+      ? "Aguardando informação sobre mudança no fundo (veja o sino)"
+      : null,
     custodiante: p.custodiante,
     patrimonio: p.valorAtualizado,
     ganho: p.ganhoFinanceiro,

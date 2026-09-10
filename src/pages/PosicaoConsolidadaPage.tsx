@@ -1,3 +1,4 @@
+import { cotasCosturadas, trechosDaPosicao, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
 import { useEffect, useState, useMemo } from "react";
 import { Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -163,7 +164,7 @@ export default function PosicaoConsolidadaPage() {
         fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util").gte("data", pisoDoCalendario(minDate)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
         allCodigos.length > 0
-          ? fetchAllRows((de, ate) => supabase.from("movimentacoes").select("data, data_cotizacao, tipo_movimentacao, valor, quantidade, codigo_custodia").in("codigo_custodia", allCodigos).eq("user_id", user!.id).order("data").range(de, ate)).then((data) => ({ data }))
+          ? fetchAllRows((de, ate) => supabase.from("movimentacoes").select("data, data_cotizacao, tipo_movimentacao, valor, quantidade, codigo_custodia, fundo_id, created_at").in("codigo_custodia", allCodigos).eq("user_id", user!.id).order("data").range(de, ate)).then((data) => ({ data }))
           : Promise.resolve({ data: [] }),
         poupancaCodigos.length > 0
           ? fetchAllRows((de, ate) => supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data }))
@@ -199,8 +200,16 @@ export default function PosicaoConsolidadaPage() {
 
       const movByCodigo = new Map<string, { data: string; tipo_movimentacao: string; valor: number }[]>();
       const movFundoByCodigo = new Map<string, { data: string; tipo: string; valor: number; data_cotizacao: string | null; qtd_cotas: number | null }[]>();
+      // Para costurar a serie de cotas da posicao que mudou de fundo ("Mudança de Fundo").
+      const trechoMovByCodigo = new Map<string, MovimentoDeFundo[]>();
       for (const m of ((movRes as any).data || [])) {
         const code = m.codigo_custodia as string;
+        if (m.fundo_id) {
+          trechoMovByCodigo.set(code, [...(trechoMovByCodigo.get(code) ?? []), {
+            fundo_id: m.fundo_id, data: m.data, data_cotizacao: m.data_cotizacao ?? null,
+            tipo_movimentacao: m.tipo_movimentacao, created_at: m.created_at ?? null,
+          }]);
+        }
         if (!movByCodigo.has(code)) movByCodigo.set(code, []);
         movByCodigo.get(code)!.push({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) });
         if (!movFundoByCodigo.has(code)) movFundoByCodigo.set(code, []);
@@ -217,7 +226,10 @@ export default function PosicaoConsolidadaPage() {
         const cotasData = await fetchAllRows((de, ate) => supabase
           .from("cotas_fundos")
           .select("fundo_id, data, valor_cota")
-          .in("fundo_id", fundoProducts.map((p) => p.fundo_id!))
+          .in("fundo_id", [...new Set([
+            ...fundoProducts.map((p) => p.fundo_id!),
+            ...((movRes as any).data || []).map((m: any) => m.fundo_id as string | null).filter(Boolean),
+          ])])
           .lte("data", dataReferenciaISO)
           .order("data")
           .range(de, ate));
@@ -229,6 +241,12 @@ export default function PosicaoConsolidadaPage() {
       }
 
       // lotes are now derived from movimentações to avoid double-counting resgates
+
+      // Serie de cotas da posicao de fundo, costurada quando o fundo mudou no caminho.
+      const cotasDoProduto = (product: { codigo_custodia: string; fundo_id?: string | null }) => {
+        const trechos = trechosDaPosicao(trechoMovByCodigo.get(product.codigo_custodia) || []);
+        return trechos.length > 1 ? cotasCosturadas(trechos, cotasPorFundo) : (cotasPorFundo.get(product.fundo_id!) || []);
+      };
 
       // Cotacao das moedas em posicao: o patrimonio e saldo x cotacao do dia.
       const cotacoesPorMoeda = new Map<string, { data: string; cotacao: number }[]>();
@@ -341,7 +359,7 @@ export default function PosicaoConsolidadaPage() {
           dataInicio: product.data_inicio,
           dataCalculo: fim,
           calendario,
-          cotas: cotasPorFundo.get(product.fundo_id!) || [],
+          cotas: cotasDoProduto(product),
           movimentacoes: movFundoByCodigo.get(product.codigo_custodia) || [],
           fundo: {
             dias_cotizacao_aplicacao: product.fundoCfg?.dias_cotizacao_aplicacao ?? 0,

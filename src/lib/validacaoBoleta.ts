@@ -7,6 +7,7 @@
  * negativa em silêncio, como aconteceu com o título 228 da massa de CDB.
  */
 import { supabase } from "@/integrations/supabase/client";
+import { posicaoNaData, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
 
 const TABELA_COTACAO: Record<string, string> = {
   USD: "historico_dolar",
@@ -149,10 +150,26 @@ export async function saldosNaData(
 ): Promise<Map<string, number>> {
   const { data } = await supabase
     .from("movimentacoes")
-    .select("fundo_id, moeda, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario")
+    .select("codigo_custodia, fundo_id, moeda, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario, created_at")
     .eq("user_id", userId);
 
   const saldos = new Map<string, number>();
+  if (chave === "fundo_id") {
+    // Fundo soma POSICAO a posicao, e nao movimento a movimento: uma "Mudança de Fundo" leva o
+    // saldo inteiro da posicao para o fundo novo, e somar por `fundo_id` deixaria o antigo com
+    // cotas que nao existem mais.
+    const porPosicao = new Map<string, MovimentoDeFundo[]>();
+    for (const m of ((data || []) as any[])) {
+      if (!m.fundo_id) continue;
+      const k = m.codigo_custodia ? String(m.codigo_custodia) : `sem-codigo:${m.fundo_id}`;
+      porPosicao.set(k, [...(porPosicao.get(k) ?? []), m]);
+    }
+    for (const movs of porPosicao.values()) {
+      const p = posicaoNaData(movs, ateDataISO);
+      if (p.fundoId) saldos.set(p.fundoId, (saldos.get(p.fundoId) ?? 0) + p.saldo);
+    }
+    return new Map([...saldos].filter(([, v]) => v > 1e-8));
+  }
   for (const m of ((data || []) as any[])) {
     const k = m[chave];
     if (!k) continue;
@@ -222,9 +239,13 @@ export async function saldoEmQuantidade(
 ): Promise<number> {
   const { data } = await supabase
     .from("movimentacoes")
-    .select("id, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario")
+    .select("id, fundo_id, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario, created_at")
     .eq("codigo_custodia", codigoCustodia)
     .eq("user_id", userId);
+
+  // Posicao de fundo: a "Mudança de Fundo" substitui o saldo, e isso so da certo em ordem.
+  const deFundo = ((data || []) as any[]).filter((m) => !(ignorarId && m.id === ignorarId));
+  if (deFundo.some((m) => m.fundo_id)) return posicaoNaData(deFundo, ateDataISO).saldo;
 
   let saldo = 0;
   for (const m of (data || []) as any[]) {

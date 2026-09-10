@@ -112,6 +112,27 @@ export async function percorrerCsv(
 
 export type CotaMes = { subclasse: string; data: string; cota: number };
 
+/** Regime da Resolucao CVM 175 ("CLASSES - FIF", "CLASSE FIF/FAPI"). O antigo e "FI", "FAPI". */
+export const ehRegimeNovo = (tipo: string) => tipo.trim().toUpperCase().startsWith("CLASSE");
+
+/**
+ * Qual linha fica quando o informe traz o mesmo fundo, subclasse e dia DUAS vezes.
+ *
+ * Na adaptacao a Resolucao 175 a CVM publicou o fundo nos dois regimes ao mesmo tempo: uma linha
+ * "FI" e outra "CLASSES - FIF", mesmo CNPJ, mesmo dia. Medido em 10/09/2026: 3.410 repeticoes em
+ * 12/2024, 13.745 em 06/2025, 12 em 11/2025 e nenhuma em 08/2026. Em ~10% delas a cota difere
+ * (ate ~0,4%), e a continuidade com os dias vizinhos nao aponta vencedora (855 x 784 em 06/2025).
+ *
+ * Fica a do regime NOVO: e ela que segue sozinha depois da transicao, e a classe e a identidade
+ * do fundo no catalogo. Entre duas do mesmo regime fica a primeira.
+ *
+ * Antes disto as duas iam no mesmo upsert e o Postgres recusava o lote inteiro ("ON CONFLICT DO
+ * UPDATE command cannot affect row a second time"): o fundo ficava sem nenhuma cota do mes.
+ */
+export function ficaComNova(tipoAtual: string, tipoNova: string): boolean {
+  return ehRegimeNovo(tipoNova) && !ehRegimeNovo(tipoAtual);
+}
+
 /** As cotas de UM fundo num mes do informe diario. `[]` quando o mes ainda nao foi publicado. */
 export async function cotasDoMes(mes: string, cnpj: string): Promise<CotaMes[]> {
   const url = `https://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS/inf_diario_fi_${mes}.zip`;
@@ -128,13 +149,14 @@ export async function cotasDoMes(mes: string, cnpj: string): Promise<CotaMes[]> 
     ? `${cnpj.slice(0, 2)}.${cnpj.slice(2, 5)}.${cnpj.slice(5, 8)}/${cnpj.slice(8, 12)}-${cnpj.slice(12)}`
     : null;
 
-  const achados: CotaMes[] = [];
+  const porDia = new Map<string, CotaMes & { tipo: string }>();
   await percorrerCsv(stream, (linha, idx) => {
     if (marca && linha.indexOf(marca) < 0) return;
     const iCnpj = idx.get("CNPJ_FUNDO_CLASSE") ?? idx.get("CNPJ_FUNDO") ?? -1;
     const iData = idx.get("DT_COMPTC") ?? -1;
     const iCota = idx.get("VL_QUOTA") ?? -1;
     const iSub = idx.get("ID_SUBCLASSE") ?? -1;
+    const iTipo = idx.get("TP_FUNDO_CLASSE") ?? idx.get("TP_FUNDO") ?? -1;
     if (iCnpj < 0 || iData < 0 || iCota < 0) return;
     // A conferencia exata fica: a marca acha a substring em qualquer coluna.
     if (soDigitos(campo(linha, iCnpj)) !== cnpj) return;
@@ -144,24 +166,48 @@ export async function cotasDoMes(mes: string, cnpj: string): Promise<CotaMes[]> 
     // O piso ja vem da escolha dos meses, que nunca comeca antes de 01/2023. Esta conferencia e
     // por linha, para o piso nao depender de o arquivo do mes trazer so datas daquele mes.
     if (data < PISO_SERIE) return;
-    achados.push({
-      subclasse: iSub >= 0 ? campo(linha, iSub).trim() : "",
-      data,
-      cota,
-    });
+    const subclasse = iSub >= 0 ? campo(linha, iSub).trim() : "";
+    const tipo = iTipo >= 0 ? campo(linha, iTipo) : "";
+    const chave = `${subclasse}|${data}`;
+    const atual = porDia.get(chave);
+    if (atual && !ficaComNova(atual.tipo, tipo)) return;
+    porDia.set(chave, { subclasse, data, cota, tipo });
   });
-  return achados;
+  return [...porDia.values()].map(({ subclasse, data, cota }) => ({ subclasse, data, cota }));
 }
 
-/** Os meses a varrer a partir de `inicioISO`, ate hoje e ate `MAX_MESES`, e o que sobra depois. */
-export function mesesAPartirDe(inicioISO: string): { meses: string[]; depoisDaLista: string | null } {
+/**
+ * Ate quando vale varrer o informe de um fundo que deixou de existir.
+ *
+ * O fundo cancelado continua no informe diario com cota zero por algumas semanas (o Kinea
+ * Advisory, cancelado em 10/04/2025, apareceu zerado ate 13/06/2025) e depois some. Dois meses
+ * depois do cancelamento cobre essa cauda; varrer ate hoje seria ler mais de um ano de meses
+ * vazios. Fundo em funcionamento ou em liquidacao nao tem limite.
+ */
+export function fimDaSerie(situacao: string | null | undefined, dataSituacao: string | null | undefined): string | null {
+  if (!situacao || !dataSituacao || !/^cancelad/i.test(situacao)) return null;
+  const d = new Date(`${dataSituacao}T00:00:00`);
+  d.setMonth(d.getMonth() + 2);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Os meses a varrer a partir de `inicioISO`, ate hoje (ou ate `ateISO`, se vier antes) e ate
+ * `MAX_MESES`, e o que sobra depois.
+ */
+export function mesesAPartirDe(
+  inicioISO: string,
+  ateISO: string | null = null,
+): { meses: string[]; depoisDaLista: string | null } {
   const cursor = new Date(inicioISO + "T00:00:00");
   const hoje = new Date();
+  const ate = ateISO ? new Date(ateISO + "T00:00:00") : null;
+  const limite = ate && ate < hoje ? ate : hoje;
   const meses: string[] = [];
-  while (cursor <= hoje && meses.length < MAX_MESES) {
+  while (cursor <= limite && meses.length < MAX_MESES) {
     meses.push(competencia(cursor));
     cursor.setMonth(cursor.getMonth() + 1);
     cursor.setDate(1);
   }
-  return { meses, depoisDaLista: cursor <= hoje ? competencia(cursor) : null };
+  return { meses, depoisDaLista: cursor <= limite ? competencia(cursor) : null };
 }

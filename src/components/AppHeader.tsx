@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from "react";
 import { useBoleta } from "@/contexts/BoletaContext";
 import { format, parse, isValid, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Bell, CalendarIcon, ChevronDown, Plus } from "lucide-react";
+import { CalendarIcon, ChevronDown, Plus } from "lucide-react";
+import { SininhoDeAlertas } from "@/components/SininhoDeAlertas";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/hooks/useAuth";
@@ -194,10 +195,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
             </button>
           </div>
 
-          <button className="relative text-muted-foreground hover:text-primary" style={{ transition: "color 120ms linear" }}>
-            <Bell size={18} strokeWidth={1.5} />
-            <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-primary" />
-          </button>
+          <SininhoDeAlertas />
         </div>
       </header>
     </div>

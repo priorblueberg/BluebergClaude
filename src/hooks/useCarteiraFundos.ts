@@ -18,6 +18,7 @@ import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { ProductListItem, CarteiraInfo } from "@/hooks/useCarteiraRF";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
+import { cotasCosturadas, trechosDaPosicao } from "@/lib/posicaoDeFundo";
 
 interface FundoCustodia {
   id: string;
@@ -121,19 +122,25 @@ export function useCarteiraFundos() {
       // Buscar a partir da janela apagava os fundos numa janela curta.
       const inicioReal = ((cartBruto as any)?.data_inicio as string | null) ?? dataInicio;
 
-      const fundoIds = fundos.map((f) => f.fundo_id);
       const codigos = fundos.map((f) => f.codigo_custodia);
+
+      // Movimentos primeiro: uma "Mudança de Fundo" traz para a posicao as cotas de um fundo que
+      // nao e o da custodia (o antigo, antes da mudanca), e a busca de cotas precisa dos dois.
+      const movRaw = await fetchAllRows((de, ate) => supabase.from("movimentacoes")
+        .select("codigo_custodia, fundo_id, data, data_cotizacao, tipo_movimentacao, valor, quantidade, created_at")
+        .eq("user_id", user.id).in("codigo_custodia", codigos).order("data").range(de, ate));
+      const fundoIds = [...new Set([
+        ...fundos.map((f) => f.fundo_id),
+        ...movRaw.map((m: any) => m.fundo_id as string | null).filter((id): id is string => !!id),
+      ])];
 
       // Paginado: a serie de cotas passa das 1000 linhas que o PostgREST devolve
       // por requisicao, e o corte e silencioso.
-      const [calRaw, cotasRaw, movRaw, cdiRaw] = await Promise.all([
+      const [calRaw, cotasRaw, cdiRaw] = await Promise.all([
         fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
           .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("cotas_fundos").select("fundo_id, data, valor_cota")
           .in("fundo_id", fundoIds).lte("data", dataCalculo).order("data").range(de, ate)),
-        fetchAllRows((de, ate) => supabase.from("movimentacoes")
-          .select("codigo_custodia, data, data_cotizacao, tipo_movimentacao, valor, quantidade")
-          .eq("user_id", user.id).in("codigo_custodia", codigos).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
           .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
       ]);
@@ -163,12 +170,14 @@ export function useCarteiraFundos() {
 
       for (const f of fundos) {
         const fim = f.resgate_total && f.resgate_total < dataCalculo ? f.resgate_total : dataCalculo;
+        const movsDaPosicao = movsPorCodigo.get(f.codigo_custodia) || [];
+        const trechos = trechosDaPosicao(movsDaPosicao);
         const rows = calcularFundoDiario({
           dataInicio: f.data_inicio,
           dataCalculo: fim,
           calendario,
-          cotas: cotasPorFundo.get(f.fundo_id) || [],
-          movimentacoes: (movsPorCodigo.get(f.codigo_custodia) || []).map((m) => ({
+          cotas: trechos.length > 1 ? cotasCosturadas(trechos, cotasPorFundo) : (cotasPorFundo.get(f.fundo_id) || []),
+          movimentacoes: movsDaPosicao.map((m) => ({
             data: m.data,
             tipo: m.tipo_movimentacao,
             valor: Number(m.valor),

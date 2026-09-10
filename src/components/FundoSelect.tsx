@@ -33,7 +33,13 @@ interface Sugestao {
   nome: string;
   cnpj: string;
   classificacao: string | null;
+  /** Codigo da subclasse na CVM. Subclasse nao tem CNPJ: divide o da classe. */
+  subclasse: string | null;
+  /** Data do cancelamento, para fundo que deixou de existir (posicao historica). */
+  encerradoEm: string | null;
 }
+
+const fmtDataBR = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("pt-BR");
 
 type Aviso =
   | { tipo: "semCotas"; fundo: Sugestao; erro: string | null }
@@ -153,15 +159,20 @@ export default function FundoSelect({
         : `nome_curto.ilike.%${seguro}%`;
       const { data } = await supabase
         .from("cadastro_de_fundos")
-        .select("id, nome_curto, cnpj_classe, classificacao")
+        .select("id, nome_curto, cnpj_classe, classificacao, cvm_id_subclasse, situacao, data_inicio_situacao")
         .eq("ativo", true)
         .or(filtro)
         .order("nome_curto")
         .limit(MAX_SUGESTOES);
       if (!vivo) return;
-      setSugestoes(((data ?? []) as {
+      setSugestoes(((data ?? []) as unknown as {
         id: string; nome_curto: string; cnpj_classe: string; classificacao: string | null;
-      }[]).map((f) => ({ id: f.id, nome: f.nome_curto, cnpj: f.cnpj_classe, classificacao: f.classificacao })));
+        cvm_id_subclasse: string | null; situacao: string | null; data_inicio_situacao: string | null;
+      }[]).map((f) => ({
+        id: f.id, nome: f.nome_curto, cnpj: f.cnpj_classe, classificacao: f.classificacao,
+        subclasse: f.cvm_id_subclasse,
+        encerradoEm: /^cancelad/i.test(f.situacao ?? "") ? f.data_inicio_situacao : null,
+      })));
       setBuscando(false);
     }, ESPERA_MS);
 
@@ -221,13 +232,13 @@ export default function FundoSelect({
 
   const adicionar = () => {
     if (aviso?.tipo !== "semCotas") return;
-    const { cnpj } = aviso.fundo;
+    const { id: fundoId } = aviso.fundo;
     setAviso(null);
     limparCampo();
     // Sem `await`: a boleta fecha na hora e a carga anda no servidor. A resposta so confirma que
     // a primeira etapa rodou; se ela falhar, o aviso aparece mesmo com a boleta fechada, porque o
     // toast e global.
-    void supabase.functions.invoke("carga-cotas-fundo", { body: { cnpj } }).then(({ data, error }) => {
+    void supabase.functions.invoke("carga-cotas-fundo", { body: { fundoId } }).then(({ data, error }) => {
       const r = data as { error?: string; precisaSubclasse?: string[] } | null;
       if (error || r?.error) {
         toast.error(`A carga das cotas não começou: ${error?.message ?? r?.error}`);
@@ -319,7 +330,9 @@ export default function FundoSelect({
             >
               <span className="block truncate text-sm text-foreground">{f.nome}</span>
               <span className="block truncate text-xs text-muted-foreground">
-                CNPJ {formatarCnpj(f.cnpj)}{f.classificacao ? ` · ${f.classificacao}` : ""}
+                CNPJ {formatarCnpj(f.cnpj)}{f.subclasse ? " · Subclasse" : ""}
+                {f.classificacao ? ` · ${f.classificacao}` : ""}
+                {f.encerradoEm ? ` · Encerrado em ${fmtDataBR(f.encerradoEm)}` : ""}
               </span>
             </button>
           ))}
