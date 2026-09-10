@@ -250,3 +250,86 @@ describe("venda", () => {
     expect(ultimo(rows).valorInvestido).toBeCloseTo(0, 2);
   });
 });
+
+describe("o custo e o preco PAGO, nao o fechamento do dia", () => {
+  // Caso real, medido contra o GorilaVIEW em 09/09/2026. Antes desta regra o motor media o
+  // ganho a partir do fechamento do dia da compra, e a diferenca entre o preco praticado e
+  // esse fechamento sumia.
+  const compra100 = (data: string, precoPago: number) => [
+    { data, tipo: "Compra", valor: precoPago * 100, quantidade: 100 },
+  ];
+
+  it("comprar ACIMA do fechamento ja nasce com prejuizo no mesmo dia", () => {
+    // USIM5: 100 acoes a 7,80 num dia que fechou a 7,03. Sao R$ 77,00 pagos a mais.
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-01-02",
+      precos: precos([["2023-01-02", 7.03]]),
+      movimentacoes: compra100("2023-01-02", 7.8),
+    });
+    expect(ultimo(rows).ganhoAcumulado).toBeCloseTo(-77, 6);
+    expect(ultimo(rows).valorPosicao).toBeCloseTo(703, 6);
+    expect(ultimo(rows).valorInvestido).toBeCloseTo(780, 6);
+  });
+
+  it("comprar ABAIXO do fechamento ja nasce com lucro no mesmo dia", () => {
+    // PETR4: 100 acoes a 22,00 num dia que fechou a 22,92.
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-01-02",
+      precos: precos([["2023-01-02", 22.92]]),
+      movimentacoes: compra100("2023-01-02", 22),
+    });
+    expect(ultimo(rows).ganhoAcumulado).toBeCloseTo(92, 6);
+  });
+
+  it("a rentabilidade do dia da compra e fechamento sobre preco pago", () => {
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-01-02",
+      precos: precos([["2023-01-02", 7.03]]),
+      movimentacoes: compra100("2023-01-02", 7.8),
+    });
+    // 7,03 / 7,80 - 1 = -9,872%
+    expect(ultimo(rows).rentabilidadeAcumuladaPct).toBeCloseTo(7.03 / 7.8 - 1, 8);
+  });
+
+  it("comprar EXATAMENTE no fechamento nao gera ganho nem perda no dia", () => {
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-01-02",
+      precos: precos([["2023-01-02", 10]]),
+      movimentacoes: compra100("2023-01-02", 10),
+    });
+    expect(ultimo(rows).ganhoAcumulado).toBeCloseTo(0, 8);
+    expect(ultimo(rows).rentabilidadeAcumuladaPct).toBeCloseTo(0, 8);
+  });
+
+  it("o custo da operacao entra como perda imediata", () => {
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-01-02",
+      precos: precos([["2023-01-02", 10]]),
+      movimentacoes: [{ data: "2023-01-02", tipo: "Compra", valor: 1000, quantidade: 100, custos: 15 }],
+    });
+    expect(ultimo(rows).ganhoAcumulado).toBeCloseTo(-15, 6);
+  });
+
+  it("vender ACIMA do fechamento realiza o ganho no dia da venda", () => {
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-01-04",
+      precos: precos([["2023-01-02", 10], ["2023-01-03", 10], ["2023-01-04", 10]]),
+      movimentacoes: [
+        { data: "2023-01-02", tipo: "Compra", valor: 1000, quantidade: 100 },
+        { data: "2023-01-04", tipo: "Venda", valor: 1100, quantidade: 100 },
+      ],
+    });
+    // Comprou e vendeu com o mercado parado em 10,00, mas vendeu a 11,00.
+    expect(ultimo(rows).ganhoAcumulado).toBeCloseTo(100, 6);
+  });
+
+  it("o ganho de execucao NAO altera o valor da posicao", () => {
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-01-02",
+      precos: precos([["2023-01-02", 7.03]]),
+      movimentacoes: compra100("2023-01-02", 7.8),
+    });
+    // A posicao vale quantidade x fechamento, sempre. O preco pago afeta o GANHO, nao o valor.
+    expect(ultimo(rows).valorPosicao).toBeCloseTo(100 * 7.03, 6);
+  });
+});

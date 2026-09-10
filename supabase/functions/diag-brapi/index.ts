@@ -44,6 +44,43 @@ Deno.serve(async (req) => {
     out.dividends = { erro: String(e) };
   }
 
+  // ── Identidade do papel ────────────────────────────────────────────────────────────────────
+  //
+  // Duas perguntas diferentes, e a distincao importa quando um ticker muda:
+  //
+  //   resolve  qual e o codigo ATUAL deste papel
+  //   renames  que codigos ele ja teve
+  //
+  // O caso que motivou incluir isto aqui: FICT3 virou FASA3 em agosto de 2026, e o catalogo da
+  // BRAPI passou a listar OS DOIS como ativos, com o novo sem nome nenhum. Saber o que cada
+  // endpoint responde e o que separa "a fonte nao sabe" de "a fonte sabe e nos ignoramos".
+  for (const [rotulo, url] of [
+    ["resolve", `https://brapi.dev/api/v2/tickers/resolve?symbols=${ticker}`],
+    ["renames", `https://brapi.dev/api/v2/tickers/renames?symbols=${ticker}`],
+  ] as const) {
+    try {
+      const r = await pega(url);
+      out[rotulo] = { status: r.status, resposta: r.json ?? r.cru };
+    } catch (e) {
+      out[rotulo] = { erro: String(e) };
+    }
+  }
+
+  // Existe cotacao para este codigo hoje? E o teste mais direto de "o ticker esta vivo".
+  try {
+    const r = await pega(`https://brapi.dev/api/quote/${ticker}`);
+    const res = (r.json?.results as Record<string, unknown>[] | undefined)?.[0];
+    out.quote = {
+      status: r.status,
+      nome_longo: res?.longName ?? null,
+      nome_curto: res?.shortName ?? null,
+      preco: res?.regularMarketPrice ?? null,
+      erro: (r.json?.error as unknown) ?? null,
+    };
+  } catch (e) {
+    out.quote = { erro: String(e) };
+  }
+
   return new Response(JSON.stringify(out, null, 2), {
     headers: { ...CORS, "Content-Type": "application/json" },
   });

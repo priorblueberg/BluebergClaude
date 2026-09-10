@@ -375,6 +375,7 @@ export type Database = {
           sincronizar_cotacoes: boolean
           tipo: string | null
           subtipo: string | null
+          deslistado_em: string | null
           created_at: string
         }
         Insert: {
@@ -388,6 +389,7 @@ export type Database = {
           sincronizar_cotacoes?: boolean
           tipo?: string | null
           subtipo?: string | null
+          deslistado_em?: string | null
           created_at?: string
         }
         Update: {
@@ -401,6 +403,7 @@ export type Database = {
           sincronizar_cotacoes?: boolean
           tipo?: string | null
           subtipo?: string | null
+          deslistado_em?: string | null
           created_at?: string
         }
         Relationships: []

@@ -8,11 +8,13 @@ export interface AcaoEscolhida {
   id: string;
   ticker: string;
   nome: string;
+  /** Papel deslistado tem data; papel negociavel tem `null`. */
+  deslistado_em?: string | null;
 }
 
 interface Props {
   value: string;
-  onChange: (id: string, ticker: string, nome: string) => void;
+  onChange: (id: string, ticker: string, nome: string, deslistadoEm?: string | null) => void;
   disabled?: boolean;
 }
 
@@ -50,7 +52,7 @@ export default function AcaoSelect({ value, onChange, disabled }: Props) {
   const recarregarLista = async () => {
     const { data } = await supabase
       .from("cadastro_de_acoes")
-      .select("id, ticker, nome")
+      .select("id, ticker, nome, deslistado_em")
       .eq("sincronizar_cotacoes", true)
       .order("ticker");
     const lista = (data as AcaoEscolhida[]) ?? [];
@@ -68,12 +70,20 @@ export default function AcaoSelect({ value, onChange, disabled }: Props) {
     let vivo = true;
     setBuscando(true);
     const t = setTimeout(async () => {
-      // `ativo` filtra papel deslistado: ele continua no catalogo para nao quebrar quem ja tem
-      // posicao, mas nao deve aparecer para quem esta comprando agora.
+      // Papel deslistado CONTINUA na busca, de proposito.
+      //
+      // Ate 09/09/2026 havia um `.eq("ativo", true)` aqui, com a justificativa de que o papel
+      // deslistado "nao deve aparecer para quem esta comprando agora". A justificativa estava
+      // certa e a solucao errada: ela tambem impedia o cliente que TEVE o papel em 2023 de
+      // cadastrar a posicao retroativa hoje. Ele nao esta comprando, esta registrando o passado,
+      // e escondendo o papel a ferramenta simplesmente nao deixa.
+      //
+      // Quem barra a compra de hoje e o TETO DE DATA da boleta, que para papel deslistado e o
+      // ultimo dia em que ele foi negociado. Achar o papel e poder operar nele sao coisas
+      // diferentes.
       const { data } = await supabase
         .from("cadastro_de_acoes")
-        .select("id, ticker, nome")
-        .eq("ativo", true)
+        .select("id, ticker, nome, deslistado_em")
         .or(`ticker.ilike.%${q}%,nome.ilike.%${q}%`)
         .order("ticker")
         .limit(MAX_SUGESTOES);
@@ -88,7 +98,7 @@ export default function AcaoSelect({ value, onChange, disabled }: Props) {
   const escolher = async (a: AcaoEscolhida) => {
     // Ja carregado: so selecionar, sem pagar a carga de novo.
     if (carregadas.some((c) => c.ticker === a.ticker)) {
-      onChange(a.id, a.ticker, a.nome);
+      onChange(a.id, a.ticker, a.nome, a.deslistado_em ?? null);
       setTermo(""); setSugestoes([]);
       return;
     }
@@ -115,7 +125,7 @@ export default function AcaoSelect({ value, onChange, disabled }: Props) {
       const novo = lista.find((x) => x.ticker === a.ticker) ?? lista.find((x) => x.id === a.id);
       if (!novo) throw new Error("o papel foi carregado mas não apareceu na lista");
 
-      onChange(novo.id, novo.ticker, novo.nome);
+      onChange(novo.id, novo.ticker, novo.nome, novo.deslistado_em ?? null);
       setTermo(""); setSugestoes([]);
       toast.success(`${novo.ticker} carregada: ${item.cotacoes_no_banco} pregões e ${item.proventos_no_banco} proventos.`);
     } catch (e) {
@@ -135,7 +145,7 @@ export default function AcaoSelect({ value, onChange, disabled }: Props) {
         disabled={disabled}
         onChange={(e) => {
           const a = carregadas.find((x) => x.id === e.target.value);
-          onChange(a?.id ?? "", a?.ticker ?? "", a?.nome ?? "");
+          onChange(a?.id ?? "", a?.ticker ?? "", a?.nome ?? "", a?.deslistado_em ?? null);
         }}
       >
         <option value="">{carregadas.length ? "Selecione a ação" : "Nenhum papel carregado ainda"}</option>
@@ -174,6 +184,11 @@ export default function AcaoSelect({ value, onChange, disabled }: Props) {
                   >
                     <span className="font-medium">{a.ticker}</span>
                     <span className="truncate text-xs text-muted-foreground">{a.nome}</span>
+                    {a.deslistado_em && (
+                      <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-900">
+                        deslistado
+                      </span>
+                    )}
                     {carregandoPapel === a.ticker ? (
                       <span className="ml-auto shrink-0 text-xs text-muted-foreground">carregando...</span>
                     ) : !jaTem ? (
@@ -188,6 +203,12 @@ export default function AcaoSelect({ value, onChange, disabled }: Props) {
       )}
 
       {selecionada && <p className="text-xs text-muted-foreground">{selecionada.nome}</p>}
+      {selecionada?.deslistado_em && (
+        <p className="text-xs text-amber-700">
+          Papel deslistado. Só é possível lançar operação até o último dia em que ele foi
+          negociado.
+        </p>
+      )}
       {!disabled && (
         <p className="text-xs text-muted-foreground">
           Na primeira vez que um papel é usado, a série de preços e os proventos são buscados na

@@ -202,14 +202,46 @@ export function calcularAcoesDiario(input: AcoesEngineInput): AcaoDailyRow[] {
 
   let proventoAcum = 0;
   let ganhoAcum = 0;
+  let fatorRent = 1;
 
   return posicao.map((r: FundoDailyRow) => {
     const rr = rentPorData.get(r.data);
     const pBruto = (bruto.get(r.data) ?? 0) * r.saldoCotas;
     const pLiquido = (liquido.get(r.data) ?? 0) * r.saldoCotas;
     proventoAcum += pLiquido;
-    const ganhoDiario = r.ganhoDiario + pLiquido;
+
+    // ── GANHO DE EXECUÇÃO ──────────────────────────────────────────────────────────────────
+    //
+    // O custo da posição é o que o cliente PAGOU, não o fechamento do dia em que ele comprou.
+    // Sem esta parcela, a diferença entre o preço praticado e o fechamento simplesmente some.
+    //
+    // Medido em 09/09/2026 contra o GorilaVIEW: uma compra de 100 USIM5 a 7,80 num dia que
+    // fechou a 7,03 aparecia com ganho de R$ 114,18 na nossa tela e R$ 44,18 na dele. A
+    // diferença eram exatamente os R$ 77,00 pagos acima do fechamento, que nós descartávamos.
+    // Em PETR4 o erro ia para o outro lado: comprada a 22,00 num dia que fechou a 22,92, o
+    // ganho saía R$ 92,00 MENOR do que o real.
+    //
+    // Vale nos dois sentidos, e por isso a venda entra também: quem vende acima do fechamento
+    // realiza esse ganho no dia da venda. Os custos da operação já estão embutidos em
+    // `aplicacoes` e `resgatesBrutos`, então entram aqui como perda imediata, que é o que são.
+    const ganhoCompra = r.qtdCotasCompra * r.valorCota - r.aplicacoes;
+    const ganhoVenda = r.resgatesBrutos - r.qtdCotasResgate * r.valorCota;
+    const ganhoExecucao = ganhoCompra + ganhoVenda;
+
+    const ganhoDiario = r.ganhoDiario + pLiquido + ganhoExecucao;
     ganhoAcum += ganhoDiario;
+
+    // ── RENTABILIDADE ──────────────────────────────────────────────────────────────────────
+    //
+    // O retorno do dia é o ganho sobre o capital empregado nele: saldo de ontem mais o que
+    // entrou hoje. No dia da compra isso dá exatamente `fechamento / preço pago - 1`, que é a
+    // regra: a rentabilidade começa no preço pago, não no fechamento.
+    //
+    // A série `totalReturn` continua sendo calculada porque é ela que devolve a variação sem o
+    // degrau do dia-ex; o que mudou é que o ACUMULADO passa a compor a partir daqui, para o dia
+    // da compra deixar de render zero.
+    const rentDiaria = r.baseMW > 1e-8 ? ganhoDiario / r.baseMW : 0;
+    fatorRent *= 1 + rentDiaria;
 
     return {
       data: r.data,
@@ -230,8 +262,8 @@ export function calcularAcoesDiario(input: AcoesEngineInput): AcaoDailyRow[] {
       ganhoPreco: r.ganhoDiario,
       ganhoDiario,
       ganhoAcumulado: ganhoAcum,
-      rentabilidadeAcumuladaPct: rr?.rentabilidadeAcumuladaPct ?? 0,
-      rentDiariaPct: rr?.rentDiariaPct ?? 0,
+      rentabilidadeAcumuladaPct: fatorRent - 1,
+      rentDiariaPct: rentDiaria,
     };
   });
 }

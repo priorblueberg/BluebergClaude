@@ -81,6 +81,8 @@
 // `classe` (CAIXA / QUANTIDADE / DIREITO / IDENTIDADE). `proventos_acoes` e
 // `eventos_corporativos_acoes` continuam existindo como VIEWS sobre ela, para o app nao mudar.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { reconciliarProventos } from "../_shared/reconciliacaoProventos.ts";
+import { dataBR, proventosDaB3, TIPO_PROVENTO } from "../_shared/proventosDaB3.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -234,13 +236,6 @@ async function renomeacoesDe(ticker: string) {
 const B3_SUPPL = "https://sistemaswebb3-listados.b3.com.br/listedCompaniesProxy/CompanyCall"
                + "/GetListedSupplementCompany/";
 
-const dataBR = (s: unknown) => {
-  const m = String(s ?? "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!m) return null;
-  const iso = `${m[3]}-${m[2]}-${m[1]}`;
-  // Data de fachada da B3. Fora dessa janela nao e evento, e sim preenchimento.
-  return iso >= "1990-01-01" && iso <= "2100-01-01" ? iso : null;
-};
 
 async function subscricoesDaB3(ticker: string, isin: string | null) {
   if (!isin) return []; // sem ISIN nao ha como filtrar a classe certa dentro do emissor
@@ -549,13 +544,6 @@ async function precos(ticker: string) {
   };
 }
 
-const TIPO_PROVENTO: Record<string, string> = {
-  DIVIDENDO: "DIVIDENDO",
-  JCP: "JCP",
-  "JRS CAP PROPRIO": "JCP",
-  "JUROS SOBRE CAPITAL PROPRIO": "JCP",
-  RENDIMENTO: "RENDIMENTO",
-};
 const TIPO_EVENTO: Record<string, string> = {
   DESDOBRAMENTO: "DESDOBRAMENTO",
   GRUPAMENTO: "GRUPAMENTO",
@@ -813,12 +801,88 @@ Deno.serve(async (req) => {
              .data?.isin ?? null;
         const subs = await subscricoesDaB3(ticker, isinAtual);
 
-        const CHAVE = "ticker,tipo,data_ex,data_liquidacao,valor,fator";
+        // Os pregoes REAIS do papel, para converter o "ultimo dia com direito" da B3 na nossa
+        // data-ex. Sai da propria serie de cotacoes porque o calendario da tabela e o BANCARIO,
+        // e banco e bolsa nao fecham nos mesmos dias - 924 contra 920 em 2023.
+        const pregoesDoPapel = (p.cotacoes as Record<string, unknown>[])
+          .map((c) => String(c.data)).sort();
+
+        // A `data_aprovacao` entra na chave porque sem ela o modelo nao consegue representar duas
+        // parcelas legitimamente iguais. Caso concreto, ITSA4 em 05/03/2025: a Itausa paga JCP
+        // trimestral de 0,0235295 aprovado uma vez por ano, e nessa data-ex caem a ULTIMA parcela
+        // do programa aprovado em 19/02/2024 e a PRIMEIRA do aprovado em 10/02/2025. Iguais em
+        // ticker, tipo, data-ex, data de pagamento e valor - ou seja, em tudo que estava na chave
+        // antiga. A segunda era descartada como duplicata e o provento sumia da base.
+        //
+        // Confirmado nas tres fontes em 09/09/2026: a B3 lista as duas em GetListedCashDividends,
+        // o Yahoo soma as duas, e o GorilaVIEW mostra R$ 51,86 para 1.102 cotas (= 2 x 0,0235295).
+        // Antes disso a divergencia tinha sido descartada como erro do Yahoo, o que estava errado.
+        //
+        // Precisa casar EXATAMENTE com o indice `eventos_de_ativos_unico`. Mudar um sem o outro
+        // quebra o upsert em producao ("no unique constraint matching the ON CONFLICT").
+        const CHAVE = "ticker,tipo,data_ex,data_liquidacao,valor,fator,data_aprovacao";
         if (pe.proventos.length) {
           exigir("eventos CAIXA", (await db.from("eventos_de_ativos")
             .upsert(pe.proventos.map((p: Record<string, unknown>) => ({ ...p, isin: pe.isin })),
               { onConflict: CHAVE, ignoreDuplicates: true })).error);
         }
+        // ── A B3 COMPLETA o que a BRAPI perdeu ──────────────────────────────────────────────
+        //
+        // A reconciliacao e por CONTAGEM dentro de (data_ex, tipo, valor), nunca por upsert.
+        // Tem que ser assim, e a razao e concreta: o endpoint da B3 nao publica data de
+        // pagamento, entao a linha que viesse dela teria `data_liquidacao` nula. Como o indice
+        // unico inclui essa coluna, ela seria uma CHAVE DIFERENTE da linha equivalente da BRAPI
+        // e entraria ao lado dela - dobrando o provento em vez de completar. O upsert com
+        // ignoreDuplicates nao protegeria contra isso; ele so deduplica chaves iguais.
+        //
+        // A contagem vem do BANCO depois do upsert da BRAPI, e nao do array em memoria, porque
+        // precisa enxergar tambem as linhas `manual` - que o `limpar` poupa e que existem
+        // justamente onde a BRAPI falhou (ITSA4 e KLBN11 hoje). Contar so o que a BRAPI trouxe
+        // reinseriria o que ja esta la.
+        const daB3 = await proventosDaB3(ticker, isinAtual, pregoesDoPapel);
+        const faltantes: Record<string, unknown>[] = [];
+        const semParNaB3: Record<string, unknown>[] = [];
+        if (daB3.length) {
+          // A comparacao em si vive em `_shared/reconciliacaoProventos.ts`, fora desta funcao,
+          // por dois motivos. Nao ter duas copias divergindo entre o sync e a auditoria, que ja
+          // aconteceu neste projeto. E poder TESTAR: aquele modulo nao usa Deno, fetch nem
+          // banco, entao o vitest roda direto. Teve tres defeitos em 09/09/2026, todos pegos
+          // conferindo numero a numero porque nao havia teste - agora ha, e cada um deles tem
+          // o caso que o denuncia.
+          //
+          // A contagem vem do BANCO depois do upsert da BRAPI, e nao do array em memoria,
+          // porque precisa enxergar tambem as linhas `manual` - que o `limpar` poupa e que
+          // existem justamente onde a BRAPI falhou. Contar so o que a BRAPI trouxe reinseriria
+          // o que ja esta la.
+          const { data: jaTemos } = await db.from("eventos_de_ativos")
+            .select("data_ex, tipo, valor, data_aprovacao").eq("ticker", ticker)
+            .eq("classe", "CAIXA");
+
+          const nossas = ((jaTemos ?? []) as Record<string, unknown>[]).map((l) => ({
+            dataEx: String(l.data_ex),
+            tipo: String(l.tipo),
+            valor: Number(l.valor),
+            aprovacao: l.data_aprovacao === null ? null : String(l.data_aprovacao),
+          }));
+
+          // A linha pronta para o banco viaja junto, para o resultado sair direto no upsert.
+          const declaradas = daB3.map((p) => ({
+            dataEx: p.data_ex, tipo: p.tipo, valor: p.valor,
+            aprovacao: p.data_aprovacao, linha: p as Record<string, unknown>,
+          }));
+
+          const r = reconciliarProventos(nossas, declaradas, PISO_SERIE);
+          faltantes.push(...r.faltantes.map((f) => f.linha));
+          semParNaB3.push(...r.sobrando.map((x) => ({
+            chave: `${x.dataEx}|${x.tipo}`, nossas_sem_par: x.nossas,
+          })));
+
+          if (faltantes.length) {
+            exigir("proventos da B3", (await db.from("eventos_de_ativos")
+              .upsert(faltantes, { onConflict: CHAVE, ignoreDuplicates: true })).error);
+          }
+        }
+
         if (pe.eventos.length) {
           exigir("eventos QUANTIDADE", (await db.from("eventos_de_ativos")
             .upsert(pe.eventos.map((e: Record<string, unknown>) => ({ ...e, isin: pe.isin })),
@@ -892,6 +956,15 @@ Deno.serve(async (req) => {
           proventos_manuais: provManuais ?? [],
           parcelados_a_mao: parceladosAMao,
           eventos_da_brapi: pe.eventos.length,
+          // O que a B3 declarou e a BRAPI nao trouxe. Lista, e nao contagem: cada linha aqui e
+          // dinheiro que estava faltando na base, e quem le precisa poder conferir na fonte.
+          proventos_da_b3: daB3.length,
+          completados_pela_b3: faltantes.map((f) => ({
+            data_ex: f.data_ex, tipo: f.tipo, valor: f.valor, aprovacao: f.data_aprovacao,
+          })),
+          // Linha nossa que a B3 nao confirma na mesma aprovacao. Nao se apaga nada por causa
+          // disso - so se mostra, que e o mesmo criterio dos achados descartados.
+          sem_par_na_b3: semParNaB3,
           subscricoes_da_b3: subs.map((s) => ({
             data_ex: s.data_ex, percentual: s.percentual,
             preco: s.preco_exercicio, emite: s.ativo_emitido,

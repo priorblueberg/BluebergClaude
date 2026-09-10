@@ -37,6 +37,11 @@ const CORS = {
 };
 
 const URL_LISTA = "https://brapi.dev/api/quote/list";
+
+/** Data de hoje no fuso da B3, nao em UTC. A rotina roda de madrugada, quando os dois
+ *  divergem: 03h em Brasilia ja e o dia seguinte em UTC, e a data de deslistagem sairia um dia
+ *  na frente. */
+const hoje = () => new Date(Date.now() - 10800 * 1000).toISOString().slice(0, 10);
 const POR_PAGINA = 2000;
 /** Trava de sanidade: o catalogo da B3 nao tem centenas de milhares de papeis. */
 const MAX_PAGINAS = 20;
@@ -163,8 +168,18 @@ Deno.serve(async (req) => {
     }
 
     // ── 3. deslistagem ──
-    // Papel que saiu da lista da B3 deixa de ser negociavel. Sem esta etapa ele ficaria
-    // `ativo = true` para sempre e continuaria aparecendo na busca.
+    // Papel que saiu da lista da B3 deixa de ser negociavel, e a DATA disso e gravada junto.
+    //
+    // A data existe porque o booleano sozinho levou a um desenho errado: a busca da boleta
+    // escondia o papel deslistado, "para nao aparecer para quem esta comprando agora". Isso
+    // impede um caso legitimo - o cliente que teve o papel em 2023 e quer cadastrar a posicao
+    // retroativa hoje, com o papel ja deslistado. Ele nao esta comprando agora, esta registrando
+    // o passado. A regra certa nao e sumir da busca, e sim nao permitir operacao DEPOIS da
+    // deslistagem - e para isso e preciso saber quando foi.
+    //
+    // `deslistado_em` e um TETO, nao o dia exato do ultimo pregao: a deteccao acontece nesta
+    // recarga semanal, entao a deslistagem real foi em algum momento ate hoje. Quem precisa de
+    // exatidao usa a ultima cotacao conhecida do papel.
     //
     // A trava importa mais que a etapa: so mexo se a leitura veio COMPLETA (todas as paginas,
     // e a contagem batendo com a que a propria BRAPI informou). Uma pagina que falhou no meio
@@ -189,8 +204,11 @@ Deno.serve(async (req) => {
         .filter((t) => !noArquivo.has(t));
 
       if (sumiram.length) {
+        // A data e gravada na PRIMEIRA deteccao e nunca depois: a leitura acima ja filtra
+        // `ativo = true`, entao quem chega aqui esta sendo deslistado agora. Reescrever a cada
+        // rodada empurraria a data para a frente toda semana e ela deixaria de significar algo.
         const { error } = await db.from("cadastro_de_acoes")
-          .update({ ativo: false }).in("ticker", sumiram);
+          .update({ ativo: false, deslistado_em: hoje() }).in("ticker", sumiram);
         if (error) throw new Error(`deslistagem (gravacao): ${error.message}`);
       }
       desativadas = sumiram;

@@ -233,6 +233,8 @@ export default function BoletaTransacao({
   const [acaoId, setAcaoId] = useState("");
   const [acaoTicker, setAcaoTicker] = useState("");
   const [acaoNome, setAcaoNome] = useState("");
+  /** Preenchido só quando o papel escolhido saiu da bolsa. Ver `tetoDoPapel`. */
+  const [acaoDeslistadoEm, setAcaoDeslistadoEm] = useState<string | null>(null);
   const [custosOp, setCustosOp] = useState("");
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
 
@@ -262,7 +264,40 @@ export default function BoletaTransacao({
    * Os campos de data ficam limitados a essa janela, e a validacao repete o limite porque o
    * usuario pode digitar em vez de usar o seletor.
    */
-  const maxDataISO = isoDe(isAcao ? maxDate : maxDataOficial);
+  /**
+   * TETO EXTRA para papel deslistado.
+   *
+   * Papel que saiu da bolsa continua na busca de proposito: o cliente que o teve em 2023
+   * precisa poder cadastrar a posicao retroativa hoje. O que nao pode e lancar operacao DEPOIS
+   * de o papel ter deixado de ser negociado - achar o papel e poder operar nele sao coisas
+   * diferentes.
+   *
+   * O teto usado e a ULTIMA COTACAO conhecida, e nao a data em que a deslistagem foi detectada:
+   * a deteccao acontece na recarga semanal do catalogo e pode estar ate seis dias adiantada,
+   * enquanto a ultima cotacao e o dia exato em que o papel foi negociado pela ultima vez.
+   */
+  const [tetoDoPapel, setTetoDoPapel] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!acaoDeslistadoEm || !acaoTicker) { setTetoDoPapel(null); return; }
+    let vivo = true;
+    (async () => {
+      const { data } = await supabase
+        .from("cotacoes_acoes")
+        .select("data")
+        .eq("ticker", acaoTicker)
+        .order("data", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!vivo) return;
+      // Sem serie carregada nao ha ultima cotacao; ai a data de deteccao e o melhor que existe.
+      setTetoDoPapel((data?.data as string | undefined) ?? acaoDeslistadoEm);
+    })();
+    return () => { vivo = false; };
+  }, [acaoDeslistadoEm, acaoTicker]);
+
+  const maxDataGeral = isoDe(isAcao ? maxDate : maxDataOficial);
+  const maxDataISO = tetoDoPapel && tetoDoPapel < maxDataGeral ? tetoDoPapel : maxDataGeral;
   const limitesData = { min: DATA_MINIMA_CARTEIRA, max: maxDataISO };
   // TEMPORARIO: usuario comum so cadastra titulo com juros no vencimento.
   // Alem disso, LC, RDB, RDC e DPGE nao pagam cupom nem para admin: a boleta do Gorila nem
@@ -960,6 +995,10 @@ export default function BoletaTransacao({
       if (!acaoId) faltando.add("acaoId");
       if (!data) faltando.add("data");
       if (!valor || parseCurrencyToNumber(valor) <= 0) faltando.add("valor");
+      // A quantidade virou OBRIGATORIA quando o campo de valor passou a ser o PRECO UNITARIO:
+      // nao ha como derivar quantidade de preco, e a combinacao quantidade x preco e a mesma
+      // que o GorilaVIEW e a nota de corretagem usam.
+      if (parseQuantidade(qtdCotas) == null) faltando.add("qtdCotas");
       if (!instituicaoId) faltando.add("instituicaoId");
       if (faltando.size > 0) {
         setValidationErrors(faltando);
@@ -975,13 +1014,23 @@ export default function BoletaTransacao({
         return;
       }
 
-      const valorNum = parseCurrencyToNumber(valor);
+      // O campo de valor é o PREÇO UNITÁRIO, e o total sai dele.
+      //
+      // Até 09/09/2026 era o contrário: o campo pedia o total da operação e a quantidade era
+      // opcional. Isso trocou o significado do que o cliente digita e gravou três operações cem
+      // vezes menores em silêncio - "22,00" num lote de 100 ações virou 0,22 por ação. A ordem
+      // certa é a da nota de corretagem, que é também a do GorilaVIEW: quantidade e preço, com
+      // o total calculado.
+      const precoEfetivo = parseCurrencyToNumber(valor);
       const custosNum = custosOp ? parseCurrencyToNumber(custosOp) : 0;
-      const qtdInformada = parseQuantidade(qtdCotas);
+      const qtdOperacao = parseQuantidade(qtdCotas)!;
+      const valorNum = precoEfetivo * qtdOperacao;
 
-      // Sem quantidade informada ela sai do fechamento do dia. Se o pregão daquela data não
-      // está na base, gravar agora produziria quantidade errada em silêncio - e em ação a
-      // quantidade é inteira, então o erro não some no arredondamento.
+      // Trava contra erro de casa decimal. Não barra: AVISA e pede confirmação. Preço de
+      // execução legitimamente foge do fechamento - o pregão tem máxima e mínima, e em
+      // 02/01/2023 o GGBR4 foi comprado 19% acima do fechamento - mas um preço cem vezes fora
+      // é digitação, não execução. As três operações de 09/09/2026 estavam a -99% e passaram
+      // sem uma palavra.
       const { data: precoRow } = await supabase
         .from("cotacoes_acoes")
         .select("fechamento")
@@ -990,16 +1039,21 @@ export default function BoletaTransacao({
         .maybeSingle();
       const precoDoDia = precoRow ? Number((precoRow as any).fechamento) : null;
 
-      if (qtdInformada == null && precoDoDia == null) {
-        toast.error(`Não há pregão de ${acaoTicker} em ${fmtData(data)} na base. Informe a quantidade de ações.`);
-        return;
-      }
+      if (precoDoDia && precoDoDia > 0) {
+        const desvio = Math.abs(precoEfetivo / precoDoDia - 1);
+        if (desvio > 0.5) {
+          const emReais = (n: number) =>
+            n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+          const ok = window.confirm(
+            `O preço informado (${emReais(precoEfetivo)}) está ${(desvio * 100).toFixed(0)}% fora `
+            + `do fechamento de ${acaoTicker} em ${fmtData(data)}, que foi ${emReais(precoDoDia)}.`
+            + `
 
-      const qtdOperacao = qtdInformada ?? (precoDoDia ? valorNum / precoDoDia : null);
-      // O preço é o EFETIVO da operação, não o fechamento: quem informa a quantidade está
-      // registrando o preço em que executou, e gravar o fechamento faria o extrato contar
-      // outra história.
-      const precoEfetivo = qtdOperacao ? valorNum / qtdOperacao : precoDoDia;
+Confirma que o preço está certo?`,
+          );
+          if (!ok) return;
+        }
+      }
 
       setSubmitting(true);
       try {
@@ -1784,13 +1838,16 @@ export default function BoletaTransacao({
                 <AcaoSelect
                   value={acaoId}
                   disabled={isEditing}
-                  onChange={(id, ticker, nome) => { setAcaoId(id); setAcaoTicker(ticker); setAcaoNome(nome); }}
+                  onChange={(id, ticker, nome, deslistadoEm) => {
+                    setAcaoId(id); setAcaoTicker(ticker); setAcaoNome(nome);
+                    setAcaoDeslistadoEm(deslistadoEm ?? null);
+                  }}
                 />
               </Field>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
-              <Field label={tipoMovimentacao === "Compra" ? "Valor Pago (R$)" : "Valor Recebido (R$)"} required>
+              <Field label="Preço por Ação (R$)" required>
                 <Input
                   value={valor}
                   onChange={(e) => setValor(formatCurrency(e.target.value))}
@@ -1798,14 +1855,26 @@ export default function BoletaTransacao({
                   inputMode="numeric"
                 />
               </Field>
-              <Field label="Quantidade de Ações">
+              <Field label="Quantidade de Ações" required>
                 <Input
                   value={qtdCotas}
                   onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
-                  placeholder="Em branco, usa o fechamento do dia"
+                  placeholder="Ex.: 100"
                 />
               </Field>
             </div>
+
+            {/* Total calculado, como na boleta do GorilaVIEW. Mostrar o produto na tela e o
+                que torna visivel um erro de casa decimal ANTES de gravar. */}
+            {valor && parseQuantidade(qtdCotas) != null && (
+              <p className="text-sm text-muted-foreground">
+                Total da operação:{" "}
+                <strong className="text-foreground">
+                  {(parseCurrencyToNumber(valor) * (parseQuantidade(qtdCotas) ?? 0))
+                    .toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </strong>
+              </p>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Custos da Operação (R$)">
