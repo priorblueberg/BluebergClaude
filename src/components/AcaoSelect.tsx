@@ -31,7 +31,7 @@ const MAX_SUGESTOES = 15;
  * - O `select` mostra so os papeis JA CARREGADOS (`sincronizar_cotacoes`), que sao poucos e ja
  *   tem serie de preco.
  * - A busca varre o CATALOGO inteiro da B3 (~2.332 papeis, atualizado semanalmente pelo
- *   `sync-base-mercado`), por ticker OU por nome. Escolher um papel que ainda nao foi carregado
+ *   mantido a mao no banco), por ticker OU por nome. Escolher um papel que ainda nao foi carregado
  *   dispara a carga sob demanda.
  *
  * Ate 08/09/2026 havia uma lista so, e ela era o cadastro inteiro num `select`. Com 4 papeis

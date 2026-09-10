@@ -278,6 +278,9 @@ export default function BoletaTransacao({
    */
   const [tetoDoPapel, setTetoDoPapel] = useState<string | null>(null);
 
+  // A condicao e `deslistado_em`, e nao `ativo`. Desde 10/09/2026 nao ha rotina que mexa nessas
+  // duas colunas: entrada de papel, saida e troca de ticker sao acerto manual no banco. Quem
+  // marca a data e quem sabe que o papel saiu da bolsa.
   useEffect(() => {
     if (!acaoDeslistadoEm || !acaoTicker) { setTetoDoPapel(null); return; }
     let vivo = true;
@@ -286,6 +289,20 @@ export default function BoletaTransacao({
         .from("cotacoes_acoes")
         .select("data")
         .eq("ticker", acaoTicker)
+        // `provisorio = false` nao e detalhe: e o que faz o teto significar "ultimo pregao que
+        // existiu" em vez de "ultima linha que a fonte cuspiu".
+        //
+        // A tabela tem dois produtores de linha provisoria. A rodada horaria grava a barra de
+        // hoje para todo papel sincronizado, e a marca de deslistagem NAO desliga a
+        // sincronizacao de proposito. E a barra herdada: quando a fonte repete a linha inteira
+        // do dia anterior, ela e marcada como provisoria mas gravada assim mesmo.
+        //
+        // O segundo caso e o que anula a trava sozinho. Papel que parou de negociar e cuja
+        // fonte continua ecoando o ultimo fechamento acumula datas depois do ultimo pregao
+        // real, e sem este filtro o teto anda junto com elas, em silencio. A limpeza de
+        // fantasmas do fechamento desfaria isso, mas ela nao roda quando o historico deixa de
+        // devolver o ticker - que e justamente o papel deslistado.
+        .eq("provisorio", false)
         .order("data", { ascending: false })
         .limit(1)
         .maybeSingle();
