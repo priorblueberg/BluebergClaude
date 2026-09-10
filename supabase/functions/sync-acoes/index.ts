@@ -81,6 +81,7 @@
 // `classe` (CAIXA / QUANTIDADE / DIREITO / IDENTIDADE). `proventos_acoes` e
 // `eventos_corporativos_acoes` continuam existindo como VIEWS sobre ela, para o app nao mudar.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { casarPorEliminacao } from "../_shared/renomeacaoDeTicker.ts";
 import { reconciliarProventos } from "../_shared/reconciliacaoProventos.ts";
 import { dataBR, proventosDaB3, TIPO_PROVENTO } from "../_shared/proventosDaB3.ts";
 
@@ -374,6 +375,7 @@ async function fecharODiaEmLote(
   const hoje = hojeNaB3();
   let chamadas = 0, gravadas = 0, apagadas = 0;
   const semRetorno: string[] = [];
+  const renomeados: Record<string, unknown>[] = [];
   let inicioDaJanela = hoje;
 
   for (const lote of emLotes(tickers, LOTE_TICKERS)) {
@@ -384,9 +386,36 @@ async function fecharODiaEmLote(
 
     const vistos = new Set<string>();
     for (const res of (j?.results ?? []) as Record<string, unknown>[]) {
-      const ticker = String(res?.symbol ?? res?.requestedSymbol ?? "").toUpperCase();
+      // ── O ticker e o NOSSO, nao o que a fonte devolveu ────────────────────────────────────
+      //
+      // A resposta em lote traz tres campos de topo: `requestedSymbol`, `symbol` e `changed`.
+      // Quando o papel foi renomeado, `symbol` vem com o codigo NOVO - medido em 09/09/2026,
+      // sete de dez tickers pedidos voltaram assim: ELET3->AXIA3, EMBR3->EMBJ3, NTCO3->NATU3,
+      // BRFS3->MBRF3, CCRO3->MOTV3, WIZS3->WIZC3, MRFG3->MBRF3.
+      //
+      // Gravar sob o codigo devolvido faria a serie do papel que esta no cadastro CONGELAR e
+      // uma serie orfa comecar ao lado, sob um ticker que a carteira nao conhece. A posicao
+      // continuaria existindo, parada no ultimo preco, sem erro nenhum aparecendo.
+      //
+      // Entao a chave e sempre o codigo que PEDIMOS, que e a chave do cadastro: o papel e o
+      // mesmo, so o codigo dele mudou. A renomeacao vira relatorio, e nao acao automatica -
+      // trocar a chave primaria de um ativo mexe em boleta, posicao e historico, e essa e uma
+      // decisao de quem opera, nao de uma rotina que roda de hora em hora.
+      const devolvido = String(res?.symbol ?? "").toUpperCase();
+      const pedido = String(res?.requestedSymbol ?? "").toUpperCase();
+      const ticker = pedido || devolvido;
       if (!ticker) continue;
       vistos.add(ticker);
+
+      if (devolvido && pedido && devolvido !== pedido) {
+        renomeados.push({
+          nosso: pedido,
+          na_fonte: devolvido,
+          changed: res?.changed ?? null,
+          aviso: "a serie continua sendo gravada sob o nosso codigo. Trocar a chave do ativo "
+               + "e decisao manual.",
+        });
+      }
 
       const dados = (res?.data ?? res) as Record<string, unknown>;
       const itens = (dados?.historicalDataPrice ?? []) as Record<string, unknown>[];
@@ -437,6 +466,10 @@ async function fecharODiaEmLote(
     // A fonte simplesmente nao devolveu esses. Aparece no relatorio em vez de sumir: papel que
     // para de responder e o comeco de uma serie que congela sem ninguem notar.
     sem_retorno_da_fonte: semRetorno,
+    // A fonte diz, no proprio payload, que o codigo mudou. Custava zero e estava sendo jogado
+    // fora. Nao pega tudo - FICT3->FASA3 volta com `changed: false` e o proprio codigo antigo,
+    // medido em 09/09/2026 - mas pega o que ela sabe, que sao sete casos em dez testados.
+    renomeados_pela_fonte: renomeados,
   };
 }
 
@@ -469,14 +502,49 @@ async function intradiarioEmLote(
   let chamadas = 0;
   const linhas: LinhaCotacao[] = [];
   const semPreco: string[] = [];
+  const renomeados: Record<string, unknown>[] = [];
+  const ambiguos: Record<string, unknown>[] = [];
 
   for (const lote of emLotes(tickers, LOTE_TICKERS)) {
     const j = await pedir(`https://brapi.dev/api/quote/${lote.join(",")}`);
     chamadas++;
-    for (const r of (j?.results ?? []) as Record<string, unknown>[]) {
-      const ticker = String(r?.symbol ?? "").toUpperCase();
+    const resultados = (j?.results ?? []) as Record<string, unknown>[];
+
+    // ── Renomeacao no /quote, que NAO tem `requestedSymbol` ────────────────────────────────
+    //
+    // O endpoint em lote do historico devolve `requestedSymbol`, `symbol` e `changed`; o
+    // `/quote` devolve so `symbol` - e quando o papel foi renomeado ele vem com o codigo NOVO.
+    // Medido em 09/09/2026: pedir ELET3 responde AXIA3, pedir NTCO3 responde NATU3.
+    //
+    // O casamento por eliminacao vive em `_shared` porque errar aqui nao produz erro visivel:
+    // produz cotacao gravada na serie do papel ERRADO, e ninguem procura por uma cotacao que
+    // esta no lugar errado - so pela que falta.
+    const pedidos = new Set(lote);
+    const casamento = casarPorEliminacao(
+      lote,
+      resultados.map((r) => String(r?.symbol ?? "").toUpperCase()),
+    );
+    for (const x of casamento.renomeados) {
+      renomeados.push({
+        ...x,
+        como: "por eliminacao: o /quote nao devolve requestedSymbol",
+        aviso: "a cotacao foi gravada sob o nosso codigo. Trocar a chave do ativo e manual.",
+      });
+    }
+    if (casamento.ambiguo) {
+      ambiguos.push({
+        ...casamento.ambiguo,
+        aviso: "nao da para dizer qual responde a qual; nada foi gravado para estes",
+      });
+    }
+
+    for (const r of resultados) {
+      const devolvido = String(r?.symbol ?? "").toUpperCase();
+      if (!devolvido) continue;
+      const ticker = casamento.dePara.get(devolvido) ?? devolvido;
+      // Codigo que ninguem pediu e que a eliminacao nao resolveu. Gravar seria inventar papel.
+      if (!pedidos.has(ticker)) continue;
       const preco = r?.regularMarketPrice;
-      if (!ticker) continue;
       if (preco == null) { semPreco.push(ticker); continue; }
       linhas.push({
         ticker,
@@ -500,6 +568,10 @@ async function intradiarioEmLote(
   return {
     modo: "intradiario",
     data: hoje,
+    renomeados_pela_fonte: renomeados,
+    // Lote em que mais de um papel trocou de codigo na mesma rodada. Nada foi gravado para
+    // eles: aparecer no relatorio e o unico jeito honesto de tratar o que nao se sabe.
+    renomeacoes_ambiguas: ambiguos,
     papeis: tickers.length,
     chamadas_brapi: chamadas,
     linhas_gravadas: linhas.length,
@@ -681,7 +753,7 @@ Deno.serve(async (req) => {
       // O laco diario le `sincronizar_cotacoes`, NAO `ativo`.
       //
       // Desde 08/09/2026 o `cadastro_de_acoes` guarda o CATALOGO inteiro da B3 - 2.332 papeis
-      // trazidos pelo `sync-base-mercado` para que a busca da boleta ache qualquer papel pelo
+      // mantidos a mao no banco para que a busca da boleta ache qualquer papel pelo
       // nome. Todos entram com `ativo = true`, porque sao negociaveis. Se o laco continuasse
       // lendo `ativo`, cada rodada tentaria os 2.332: ~10.500 chamadas a BRAPI, 35 minutos de
       // execucao, e a edge function morre antes de terminar.
