@@ -883,7 +883,70 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── A serie ja veio ajustada por este evento? ──────────────────────────────────────
+        //
+        // A fonte NAO diz. E o mesmo evento pode estar embutido num papel e nao em outro, ou num
+        // papel so em certas epocas - o cabecalho deste arquivo ja registra isso. A unica forma
+        // honesta de saber e MEDIR: um desdobramento 2:1 numa serie nominal derruba o preco pela
+        // metade na data-ex; numa serie ajustada, nao acontece nada.
+        //
+        // Medido em 09/09/2026 nos papeis carregados:
+        //
+        //   papel   evento              fator   degrau real   veredito
+        //   BBDC4   bonificacao 2024     1,20      1,1891      nominal
+        //   ITSA4   bonificacao 2023     1,05      1,0473      nominal
+        //   KLBN11  bonificacao 2024     1,10      1,0822      nominal
+        //   GGBR4   bonificacao 2024     1,20      0,9960      JA AJUSTADA
+        //
+        // O GGBR4 custou uma tarde: a posicao saia com 120 acoes em vez de 126 e o historico
+        // dividido por 1,2 duas vezes. Confirmado contra o preco nominal que a B3 publica em
+        // cada parcela de provento - razao exata de 1,2000 antes do evento e 1,0000 depois.
+        //
+        // O criterio e frouxo de proposito (metade do caminho entre 1 e o fator): o degrau real
+        // nunca bate exato porque o mercado tambem se move no dia. Evento pequeno, de 1% ou 2%,
+        // fica dentro do ruido diario e NAO e marcado - preferir o falso negativo aqui e
+        // deliberado, porque marcar errado esconde um evento que existe.
+        const marcarSeJaAjustado = async (evento: Record<string, unknown>) => {
+          const fator = Number(evento.fator);
+          const dataEx = String(evento.data_ex ?? "");
+          // A marca vai SEMPRE, mesmo quando false. O PostgREST monta um INSERT unico para o
+          // lote e exige as mesmas chaves em todos os objetos: com a coluna presente em alguns
+          // e ausente noutros, os ausentes viram NULL e o upsert inteiro morre no not-null.
+          const semMarca = { ...evento, ja_refletido_no_preco: false };
+          if (!Number.isFinite(fator) || fator <= 0 || Math.abs(fator - 1) < 0.03 || !dataEx) {
+            return semMarca;
+          }
+          const [antes, depois] = await Promise.all([
+            db.from("cotacoes_acoes").select("fechamento").eq("ticker", ticker)
+              .lt("data", dataEx).order("data", { ascending: false }).limit(1).maybeSingle(),
+            db.from("cotacoes_acoes").select("fechamento").eq("ticker", ticker)
+              .gte("data", dataEx).order("data").limit(1).maybeSingle(),
+          ]);
+          const pAntes = Number((antes.data as Record<string, unknown> | null)?.fechamento);
+          const pDepois = Number((depois.data as Record<string, unknown> | null)?.fechamento);
+          if (!Number.isFinite(pAntes) || !Number.isFinite(pDepois) || pDepois <= 0) return semMarca;
+
+          const degrau = pAntes / pDepois;
+          const meioCaminho = 1 + (fator - 1) / 2;
+          const semDegrau = fator > 1 ? degrau < meioCaminho : degrau > meioCaminho;
+          if (!semDegrau) return semMarca;
+
+          return {
+            ...evento,
+            ja_refletido_no_preco: true,
+            evidencia: `Serie ja ajustada: o fator declarado e ${fator}, mas o preco em ${dataEx} `
+                     + `passou de ${pAntes} para ${pDepois} (degrau de ${degrau.toFixed(4)}). `
+                     + "Num papel nominal o degrau acompanharia o fator. A QUANTIDADE continua "
+                     + "sendo afetada; so o preco nao e dividido de novo.",
+          };
+        };
+
         if (pe.eventos.length) {
+          const eventosMarcados = [];
+          for (const e of pe.eventos as Record<string, unknown>[]) {
+            eventosMarcados.push(await marcarSeJaAjustado(e));
+          }
+          pe.eventos = eventosMarcados;
           exigir("eventos QUANTIDADE", (await db.from("eventos_de_ativos")
             .upsert(pe.eventos.map((e: Record<string, unknown>) => ({ ...e, isin: pe.isin })),
               { onConflict: CHAVE, ignoreDuplicates: true })).error);

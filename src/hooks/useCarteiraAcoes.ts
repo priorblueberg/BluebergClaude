@@ -130,7 +130,7 @@ export function useCarteiraAcoes() {
         // início ainda define a quantidade de hoje, e o motor precisa dele para converter.
         fetchAllRows((de, ate) => supabase.from("proventos_acoes").select("ticker, tipo, valor, data_ex, data_pagamento")
           .in("ticker", tickers).order("data_ex").range(de, ate)),
-        fetchAllRows((de, ate) => supabase.from("eventos_corporativos_acoes").select("ticker, tipo, fator, data_ex")
+        fetchAllRows((de, ate) => supabase.from("eventos_corporativos_acoes").select("ticker, tipo, fator, data_ex, ja_refletido_no_preco")
           .in("ticker", tickers).order("data_ex").range(de, ate)),
       ]);
 

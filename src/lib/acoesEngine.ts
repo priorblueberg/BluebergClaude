@@ -64,6 +64,17 @@ export interface EventoCorporativo {
   /** 2 para um desdobramento 2:1; 0,01 para um grupamento 1:100. */
   fator: number;
   data_ex: string;
+  /**
+   * A série de preços JÁ vem ajustada por este evento.
+   *
+   * Quando isso acontece, o preço histórico não pode ser dividido pelo fator de novo - mas a
+   * QUANTIDADE continua mudando, porque o cliente recebeu as ações de verdade. São duas coisas
+   * distintas, e tratá-las como uma só custou caro: em GGBR4 a bonificação de 20% de 17/04/2024
+   * está embutida na série (razão exata de 1,2000 contra o preço nominal da B3 antes do evento,
+   * e 1,0000 depois). Ignorar o evento inteiro derrubava a posição de 126 para 100 ações;
+   * aplicá-lo ao preço dividia o histórico por 1,2 duas vezes.
+   */
+  ja_refletido_no_preco?: boolean;
 }
 
 export interface AcoesEngineInput {
@@ -130,6 +141,16 @@ function fatorDesde(data: string, eventos: EventoCorporativo[]): number {
   return eventos.reduce((f, e) => (e.data_ex > data ? f * e.fator : f), 1);
 }
 
+/**
+ * Fator para converter PREÇO em unidades de hoje.
+ *
+ * Difere do de quantidade em um ponto: evento que a fonte já embutiu na série fica de fora,
+ * porque dividir de novo seria contar duas vezes. Ver `ja_refletido_no_preco`.
+ */
+function fatorDoPreco(data: string, eventos: EventoCorporativo[]): number {
+  return fatorDesde(data, eventos.filter((e) => !e.ja_refletido_no_preco));
+}
+
 /** Soma dos proventos por data-ex, já em unidades de hoje. */
 function proventosPorData(proventos: Provento[], eventos: EventoCorporativo[], descontarIr: boolean) {
   const bruto = new Map<string, number>();
@@ -155,7 +176,7 @@ export function calcularAcoesDiario(input: AcoesEngineInput): AcaoDailyRow[] {
   // Preços em unidades de hoje: dividir pelo fator dos eventos posteriores.
   const precosAj = input.precos.map((p) => ({
     data: p.data,
-    valor_cota: p.fechamento / fatorDesde(p.data, eventos),
+    valor_cota: p.fechamento / fatorDoPreco(p.data, eventos),
   }));
   const precoNominal = new Map(input.precos.map((p) => [p.data, p.fechamento]));
 
@@ -246,7 +267,7 @@ export function calcularAcoesDiario(input: AcoesEngineInput): AcaoDailyRow[] {
     return {
       data: r.data,
       diaUtil: r.diaUtil,
-      preco: precoNominal.get(r.data) ?? r.valorCota * fatorDesde(r.data, eventos),
+      preco: precoNominal.get(r.data) ?? r.valorCota * fatorDoPreco(r.data, eventos),
       precoEstimado: r.cotaEstimada,
       compras: r.aplicacoes,
       qtdComprada: r.qtdCotasCompra,

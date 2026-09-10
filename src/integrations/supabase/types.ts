@@ -481,6 +481,7 @@ export type Database = {
           tipo: string
           fator: number
           data_ex: string | null
+          ja_refletido_no_preco: boolean
           fonte: string
           created_at: string
         }
@@ -490,6 +491,7 @@ export type Database = {
           tipo: string
           fator: number
           data_ex?: string | null
+          ja_refletido_no_preco?: boolean
           fonte?: string
           created_at?: string
         }
@@ -499,6 +501,7 @@ export type Database = {
           tipo?: string
           fator?: number
           data_ex?: string | null
+          ja_refletido_no_preco?: boolean
           fonte?: string
           created_at?: string
         }

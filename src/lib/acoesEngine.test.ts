@@ -333,3 +333,59 @@ describe("o custo e o preco PAGO, nao o fechamento do dia", () => {
     expect(ultimo(rows).valorPosicao).toBeCloseTo(100 * 7.03, 6);
   });
 });
+
+describe("serie que ja vem ajustada pelo evento", () => {
+  // GGBR4, medido em 09/09/2026: a bonificacao de 20% de 17/04/2024 esta EMBUTIDA na serie.
+  // Contra o preco nominal que a B3 publica, a razao e exatamente 1,2000 antes do evento e
+  // 1,0000 depois - ou seja, o historico ja vem dividido. Mas o cliente recebeu as acoes.
+  const bonificacaoEmbutida: EventoCorporativo[] = [
+    { tipo: "BONIFICACAO", fator: 1.2, data_ex: "2023-06-01", ja_refletido_no_preco: true },
+  ];
+
+  it("a quantidade AUMENTA, porque as acoes foram recebidas de verdade", () => {
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-12-29",
+      precos: precoFixo("2023-01-02", "2023-12-29", 20),
+      movimentacoes: [{ data: "2023-01-02", tipo: "Compra", valor: 2000, quantidade: 100 }],
+      eventos: bonificacaoEmbutida,
+    });
+    expect(ultimo(rows).quantidade).toBeCloseTo(120, 8);
+  });
+
+  it("o preco historico NAO e dividido de novo", () => {
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-12-29",
+      precos: precoFixo("2023-01-02", "2023-12-29", 20),
+      movimentacoes: [{ data: "2023-01-02", tipo: "Compra", valor: 2000, quantidade: 100 }],
+      eventos: bonificacaoEmbutida,
+    });
+    // A serie e constante em 20,00. Dividir por 1,2 faria o primeiro dia valer 16,67 e a posicao
+    // "render" 20% do nada quando o evento passasse.
+    expect(rows[0].preco).toBeCloseTo(20, 8);
+  });
+
+  it("sem a marca, o mesmo evento divide o preco - e e assim que deve ser em serie nominal", () => {
+    const nominal: EventoCorporativo[] = [
+      { tipo: "BONIFICACAO", fator: 1.2, data_ex: "2023-06-01" },
+    ];
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-12-29",
+      precos: precoFixo("2023-01-02", "2023-12-29", 20),
+      movimentacoes: [{ data: "2023-01-02", tipo: "Compra", valor: 2000, quantidade: 100 }],
+      eventos: nominal,
+    });
+    expect(rows[0].preco).toBeCloseTo(20, 8);
+    // Em unidades de hoje o preco de antes do evento cai para 20/1,2.
+    expect(rows[0].valorPosicao).toBeCloseTo(120 * (20 / 1.2), 6);
+  });
+
+  it("a posicao final vale quantidade real x preco de hoje", () => {
+    const rows = rodar({
+      dataInicio: "2023-01-02", dataCalculo: "2023-12-29",
+      precos: precoFixo("2023-01-02", "2023-12-29", 20),
+      movimentacoes: [{ data: "2023-01-02", tipo: "Compra", valor: 2000, quantidade: 100 }],
+      eventos: bonificacaoEmbutida,
+    });
+    expect(ultimo(rows).valorPosicao).toBeCloseTo(120 * 20, 6);
+  });
+});
