@@ -37,13 +37,7 @@ interface Sugestao {
   subclasse: string | null;
   /** Data do cancelamento, para fundo que deixou de existir (posicao historica). */
   encerradoEm: string | null;
-  /** Nome antigo que casou com a busca, quando o atual nao casou. */
-  nomeAntigo: string | null;
-  /** Ultimo dia em que o nome antigo valeu. */
-  nomeAntigoAte: string | null;
 }
-
-type FundoEscolhido = FundoOpcao & { nomeAntigo?: string | null; nomeAntigoAte?: string | null };
 
 const fmtDataBR = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("pt-BR");
 
@@ -109,9 +103,9 @@ export default function FundoSelect({
    * O fundo escolhido pela busca. Sem isto o campo ficaria em branco depois de escolher: a prop
    * `fundos` so tem os fundos que a boleta leu ao abrir.
    */
-  const [escolhido, setEscolhido] = useState<FundoEscolhido | null>(null);
+  const [escolhido, setEscolhido] = useState<FundoOpcao | null>(null);
 
-  const selecionado = useMemo<FundoEscolhido | null>(
+  const selecionado = useMemo(
     () => (escolhido?.id === value ? escolhido : fundos.find((f) => f.id === value) ?? null),
     [escolhido, fundos, value],
   );
@@ -151,24 +145,33 @@ export default function FundoSelect({
     let vivo = true;
     setBuscando(true);
     const t = setTimeout(async () => {
-      // A busca mora no banco (`invest.buscar_fundos`) porque casa o texto tambem com os nomes
-      // ANTIGOS do fundo: 83% do catalogo mudou de nome desde 2023, quase todo na adaptacao a
-      // Resolucao CVM 175, e a nota de aplicacao de 2023 do cliente traz o nome daquela epoca.
-      // O CNPJ, com ou sem pontuacao, tambem casa.
-      const { data } = await (supabase.rpc as unknown as (
-        fn: string, args: Record<string, unknown>,
-      ) => Promise<{ data: unknown }>)("buscar_fundos", { termo: q, limite: MAX_SUGESTOES });
+      // O CNPJ e gravado so com digitos, entao a pontuacao que o usuario digitar sai antes de
+      // comparar - senao "47.715" nunca acharia "47715703000160".
+      const digitos = q.replace(/\D/g, "");
+      // Virgula e parenteses separam clausulas na sintaxe do `or` do PostgREST. Nome de fundo
+      // tem os tres com frequencia ("FIC (RL)"), e basta o usuario digitar um deles para a
+      // consulta virar um filtro malformado. Saem do termo, nao da busca: o `ilike` continua
+      // casando o resto do nome.
+      const seguro = q.replace(/[,()]/g, " ").trim();
+      if (!seguro) { setSugestoes([]); setBuscando(false); return; }
+      const filtro = digitos.length >= 3
+        ? `nome_curto.ilike.%${seguro}%,cnpj_classe.ilike.%${digitos}%`
+        : `nome_curto.ilike.%${seguro}%`;
+      const { data } = await supabase
+        .from("cadastro_de_fundos")
+        .select("id, nome_curto, cnpj_classe, classificacao, cvm_id_subclasse, situacao, data_inicio_situacao")
+        .eq("ativo", true)
+        .or(filtro)
+        .order("nome_curto")
+        .limit(MAX_SUGESTOES);
       if (!vivo) return;
-      setSugestoes(((data ?? []) as {
+      setSugestoes(((data ?? []) as unknown as {
         id: string; nome_curto: string; cnpj_classe: string; classificacao: string | null;
         cvm_id_subclasse: string | null; situacao: string | null; data_inicio_situacao: string | null;
-        nome_antigo: string | null; nome_antigo_ate: string | null;
       }[]).map((f) => ({
         id: f.id, nome: f.nome_curto, cnpj: f.cnpj_classe, classificacao: f.classificacao,
         subclasse: f.cvm_id_subclasse,
         encerradoEm: /^cancelad/i.test(f.situacao ?? "") ? f.data_inicio_situacao : null,
-        nomeAntigo: f.nome_antigo,
-        nomeAntigoAte: f.nome_antigo_ate,
       })));
       setBuscando(false);
     }, ESPERA_MS);
@@ -218,7 +221,7 @@ export default function FundoSelect({
         return;
       }
 
-      setEscolhido({ id: f.id, nome: f.nome, cnpj: f.cnpj, nomeAntigo: f.nomeAntigo, nomeAntigoAte: f.nomeAntigoAte });
+      setEscolhido({ id: f.id, nome: f.nome, cnpj: f.cnpj });
       onChange(f.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não foi possível verificar o fundo.");
@@ -274,11 +277,6 @@ export default function FundoSelect({
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm text-foreground">{selecionado.nome}</p>
         <p className="text-xs text-muted-foreground">CNPJ {formatarCnpj(selecionado.cnpj)}</p>
-        {selecionado.nomeAntigo && selecionado.nomeAntigoAte && (
-          <p className="truncate text-xs text-muted-foreground">
-            Antes: {selecionado.nomeAntigo} (até {fmtDataBR(selecionado.nomeAntigoAte)})
-          </p>
-        )}
       </div>
       {!disabled && (
         <button
@@ -336,12 +334,6 @@ export default function FundoSelect({
                 {f.classificacao ? ` · ${f.classificacao}` : ""}
                 {f.encerradoEm ? ` · Encerrado em ${fmtDataBR(f.encerradoEm)}` : ""}
               </span>
-              {/* O nome da nota antiga do cliente, para ele reconhecer o fundo que hoje tem outro nome. */}
-              {f.nomeAntigo && f.nomeAntigoAte && (
-                <span className="block truncate text-xs text-muted-foreground">
-                  Antes: {f.nomeAntigo} (até {fmtDataBR(f.nomeAntigoAte)})
-                </span>
-              )}
             </button>
           ))}
 
