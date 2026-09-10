@@ -180,7 +180,7 @@ export default function WelcomeOnboardingPage() {
       // `codigo_custodia` e texto: ordenar no banco devolvia "99" como maior que "1000", e o
       // ativo novo podia nascer com um codigo JA EM USO. `proximoCodigoCustodia` le paginado
       // e tira o maximo numerico do conjunto inteiro - e a mesma funcao que a boleta usa.
-      const codigoCustodia = await proximoCodigoCustodia(user.id);
+      const codigoCustodia = await proximoCodigoCustodia();
 
       // Os termos do papel vivem no cadastro compartilhado, nao mais na movimentacao. Poupanca
       // fica de fora de proposito: nao tem emissor nem vencimento para formar identidade.

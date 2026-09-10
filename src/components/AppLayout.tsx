@@ -5,6 +5,7 @@ import { AppHeader } from "./AppHeader";
 import { SubTabs } from "./SubTabs";
 import { DataReferenciaProvider } from "@/contexts/DataReferenciaContext";
 import { BoletaProvider } from "@/contexts/BoletaContext";
+import { PortfoliosProvider } from "@/hooks/usePortfolios";
 import { RecalculatingOverlay } from "./RecalculatingOverlay";
 
 function AppLayoutInner() {
@@ -35,10 +36,12 @@ function AppLayoutInner() {
 
 export function AppLayout() {
   return (
-    <DataReferenciaProvider>
-      <BoletaProvider>
-        <AppLayoutInner />
-      </BoletaProvider>
-    </DataReferenciaProvider>
+    <PortfoliosProvider>
+      <DataReferenciaProvider>
+        <BoletaProvider>
+          <AppLayoutInner />
+        </BoletaProvider>
+      </DataReferenciaProvider>
+    </PortfoliosProvider>
   );
 }

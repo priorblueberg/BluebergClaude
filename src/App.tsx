@@ -23,6 +23,7 @@ import {
 import CarteiraRendaFixa from "@/pages/CarteiraRendaFixaPage";
 import CalculadoraPage from "@/pages/CalculadoraPage";
 import PosicaoConsolidadaPage from "@/pages/PosicaoConsolidadaPage";
+import PortfoliosPage from "@/pages/PortfoliosPage";
 import NotFound from "./pages/NotFound";
 import AuthPage from "./pages/AuthPage";
 import CadastroPage from "./pages/CadastroPage";
@@ -107,6 +108,7 @@ const App = () => (
             <Route element={<ProtectedRoute />}>
               <Route element={<AppLayout />}>
                 <Route path="/welcome" element={<Navigate to="/carteira" replace />} />
+                <Route path="/portfolios" element={<PortfoliosPage />} />
                 {/* /carteira e a lamina de Investimentos (Total). Antes ela caia
                     direto na carteira de Renda Fixa por ser a unica categoria. */}
                 <Route path="/carteira" element={<CarteiraVisaoGeral />} />

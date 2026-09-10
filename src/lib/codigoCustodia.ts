@@ -1,35 +1,20 @@
 /**
- * Próximo código de custódia livre do usuário.
+ * Próximo código de custódia livre da conta.
  *
- * A boleta calculava isso lendo os códigos existentes numa consulta sem
- * paginação. O PostgREST devolve no máximo 1000 linhas e não avisa que cortou,
- * então, passando desse volume, o maior código ficava de fora e o ativo novo
- * nascia com um código JÁ EM USO - duas posições diferentes colapsando numa
- * custódia só. Aqui a leitura é paginada e o máximo sai do conjunto inteiro.
+ * O código é sequencial POR CONTA, não por portfólio: é a chave que liga `movimentacoes` a
+ * `custodia` (único por user_id + codigo_custodia). Desde os portfólios (10/09/2026) a RLS só
+ * mostra o portfólio em uso, então contar os códigos pelo cliente enxergaria parte deles e o ativo
+ * novo podia nascer com o código de uma posição de outro portfólio. A conta sai do banco
+ * (`invest.proximo_codigo_custodia`), que enxerga a conta inteira.
  *
- * Ordenar no banco não resolveria: `codigo_custodia` é texto, e em texto "99"
- * vem depois de "1000".
+ * Antes disso a leitura já precisava ser paginada, porque o PostgREST corta em 1000 linhas sem
+ * avisar e o maior código ficava de fora. No banco esse corte não existe. A faixa nova começa em
+ * 100; abaixo disso ficaram códigos legados.
  */
 import { supabase } from "@/integrations/supabase/client";
-import { fetchAllRows } from "@/lib/fetchAllRows";
 
-/** Primeiro código da faixa nova; abaixo disso ficaram códigos legados. */
-const PISO = 99;
-
-export async function proximoCodigoCustodia(userId: string): Promise<string> {
-  const linhas = await fetchAllRows<{ codigo_custodia: string | null }>((de, ate) =>
-    supabase
-      .from("movimentacoes")
-      .select("codigo_custodia")
-      .eq("user_id", userId)
-      .not("codigo_custodia", "is", null)
-      .range(de, ate),
-  );
-
-  const maior = linhas.reduce((mx, r) => {
-    const n = Number(r.codigo_custodia);
-    return Number.isFinite(n) && n > mx ? n : mx;
-  }, PISO);
-
-  return String(maior + 1);
+export async function proximoCodigoCustodia(): Promise<string> {
+  const { data, error } = await supabase.rpc("proximo_codigo_custodia");
+  if (error || !data) throw new Error(error?.message ?? "Não foi possível gerar o código de custódia.");
+  return data;
 }

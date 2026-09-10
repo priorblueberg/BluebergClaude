@@ -2,11 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { useBoleta } from "@/contexts/BoletaContext";
 import { format, parse, isValid, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { CalendarIcon, ChevronDown, Plus } from "lucide-react";
+import { CalendarIcon, Check, ChevronDown, Layers, Plus } from "lucide-react";
 import { SininhoDeAlertas } from "@/components/SininhoDeAlertas";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/hooks/useAuth";
+import { usePortfolios } from "@/hooks/usePortfolios";
 import { useNavigate } from "react-router-dom";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { recalculateAllForDataReferencia } from "@/lib/syncEngine";
@@ -16,6 +17,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -30,6 +33,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { abrirBoleta } = useBoleta();
+  const { portfolios, ativo: portfolioAtivo, ativar: ativarPortfolio } = usePortfolios();
 
   const isStagedSameAsApplied = format(stagedDate, "yyyy-MM-dd") === format(dataReferencia, "yyyy-MM-dd");
 
@@ -113,6 +117,15 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
     setCalendarOpen(false);
   };
 
+  // Recarrega na mesma tela, agora com os dados do outro portfolio.
+  const trocarPortfolio = async (id: string) => {
+    try {
+      await ativarPortfolio(id, window.location.pathname);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Não foi possível trocar de portfólio.");
+    }
+  };
+
   const handleLogout = async () => {
     await signOut();
     navigate("/");
@@ -122,6 +135,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
   return (
     <div className="relative">
       <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4">
+        <div className="flex items-center gap-4">
         <DropdownMenu>
           <DropdownMenuTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground outline-none" style={{ transition: "color 120ms linear" }}>
             <span className="truncate max-w-[220px]">{user?.email}</span>
@@ -136,6 +150,37 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+
+        {/* Portfolio em uso: todas as telas mostram so ele. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground hover:border-primary outline-none"
+            style={{ transition: "border-color 120ms linear" }}
+            title="Portfólio em uso"
+          >
+            <Layers size={14} strokeWidth={1.5} className="text-muted-foreground" />
+            <span className="truncate max-w-[200px]">{portfolioAtivo?.nome ?? "Portfólio"}</span>
+            <ChevronDown size={14} strokeWidth={1.5} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[220px]">
+            <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">Portfólio em uso</DropdownMenuLabel>
+            {portfolios.map((p) => (
+              <DropdownMenuItem
+                key={p.id}
+                onClick={() => { if (!p.ativo) void trocarPortfolio(p.id); }}
+                className="text-xs cursor-pointer gap-2"
+              >
+                <Check size={14} strokeWidth={1.5} className={p.ativo ? "opacity-100" : "opacity-0"} />
+                <span className="truncate">{p.nome}</span>
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => navigate("/portfolios")} className="text-xs cursor-pointer">
+              Gerenciar portfólios
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        </div>
 
         <div className={`flex items-center gap-4${disableControls ? " pointer-events-none opacity-40" : ""}`}>
           <button

@@ -1,5 +1,6 @@
 import { useLocation, Link } from "react-router-dom";
 import {
+  Layers,
   LayoutGrid,
   ArrowLeftRight,
   Vault,
@@ -23,6 +24,7 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
+  { title: "Portfólios", url: "/portfolios", icon: Layers },
   { title: "Carteira de Investimentos", url: "/carteira", icon: LayoutGrid },
   { title: "Posição Consolidada", url: "/posicao-consolidada", icon: ClipboardList },
   { title: "Movimentações", url: "/movimentacoes", icon: ArrowLeftRight },

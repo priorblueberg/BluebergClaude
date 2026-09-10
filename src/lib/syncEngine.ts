@@ -978,8 +978,11 @@ export async function syncControleCarteiras(categoriaId: string, userId: string,
     user_id: userId,
   };
 
+  // Chave por PORTFOLIO. Com a antiga (nome_carteira, user_id) o recalculo de um portfolio
+  // sobrescrevia a linha "Renda Fixa" do outro. O portfolio_id vem do DEFAULT do banco (o
+  // portfolio em uso), por isso nao aparece no objeto.
   await supabase.from("controle_de_carteiras").upsert(carteiraData, {
-    onConflict: "nome_carteira,user_id",
+    onConflict: "portfolio_id,nome_carteira",
   });
 
   await syncCarteiraGeral(userId, refDate);
@@ -1055,7 +1058,7 @@ export async function syncCarteiraGeral(userId: string, dataReferencia?: string)
   };
 
   await supabase.from("controle_de_carteiras").upsert(carteiraData, {
-    onConflict: "nome_carteira,user_id",
+    onConflict: "portfolio_id,nome_carteira",
   });
 }
 

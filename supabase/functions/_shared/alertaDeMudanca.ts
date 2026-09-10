@@ -111,15 +111,19 @@ export async function registrarMudanca(
   // Toda posicao que em algum momento teve este fundo. O saldo e calculado posicao a posicao
   // porque uma "Mudança de Fundo" antiga pode ter levado a posicao para outro fundo.
   const { data: tocadas, error: eTocadas } = await sb.from("movimentacoes")
-    .select("user_id, codigo_custodia").eq("fundo_id", fundo.id).not("codigo_custodia", "is", null);
+    .select("user_id, portfolio_id, codigo_custodia").eq("fundo_id", fundo.id).not("codigo_custodia", "is", null);
   if (eTocadas) throw eTocadas;
-  const posicoes = new Map<string, { userId: string; codigo: string }>();
-  for (const t of (tocadas ?? []) as { user_id: string; codigo_custodia: string }[]) {
-    posicoes.set(`${t.user_id}|${t.codigo_custodia}`, { userId: t.user_id, codigo: String(t.codigo_custodia) });
+  const posicoes = new Map<string, { userId: string; portfolioId: string; codigo: string }>();
+  for (const t of (tocadas ?? []) as { user_id: string; portfolio_id: string; codigo_custodia: string }[]) {
+    posicoes.set(`${t.user_id}|${t.codigo_custodia}`, {
+      userId: t.user_id, portfolioId: t.portfolio_id, codigo: String(t.codigo_custodia),
+    });
   }
 
-  const porUsuario = new Map<string, { codigos: string[]; saldo: number }>();
-  for (const { userId, codigo } of posicoes.values()) {
+  // Um alerta por PORTFOLIO, e nao por usuario: cada portfolio e isolado (a RLS so mostra o que
+  // esta em uso), entao o cliente ve e responde o alerta dentro do portfolio da posicao.
+  const porPortfolio = new Map<string, { userId: string; codigos: string[]; saldo: number }>();
+  for (const { userId, portfolioId, codigo } of posicoes.values()) {
     const { data: movs, error } = await sb.from("movimentacoes")
       .select("fundo_id, data, data_cotizacao, tipo_movimentacao, quantidade, valor, preco_unitario, created_at")
       .eq("user_id", userId).eq("codigo_custodia", codigo);
@@ -130,17 +134,18 @@ export async function registrarMudanca(
     // Tinha cotas deste fundo no ultimo dia de cota, e continua com elas: ninguem informou nada.
     if (naUltimaCota.fundoId !== fundo.id || naUltimaCota.saldo <= 1e-8) continue;
     if (agora.fundoId !== fundo.id || agora.saldo <= 1e-8) continue;
-    const u = porUsuario.get(userId) ?? { codigos: [], saldo: 0 };
-    u.codigos.push(codigo);
-    u.saldo += naUltimaCota.saldo;
-    porUsuario.set(userId, u);
+    const p = porPortfolio.get(portfolioId) ?? { userId, codigos: [], saldo: 0 };
+    p.codigos.push(codigo);
+    p.saldo += naUltimaCota.saldo;
+    porPortfolio.set(portfolioId, p);
   }
 
   const nome = fundo.nome_curto ?? fundo.cnpj_classe;
-  if (porUsuario.size) {
+  if (porPortfolio.size) {
     const { error } = await sb.from("alertas").upsert(
-      [...porUsuario].map(([userId, u]) => ({
-        user_id: userId,
+      [...porPortfolio].map(([portfolioId, p]) => ({
+        user_id: p.userId,
+        portfolio_id: portfolioId,
         tipo: "mudanca_de_fundo",
         referencia_id: mudancaId,
         titulo: "Possível alteração na composição do fundo",
@@ -153,24 +158,24 @@ export async function registrarMudanca(
           ultima_cota: ultimaCota,
           sinal: mudanca.sinal,
           evidencias: mudanca.evidencias,
-          codigos_custodia: u.codigos,
-          saldo_cotas: u.saldo,
+          codigos_custodia: p.codigos,
+          saldo_cotas: p.saldo,
         },
       })),
-      { onConflict: "user_id,tipo,referencia_id", ignoreDuplicates: true },
+      { onConflict: "portfolio_id,tipo,referencia_id", ignoreDuplicates: true },
     );
     if (error) throw error;
   }
 
-  const { data: abertos, error: eAbertos } = await sb.from("alertas").select("id, user_id")
+  const { data: abertos, error: eAbertos } = await sb.from("alertas").select("id, portfolio_id")
     .eq("tipo", "mudanca_de_fundo").eq("referencia_id", mudancaId).eq("status", "aberto");
   if (eAbertos) throw eAbertos;
-  const resolver = ((abertos ?? []) as { id: string; user_id: string }[])
-    .filter((a) => !porUsuario.has(a.user_id)).map((a) => a.id);
+  const resolver = ((abertos ?? []) as { id: string; portfolio_id: string }[])
+    .filter((a) => !porPortfolio.has(a.portfolio_id)).map((a) => a.id);
   if (resolver.length) {
     const { error } = await sb.from("alertas")
       .update({ status: "resolvido", resolvido_em: new Date().toISOString() }).in("id", resolver);
     if (error) throw error;
   }
-  return { mudancaId, alertados: porUsuario.size, resolvidos: resolver.length };
+  return { mudancaId, alertados: porPortfolio.size, resolvidos: resolver.length };
 }

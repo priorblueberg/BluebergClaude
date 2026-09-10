@@ -316,6 +316,7 @@ export type Database = {
         Row: {
           id: string
           user_id: string
+          portfolio_id: string
           categoria_id: string
           nome_carteira: string
           status: string | null
@@ -328,6 +329,7 @@ export type Database = {
         Insert: {
           id?: string
           user_id: string
+          portfolio_id?: string
           categoria_id: string
           nome_carteira: string
           status?: string | null
@@ -340,6 +342,7 @@ export type Database = {
         Update: {
           id?: string
           user_id?: string
+          portfolio_id?: string
           categoria_id?: string
           nome_carteira?: string
           status?: string | null
@@ -543,6 +546,7 @@ export type Database = {
         Row: {
           id: string
           user_id: string
+          portfolio_id: string
           codigo_custodia: string | null
           categoria_id: string
           produto_id: string
@@ -581,6 +585,7 @@ export type Database = {
         Insert: {
           id?: string
           user_id: string
+          portfolio_id?: string
           codigo_custodia?: string | null
           categoria_id: string
           produto_id: string
@@ -619,6 +624,7 @@ export type Database = {
         Update: {
           id?: string
           user_id?: string
+          portfolio_id?: string
           codigo_custodia?: string | null
           categoria_id?: string
           produto_id?: string
@@ -1011,6 +1017,7 @@ export type Database = {
         Row: {
           id: string
           user_id: string
+          portfolio_id: string
           categoria_id: string
           produto_id: string
           emissor_id: string | null
@@ -1038,6 +1045,7 @@ export type Database = {
         Insert: {
           id?: string
           user_id: string
+          portfolio_id?: string
           categoria_id: string
           produto_id: string
           emissor_id?: string | null
@@ -1065,6 +1073,7 @@ export type Database = {
         Update: {
           id?: string
           user_id?: string
+          portfolio_id?: string
           categoria_id?: string
           produto_id?: string
           emissor_id?: string | null
@@ -1152,6 +1161,7 @@ export type Database = {
         Row: {
           id: string
           user_id: string
+          portfolio_id: string
           custodia_id: string
           codigo_custodia: string | null
           data_aplicacao: string
@@ -1167,6 +1177,7 @@ export type Database = {
         Insert: {
           id?: string
           user_id: string
+          portfolio_id?: string
           custodia_id: string
           codigo_custodia?: string | null
           data_aplicacao: string
@@ -1182,6 +1193,7 @@ export type Database = {
         Update: {
           id?: string
           user_id?: string
+          portfolio_id?: string
           custodia_id?: string
           codigo_custodia?: string | null
           data_aplicacao?: string
@@ -1210,6 +1222,27 @@ export type Database = {
             referencedColumns: ["id"]
           }
         ]
+      }
+      portfolios: {
+        Row: {
+          id: string
+          user_id: string
+          nome: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id?: string
+          nome: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          nome?: string
+          created_at?: string
+        }
+        Relationships: []
       }
       produtos: {
         Row: {
@@ -1250,6 +1283,7 @@ export type Database = {
         Row: {
           id: string
           user_id: string
+          portfolio_ativo_id: string | null
           nome_completo: string | null
           data_nascimento: string | null
           email: string | null
@@ -1258,6 +1292,7 @@ export type Database = {
         Insert: {
           id?: string
           user_id: string
+          portfolio_ativo_id?: string | null
           nome_completo?: string | null
           data_nascimento?: string | null
           email?: string | null
@@ -1266,6 +1301,7 @@ export type Database = {
         Update: {
           id?: string
           user_id?: string
+          portfolio_ativo_id?: string | null
           nome_completo?: string | null
           data_nascimento?: string | null
           email?: string | null
@@ -1341,6 +1377,29 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      definir_portfolio_ativo: {
+        Args: { p_portfolio: string }
+        Returns: undefined
+      }
+      portfolio_ativo: {
+        Args: never
+        Returns: string
+      }
+      proximo_codigo_custodia: {
+        Args: never
+        Returns: string
+      }
+      resumo_dos_portfolios: {
+        Args: never
+        Returns: {
+          id: string
+          nome: string
+          created_at: string
+          ativo: boolean
+          posicoes: number
+          movimentacoes: number
+        }[]
+      }
       check_email_exists: {
         Args: { p_email: string }
         Returns: boolean

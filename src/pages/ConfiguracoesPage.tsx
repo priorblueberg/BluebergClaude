@@ -13,7 +13,7 @@ export default function ConfiguracoesPage() {
     if (!user) return;
     if (
       !window.confirm(
-        "Tem certeza que deseja redefinir TODAS as movimentações, custódia e carteiras? Esta ação é irreversível."
+        "Tem certeza que deseja redefinir TODAS as movimentações, custódia e carteiras do portfólio em uso? Os outros portfólios não são afetados. Esta ação é irreversível."
       )
     )
       return;
@@ -61,8 +61,8 @@ export default function ConfiguracoesPage() {
         <CardHeader>
           <CardTitle className="text-sm">Redefinir Movimentações</CardTitle>
           <CardDescription>
-            Remove todos os registros das tabelas de Movimentações, Custódia e
-            Carteiras. Esta ação é irreversível.
+            Remove as movimentações, a custódia e as carteiras do portfólio em uso.
+            Os outros portfólios não são afetados. Esta ação é irreversível.
           </CardDescription>
         </CardHeader>
         <CardContent>

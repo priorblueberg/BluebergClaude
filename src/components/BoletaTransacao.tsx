@@ -1103,7 +1103,7 @@ Confirma que o preço está certo?`,
 
         const codigoCustodia = existentes && existentes.length > 0
           ? String(existentes[0].codigo_custodia)
-          : await proximoCodigoCustodia(user.id);
+          : await proximoCodigoCustodia();
 
         // Venda não pode passar do saldo: o motor aceita posição negativa e ela seguiria
         // "rendendo", então o erro só apareceria semanas depois na carteira.
@@ -1235,7 +1235,7 @@ Confirma que o preço está certo?`,
         if (existentes && existentes.length > 0) {
           codigoCustodia = String(existentes[0].codigo_custodia);
         } else {
-          codigoCustodia = await proximoCodigoCustodia(user.id);
+          codigoCustodia = await proximoCodigoCustodia();
         }
 
         // Venda nao pode passar do saldo: o motor aceita posicao negativa e ela
@@ -1377,7 +1377,7 @@ Confirma que o preço está certo?`,
         if (existentes && existentes.length > 0) {
           codigoCustodia = String(existentes[0].codigo_custodia);
         } else {
-          codigoCustodia = await proximoCodigoCustodia(user.id);
+          codigoCustodia = await proximoCodigoCustodia();
           if (tipoMovimentacao === "Aplicação") tipoFinal = "Aplicação Inicial";
         }
 
@@ -1683,7 +1683,7 @@ Confirma que o preço está certo?`,
           if (existing && existing.length > 0) {
             codigoCustodia = String(existing[0].codigo_custodia);
           } else {
-            codigoCustodia = await proximoCodigoCustodia(user.id);
+            codigoCustodia = await proximoCodigoCustodia();
             tipoFinal = "Aplicação Inicial";
           }
         } else {
