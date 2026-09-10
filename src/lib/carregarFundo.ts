@@ -45,8 +45,14 @@ async function chamar(payload: Record<string, unknown>): Promise<Resposta> {
   return r;
 }
 
-/** Trava de voltas: fundo antigo tem muitos meses, mas 20 chamadas ja cobrem o piso de 2023. */
-const MAX_VOLTAS = 20;
+/**
+ * Trava de voltas.
+ *
+ * De 02/01/2023 ate hoje sao ~45 meses, e a funcao processa alguns por chamada dentro do
+ * orcamento de CPU dela. 60 da folga para o pior caso (um mes por volta) sem virar laco infinito
+ * se a funcao passar a devolver sempre o mesmo mes pendente.
+ */
+const MAX_VOLTAS = 60;
 
 export async function carregarFundo(
   cnpj: string,
@@ -67,7 +73,12 @@ export async function carregarFundo(
   let cotas = resposta.cotasInseridas;
   for (let voltas = 0; resposta.proximoMes && voltas < MAX_VOLTAS; voltas++) {
     aoProgredir?.(cotas, resposta.proximoMes);
-    resposta = await chamar({ cnpj: digitos, subclasse });
+    // `desde` vai a cada volta, com o mes que a chamada anterior deixou pendente. Sem ele a
+    // funcao retomaria do maior dia ja gravado, e uma carga que anda para TRAS pularia o meio:
+    // a primeira volta gravaria 2023, e a segunda saltaria para depois da ultima cota que ja
+    // existia. O mes vem como AAAAMM, e o dia 01 e so para formar uma data valida.
+    const proximo = `${resposta.proximoMes.slice(0, 4)}-${resposta.proximoMes.slice(4, 6)}-01`;
+    resposta = await chamar({ cnpj: digitos, subclasse, desde: proximo });
     cotas += resposta.cotasInseridas;
   }
 

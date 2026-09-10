@@ -20,7 +20,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
 import FundoSelect from "@/components/FundoSelect";
-import { carregarFundo } from "@/lib/carregarFundo";
 import TituloSelect from "@/components/TituloSelect";
 import { MOEDAS } from "@/lib/catalogoDeMoedas";
 import AcaoSelect from "@/components/AcaoSelect";
@@ -229,8 +228,9 @@ export default function BoletaTransacao({
     ultima: { data: string; valor: number } | null;
     /** Primeiro dia da serie do fundo. `null` = nao ha serie carregada. */
     primeira: string | null;
+    /** Data de inicio do fundo na CVM, para saber se a serie esta curta ou o fundo e novo. */
+    inicioDoFundo: string | null;
   } | null>(null);
-  const [carregandoSerie, setCarregandoSerie] = useState(false);
   // Moedas
   const [moedaSel, setMoedaSel] = useState("");
   // Acoes
@@ -429,8 +429,11 @@ export default function BoletaTransacao({
     let vivo = true;
     (async () => {
       const dataCotizacao = await dataCotizacaoFundo(fundoId, data, tipoMovimentacao);
-      const { naData, ultima, primeira } = await cotaFundo(fundoId, dataCotizacao);
-      if (vivo) setCotaOp({ dataCotizacao, cota: naData, ultima, primeira });
+      const c = await cotaFundo(fundoId, dataCotizacao);
+      if (vivo) {
+        setCotaOp({ dataCotizacao, cota: c.naData, ultima: c.ultima,
+                    primeira: c.primeira, inicioDoFundo: c.inicioDoFundo });
+      }
     })();
     return () => {
       vivo = false;
@@ -1329,7 +1332,8 @@ Confirma que o preço está certo?`,
         const valorNum = parseCurrencyToNumber(valor);
 
         const dataCotizacao = await dataCotizacaoFundo(fundoId, data, tipoMovimentacao);
-        const { naData: cotaDoDia, ultima: ultimaCota, primeira: primeiraCota } = await cotaFundo(fundoId, dataCotizacao);
+        const { naData: cotaDoDia, ultima: ultimaCota, primeira: primeiraCota,
+                inicioDoFundo: inicioFundo } = await cotaFundo(fundoId, dataCotizacao);
 
         // Em aplicacao e resgate a quantidade e exatamente valor / cota, sem spread nem taxa
         // que justifiquem outro numero (ao contrario do cambio) - por isso ela nao e digitada,
@@ -1348,7 +1352,9 @@ Confirma que o preço está certo?`,
               ultimaCota
                 ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)}. A última é de ${fmtData(ultimaCota.data)}: lance a operação quando a cota sair.`
                 : primeiraCota
-                  ? `A série deste fundo começa em ${fmtData(primeiraCota)}, depois de ${fmtData(dataCotizacao)}. Carregue a série desde a data da operação.`
+                  ? (inicioFundo && primeiraCota <= inicioFundo
+                      ? `Este fundo começou em ${fmtData(inicioFundo)}, depois de ${fmtData(dataCotizacao)}. Não há cota nessa data porque o fundo ainda não existia.`
+                      : `A série deste fundo na ferramenta começa em ${fmtData(primeiraCota)}, depois de ${fmtData(dataCotizacao)}.`)
                   : "A série de cotas deste fundo ainda não foi carregada.",
             );
             return;
@@ -1795,6 +1801,16 @@ Confirma que o preço está certo?`,
       : 0;
   const ehVendaComPrecoProprio = Math.abs(diferencaParaCurva) >= 0.01;
 
+  /**
+   * O fundo comecou DEPOIS da data da operacao.
+   *
+   * Quando a primeira cota que temos coincide com o inicio do fundo na CVM, a serie nao esta
+   * curta: o fundo e que nao existia. Carregar nao traria nada, e a correcao e na data.
+   */
+  const fundoNovoDemais = !!cotaOp?.inicioDoFundo && !!cotaOp?.primeira
+    && cotaOp.primeira <= cotaOp.inicioDoFundo
+    && cotaOp.dataCotizacao < cotaOp.primeira;
+
   return (
     <div className="space-y-6">
 
@@ -2071,7 +2087,7 @@ Confirma que o preço está certo?`,
                   disabled={isEditing}
                   hasError={validationErrors.has("fundoId")}
                   permitirCatalogo={!ehSaida}
-                  onCarregado={carregarFundos}
+                  onFecharBoleta={() => onFechar?.()}
                 />
               )}
             </Field>
@@ -2159,48 +2175,12 @@ Confirma que o preço está certo?`,
                   <p>
                     {cotaOp.ultima
                       ? `O fundo ainda não divulgou a cota de ${fmtData(cotaOp.dataCotizacao)}. A última é de ${fmtData(cotaOp.ultima.data)}. Como a quantidade de cotas vem de valor ÷ cota, a operação só pode ser lançada quando a cota sair.`
-                      : cotaOp.primeira
-                        ? `A série deste fundo na ferramenta começa em ${fmtData(cotaOp.primeira)}, depois de ${fmtData(cotaOp.dataCotizacao)}. Carregar a série desde a data da operação resolve, se a CVM publicar cota nesse período.`
-                        : "A série de cotas deste fundo ainda não foi carregada."}
+                      : fundoNovoDemais
+                        ? `Este fundo começou em ${fmtData(cotaOp.inicioDoFundo!)}, depois de ${fmtData(cotaOp.dataCotizacao)}. Não há cota nessa data porque o fundo ainda não existia: ajuste a data da operação.`
+                        : cotaOp.primeira
+                          ? `A série deste fundo na ferramenta começa em ${fmtData(cotaOp.primeira)}, depois de ${fmtData(cotaOp.dataCotizacao)}, mas o fundo já existia antes disso.`
+                          : "A série de cotas deste fundo ainda não foi carregada."}
                   </p>
-                  {/*
-                    So faz sentido oferecer quando o problema e a serie ser CURTA, nao quando a
-                    cota do dia ainda nao saiu: nesse caso nao ha o que carregar, ha o que
-                    esperar.
-                  */}
-                  {!cotaOp.ultima && (
-                    <button
-                      type="button"
-                      disabled={carregandoSerie}
-                      onClick={async () => {
-                        const cnpj = fundos.find((f) => f.id === fundoId)?.cnpj;
-                        // Botao que nao faz nada e pior que botao ausente: se o CNPJ nao esta
-                        // na lista, a tela diz, em vez de parecer que clicar nao funcionou.
-                        if (!cnpj) {
-                          toast.error("Não encontrei o CNPJ deste fundo. Recarregue a página.");
-                          return;
-                        }
-                        setCarregandoSerie(true);
-                        try {
-                          const r = await carregarFundo(cnpj, { desde: cotaOp.dataCotizacao });
-                          await carregarFundos();
-                          const novo = await cotaFundo(fundoId, cotaOp.dataCotizacao);
-                          setCotaOp({ dataCotizacao: cotaOp.dataCotizacao, cota: novo.naData,
-                                      ultima: novo.ultima, primeira: novo.primeira });
-                          toast.success(`Série atualizada com ${r.cotas} cotas.`);
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : "Não foi possível carregar a série.");
-                        } finally {
-                          setCarregandoSerie(false);
-                        }
-                      }}
-                      className="rounded-md border border-current px-2 py-1 text-xs font-medium disabled:opacity-50"
-                    >
-                      {carregandoSerie
-                        ? "Carregando..."
-                        : `Carregar a série desde ${fmtData(cotaOp.dataCotizacao)}`}
-                    </button>
-                  )}
                 </AlertDescription>
               </Alert>
             )}

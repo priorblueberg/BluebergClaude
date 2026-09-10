@@ -104,21 +104,30 @@ export async function cotaFundo(fundoId: string, dataISO: string) {
   // carregada, a data e anterior ao comeco da serie, e a CVM ainda nao publicou a cota do dia.
   // As tres pedem acao diferente de quem esta lancando - carregar o fundo, carregar mais para
   // tras, ou esperar - e "nao ha cota disponivel para esse fundo nessa data" nao diz qual.
-  const [{ data: ateAData }, { data: aPrimeira }] = await Promise.all([
+  // `inicioDoFundo` separa duas situacoes que parecem iguais e pedem acao oposta: a nossa serie
+  // esta CURTA (o fundo ja existia antes, e carregar resolve) ou o fundo simplesmente NAO
+  // EXISTIA na data (nao ha o que carregar, e sim a data a corrigir).
+  const [{ data: ateAData }, { data: aPrimeira }, { data: cadastro }] = await Promise.all([
     supabase.from("cotas_fundos").select("data, valor_cota")
       .eq("fundo_id", fundoId).lte("data", dataISO)
       .order("data", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("cotas_fundos").select("data")
       .eq("fundo_id", fundoId).order("data").limit(1).maybeSingle(),
+    supabase.from("cadastro_de_fundos").select("data_inicio").eq("id", fundoId).maybeSingle(),
   ]);
 
   const primeira = (aPrimeira as { data: string } | null)?.data ?? null;
+  const inicioDoFundo = (cadastro as { data_inicio: string | null } | null)?.data_inicio ?? null;
   if (!ateAData) {
-    return { naData: null as number | null, ultima: null as { data: string; valor: number } | null, primeira };
+    return {
+      naData: null as number | null,
+      ultima: null as { data: string; valor: number } | null,
+      primeira, inicioDoFundo,
+    };
   }
   const linha = ateAData as { data: string; valor_cota: number };
   const ultima = { data: linha.data, valor: Number(linha.valor_cota) };
-  return { naData: ultima.data === dataISO ? ultima.valor : null, ultima, primeira };
+  return { naData: ultima.data === dataISO ? ultima.valor : null, ultima, primeira, inicioDoFundo };
 }
 
 /**

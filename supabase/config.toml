@@ -1,1 +1,5 @@
 project_id = "ofuxkbzzibykelucsscv"
+# Encadeada pelo pg_net (invest.disparar_funcao), que chama sem cabecalho de autorizacao.
+# Um deploy sem esta linha religa o JWT e a carga para na primeira etapa, sem erro visivel.
+[functions.carga-cotas-fundo]
+verify_jwt = false

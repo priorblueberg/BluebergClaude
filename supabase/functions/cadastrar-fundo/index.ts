@@ -9,92 +9,14 @@
 // as cotas que faltam. O backfill e paginado por mes (MAX_MESES por chamada)
 // para caber no tempo da edge function; a resposta diz o proximo mes pendente.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  campo, competencia, cotasDoMes, MAX_MESES, membroRemoto, ORCAMENTO_MS, percorrerCsv, soDigitos,
+} from "../_shared/informeCvm.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
-const MAX_MESES = 12; // meses de informe processados por chamada
-const soDigitos = (s: string | null | undefined) => (s ?? "").replace(/\D/g, "");
-const competencia = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
-
-function campo(linha: string, n: number): string {
-  let ini = 0;
-  for (let k = 0; k < n; k++) { const p = linha.indexOf(";", ini); if (p < 0) return ""; ini = p + 1; }
-  const fim = linha.indexOf(";", ini);
-  return fim < 0 ? linha.slice(ini) : linha.slice(ini, fim);
-}
-
-/**
- * Abre um membro de um zip REMOTO sem baixar o arquivo inteiro.
- *
- * O cadastro da CVM tem 6,7 MB comprimidos e 44 MB de csv; materializar isso
- * estoura a memoria da edge function (foi o que aconteceu na primeira versao).
- * Aqui lemos o rodape (diretorio central) por Range, achamos o offset do membro
- * e pedimos so a faixa de bytes dele, jogando direto no DecompressionStream.
- */
-async function faixa(url: string, range: string): Promise<Response> {
-  const r = await fetch(url, { headers: { Range: range } });
-  if (r.status !== 206 && r.status !== 200) throw new Error(`Range ${range} HTTP ${r.status}`);
-  return r;
-}
-
-async function membroRemoto(url: string, escolher: (nome: string) => boolean): Promise<ReadableStream<string>> {
-  const rodape = new Uint8Array(await (await faixa(url, "bytes=-4096")).arrayBuffer());
-  const dvR = new DataView(rodape.buffer, rodape.byteOffset, rodape.byteLength);
-  let e = rodape.length - 22;
-  while (e >= 0 && dvR.getUint32(e, true) !== 0x06054b50) e--;
-  if (e < 0) throw new Error("zip sem diretorio central");
-  const cdTam = dvR.getUint32(e + 12, true);
-  const cdIni = dvR.getUint32(e + 16, true);
-
-  const cd = new Uint8Array(await (await faixa(url, `bytes=${cdIni}-${cdIni + cdTam - 1}`)).arrayBuffer());
-  const dv = new DataView(cd.buffer, cd.byteOffset, cd.byteLength);
-  let p = 0;
-  while (p < cd.length && dv.getUint32(p, true) === 0x02014b50) {
-    const nomeLen = dv.getUint16(p + 28, true);
-    const extraLen = dv.getUint16(p + 30, true);
-    const comLen = dv.getUint16(p + 32, true);
-    const metodo = dv.getUint16(p + 10, true);
-    const csize = dv.getUint32(p + 20, true);
-    const offsetLocal = dv.getUint32(p + 42, true);
-    const nome = new TextDecoder().decode(cd.subarray(p + 46, p + 46 + nomeLen));
-    if (escolher(nome)) {
-      if (metodo !== 8) throw new Error(`${nome}: membro nao esta em deflate`);
-      const cab = new Uint8Array(await (await faixa(url, `bytes=${offsetLocal}-${offsetLocal + 29}`)).arrayBuffer());
-      const dvC = new DataView(cab.buffer, cab.byteOffset, cab.byteLength);
-      const inicio = offsetLocal + 30 + dvC.getUint16(26, true) + dvC.getUint16(28, true);
-      const corpo = await faixa(url, `bytes=${inicio}-${inicio + csize - 1}`);
-      return corpo.body!
-        .pipeThrough(new DecompressionStream("deflate-raw"))
-        .pipeThrough(new TextDecoderStream("iso-8859-1")) as ReadableStream<string>;
-    }
-    p += 46 + nomeLen + extraLen + comLen;
-  }
-  throw new Error("membro nao encontrado no zip");
-}
-
-/** Percorre um csv da CVM linha a linha, sem materializar o arquivo inteiro. */
-async function percorrerCsv(
-  stream: ReadableStream<string>,
-  aoLer: (linha: string, idx: Map<string, number>) => void,
-) {
-  let resto = "";
-  let idx: Map<string, number> | null = null;
-  for await (const pedaco of stream as unknown as AsyncIterable<string>) {
-    const partes = (resto + pedaco).split("\n");
-    resto = partes.pop() ?? "";
-    for (const linha of partes) {
-      if (!idx) {
-        idx = new Map(linha.replace(/\r$/, "").split(";").map((c, i) => [c.trim().toUpperCase(), i] as const));
-        continue;
-      }
-      aoLer(linha.replace(/\r$/, ""), idx);
-    }
-  }
-  if (resto && idx) aoLer(resto.replace(/\r$/, ""), idx);
-}
 
 type LinhaCvm = Record<string, string>;
 
@@ -128,33 +50,6 @@ async function buscarCadastro(cnpj: string): Promise<{ classe: LinhaCvm; fundo: 
   return { classe: classe as LinhaCvm, fundo };
 }
 
-type CotaMes = { subclasse: string; data: string; cota: number };
-
-async function cotasDoMes(mes: string, cnpj: string): Promise<CotaMes[]> {
-  const url = `https://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS/inf_diario_fi_${mes}.zip`;
-  // 404 = mes ainda nao publicado (normal nos primeiros dias); nao e erro.
-  const cabeca = await fetch(url, { method: "HEAD" });
-  if (cabeca.status === 404) return [];
-  const stream = await membroRemoto(url, (n) => n.toLowerCase().endsWith(".csv"));
-
-  const achados: CotaMes[] = [];
-  await percorrerCsv(stream, (linha, idx) => {
-    const iCnpj = idx.get("CNPJ_FUNDO_CLASSE") ?? idx.get("CNPJ_FUNDO") ?? -1;
-    const iData = idx.get("DT_COMPTC") ?? -1;
-    const iCota = idx.get("VL_QUOTA") ?? -1;
-    const iSub = idx.get("ID_SUBCLASSE") ?? -1;
-    if (iCnpj < 0 || iData < 0 || iCota < 0) return;
-    if (soDigitos(campo(linha, iCnpj)) !== cnpj) return;
-    const cota = parseFloat(campo(linha, iCota));
-    if (!Number.isFinite(cota) || cota <= 0) return;
-    achados.push({
-      subclasse: iSub >= 0 ? campo(linha, iSub).trim() : "",
-      data: campo(linha, iData).trim(),
-      cota,
-    });
-  });
-  return achados;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -337,8 +232,19 @@ Deno.serve(async (req) => {
       fundoId = inserido.id;
       nomeCurto = inserido.nome_curto;
       dataInicioFundo = inserido.data_inicio;
-    } else if (subclasseEscolhida && !existente?.cvm_id_subclasse) {
-      await sb.from("cadastro_de_fundos").update({ cvm_id_subclasse: subclasseEscolhida }).eq("id", fundoId);
+    } else {
+      // A linha ja existia. Antes do catalogo isso significava "fundo ja em uso"; desde
+      // 10/09/2026 significa, quase sempre, "fundo que estava so no catalogo" - e o catalogo
+      // entra com `sincronizar_cotas = false` para a rotina diaria nao tentar 8.571 fundos.
+      //
+      // Sem ligar a marca aqui, o fundo recem-carregado ficaria de fora da atualizacao diaria e
+      // a serie dele congelaria no dia do cadastro. E, do lado da tela, ele nem apareceria na
+      // lista de carregados. O sintoma seria "cadastrei e sumiu".
+      const remendo: Record<string, unknown> = { sincronizar_cotas: true };
+      if (subclasseEscolhida && !existente?.cvm_id_subclasse) {
+        remendo.cvm_id_subclasse = subclasseEscolhida;
+      }
+      await sb.from("cadastro_de_fundos").update(remendo).eq("id", fundoId);
     }
 
     if (body.apenasCadastro) return json({ fundoId, nomeCurto, cotasInseridas: 0, proximoMes: null });
@@ -348,7 +254,31 @@ Deno.serve(async (req) => {
       .from("cotas_fundos").select("data").eq("fundo_id", fundoId)
       .order("data", { ascending: false }).limit(1).maybeSingle();
 
-    const inicioISO = ultima?.data ?? desde ?? dataInicioFundo ?? "2024-01-01";
+    // O comeco do backfill, com PISO.
+    //
+    // Antes era `desde ?? data_inicio do fundo ?? "2024-01-01"`, e um fundo de 2015 fazia a
+    // rotina varrer dez anos de informe diario para jogar tudo fora - nada antes de 02/01/2023
+    // entra em calculo nenhum, que e a data inicial da ferramenta. Com o teto de MAX_MESES por
+    // chamada, isso custava varias voltas antes de chegar no periodo util.
+    //
+    // O maior entre os tres, entao, e nunca antes do piso: se o fundo comecou DEPOIS de
+    // 02/01/2023, comecar no piso so varreria meses vazios ate a data de inicio dele.
+    const PISO_SERIE = "2023-01-02";
+    const comecoUtil = [desde ?? PISO_SERIE, dataInicioFundo ?? PISO_SERIE, PISO_SERIE]
+      .sort()
+      .at(-1)!;
+
+    // `desde` MANDA quando vem, mesmo que o fundo ja tenha cota.
+    //
+    // Antes era `ultima?.data ?? comecoUtil`, e isso tornava impossivel carregar uma serie para
+    // TRAS: bastava existir uma cota qualquer para o pedido comecar do fim dela. Um fundo com
+    // cota so de setembro/2026 ficava preso ali, e o botao "carregar desde 02/01/2023" da boleta
+    // nao faria nada - o pior tipo de botao.
+    //
+    // Sem `desde`, retoma de onde parou. E como o cliente devolve `proximoMes` como `desde` na
+    // volta seguinte, o laco anda mes a mes a partir do ponto pedido em vez de saltar para o
+    // maior dia ja gravado. O upsert torna a repeticao inofensiva.
+    const inicioISO = desde ? comecoUtil : (ultima?.data ?? comecoUtil);
     const cursor = new Date(inicioISO + "T00:00:00");
     const hoje = new Date();
     const meses: string[] = [];
@@ -357,14 +287,21 @@ Deno.serve(async (req) => {
       cursor.setMonth(cursor.getMonth() + 1);
       cursor.setDate(1);
     }
+    // O que sobrou depois do ultimo mes da lista, se o orcamento nao interromper antes.
+    const depoisDaLista = cursor <= hoje ? competencia(cursor) : null;
 
     const { data: cfg } = await sb
       .from("cadastro_de_fundos").select("cvm_id_subclasse").eq("id", fundoId).single();
 
     let inseridas = 0;
+    let interrompido: string | null = null;
+    const comecou = Date.now();
     const subclassesVistas = new Set<string>();
 
-    for (const mes of meses) {
+    for (const [i, mes] of meses.entries()) {
+      // O corte vem ANTES de processar, e nao depois: parar no meio de um mes deixaria a serie
+      // pela metade sem ninguem saber onde.
+      if (i > 0 && Date.now() - comecou > ORCAMENTO_MS) { interrompido = mes; break; }
       const linhas = await cotasDoMes(mes, cnpj);
       for (const l of linhas) subclassesVistas.add(l.subclasse);
 
@@ -389,8 +326,15 @@ Deno.serve(async (req) => {
       inseridas += doFundo.length;
     }
 
-    const proximo = cursor <= hoje ? competencia(cursor) : null;
-    return json({ fundoId, nomeCurto, cotasInseridas: inseridas, proximoMes: proximo });
+    const proximoMes = interrompido ?? depoisDaLista;
+    // Carga completa: grava a conclusao. A boleta decide "sem cotas" por esta coluna, entao um
+    // fundo carregado pelo modal sem ela voltaria a pedir carga toda vez que fosse escolhido.
+    if (!proximoMes) {
+      await sb.from("cadastro_de_fundos")
+        .update({ carga_cotas_concluida_em: new Date().toISOString(), carga_cotas_erro: null })
+        .eq("id", fundoId);
+    }
+    return json({ fundoId, nomeCurto, cotasInseridas: inseridas, proximoMes });
   } catch (e) {
     return json({ error: String((e as Error).message ?? e) }, 500);
   }
