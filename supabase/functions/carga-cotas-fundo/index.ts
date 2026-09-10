@@ -126,9 +126,9 @@ Deno.serve(async (req) => {
           const [{ data: primeira }, { data: jaSucede }] = await Promise.all([
             sb.from("cotas_fundos").select("data").eq("fundo_id", fundoId).is("fonte_fundo_id", null)
               .order("data").limit(1).maybeSingle(),
-            sb.from("sucessoes_de_fundo").select("id").eq("sucessor_id", fundoId).eq("ativa", true).maybeSingle(),
+            sb.from("sucessoes_de_fundo").select("id").eq("sucessor_id", fundoId).eq("ativa", true).limit(1),
           ]);
-          if (primeira && (primeira.data as string) > INICIO_SEM_ANTECESSOR && !jaSucede) {
+          if (primeira && (primeira.data as string) > INICIO_SEM_ANTECESSOR && !jaSucede?.length) {
             const sucessao = await buscarSucessaoInequivoca(sb, referencia, "antecessor", primeira.data as string);
             const gravada = sucessao ? await aplicarSucessaoInequivoca(sb, sucessao, referencia) : null;
             if (sucessao && gravada) {
@@ -140,9 +140,10 @@ Deno.serve(async (req) => {
           }
         }
         if (!esperaAntecessor) {
+          // Uma divisao em subclasses deixa varias ligacoes para o mesmo antecessor.
           const { data: jaSucedido } = await sb.from("sucessoes_de_fundo").select("id")
-            .eq("antecessor_id", fundoId).eq("ativa", true).maybeSingle();
-          if (!jaSucedido) {
+            .eq("antecessor_id", fundoId).eq("ativa", true).limit(1);
+          if (!jaSucedido?.length) {
             const detectada = await detectarMudancaDoFundo(sb, referencia, body.extras ?? {});
             if (detectada) {
               const sucessao = await buscarSucessaoInequivoca(sb, referencia, "sucessor", detectada.mudanca.ultimaCotaEm);

@@ -21,8 +21,12 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { campo, ficaComNova, membroRemoto, percorrerCsv, soDigitos } from "./informeCvm.ts";
 import {
-  chaveDaSerie, CRITERIO_DE_SUCESSAO, type LinhaDoInforme, pontasDaJanela, type Sucessao, sucessoesInequivocas,
+  chaveDaSerie, CRITERIO_DE_SUCESSAO, type Divisao, divisoesInequivocas, type LinhaDoInforme, pontasDaJanela,
+  type Sucessao, sucessoesInequivocas,
 } from "./sucessaoDeFundo.ts";
+
+/** O que a busca achou: uma sucessao simples ou uma divisao em subclasses. */
+export type Costura = (Sucessao & { tipo: "sucessao" }) | (Divisao & { tipo: "divisao" });
 
 export interface FundoDoCatalogo {
   id: string;
@@ -102,14 +106,24 @@ export async function buscarSucessaoInequivoca(
   fundo: FundoDoCatalogo,
   lado: "antecessor" | "sucessor",
   dataISO: string,
-): Promise<Sucessao | null> {
+): Promise<Costura | null> {
   const dias = await diasEmVolta(sb, dataISO, CRITERIO_DE_SUCESSAO.maxDiasUteis + 1);
   if (dias.length < 3) return null;
   const { paradas, nascidas } = pontasDaJanela(await linhasDosDias(dias), dias);
   const chave = chaveDaSerie(soDigitos(fundo.cnpj_classe), fundo.cvm_id_subclasse);
-  return sucessoesInequivocas(paradas, nascidas, dias)
-    .find((s) => (lado === "antecessor" ? s.sucessor.chave : s.antecessor.chave) === chave) ?? null;
+  // Para tras, a divisao em subclasses vem primeiro: ela cobre TODAS as subclasses que nasceram da
+  // classe, e a sucessao simples, so uma. Para frente a divisao nao se aplica - so o cotista sabe
+  // em que subclasse caiu.
+  if (lado === "antecessor") {
+    const divisao = divisoesInequivocas(paradas, nascidas, dias).find((d) => d.sucessores.some((s) => s.chave === chave));
+    if (divisao) return { tipo: "divisao", ...divisao };
+  }
+  const sucessao = sucessoesInequivocas(paradas, nascidas, dias)
+    .find((s) => (lado === "antecessor" ? s.sucessor.chave : s.antecessor.chave) === chave);
+  return sucessao ? { tipo: "sucessao", ...sucessao } : null;
 }
+
+type PontaDeSerieDaCostura = Sucessao["antecessor"];
 
 async function linhaDoCatalogo(sb: SupabaseClient, cnpj: string, subclasse: string) {
   const base = sb.from("cadastro_de_fundos").select("id, cnpj_classe, cvm_id_subclasse, nome_curto").eq("cnpj_classe", cnpj);
@@ -126,11 +140,11 @@ async function linhaDoCatalogo(sb: SupabaseClient, cnpj: string, subclasse: stri
  */
 export async function aplicarSucessaoInequivoca(
   sb: SupabaseClient,
-  sucessao: Sucessao,
+  costura: Costura,
   referencia: FundoDoCatalogo,
 ): Promise<{ sucessaoId: string; antecessorId: string; sucessorId: string; criouOculto: boolean } | null> {
   let criouOculto = false;
-  const garantir = async (p: typeof sucessao.antecessor, lado: "antecessor" | "sucessor") => {
+  const garantir = async (p: PontaDeSerieDaCostura, lado: "antecessor" | "sucessor") => {
     const existente = await linhaDoCatalogo(sb, p.cnpj, p.subclasse);
     if (existente) return existente.id;
     // Fora do catalogo: cria oculta, so para guardar a serie. O nome e unico no cadastro, entao a
@@ -156,6 +170,40 @@ export async function aplicarSucessaoInequivoca(
     return (data as { id: string }).id;
   };
 
+  if (costura.tipo === "divisao") {
+    // Liga a classe a cada subclasse que ja esta no catalogo. Subclasse fora dele (exclusiva, por
+    // exemplo) nao tem quem a use, entao fica sem ligacao. A que ja tem antecessor ativo e pulada.
+    const antecessorId = await garantir(costura.antecessor, "antecessor");
+    const chaveDoFundo = chaveDaSerie(soDigitos(referencia.cnpj_classe), referencia.cvm_id_subclasse);
+    const ids: string[] = [];
+    let sucessorDoFundo: string | null = null;
+    for (const filha of costura.sucessores) {
+      const linha = await linhaDoCatalogo(sb, filha.cnpj, filha.subclasse);
+      if (!linha) continue;
+      const { data: gravada, error } = await sb.from("sucessoes_de_fundo").insert({
+        antecessor_id: antecessorId,
+        sucessor_id: linha.id,
+        ultima_cota_antecessor: costura.antecessor.data,
+        primeira_cota_sucessor: filha.data,
+        tipo: "divisao",
+        origem: "automatica",
+        evidencias: { ...costura.evidencias, antecessor: costura.antecessor, sucessor: filha, subclasses: costura.sucessores },
+      }).select("id").single();
+      if (error) {
+        if ((error as { code?: string }).code === "23505") continue;
+        throw error;
+      }
+      const id = (gravada as { id: string }).id;
+      const { error: eAplica } = await sb.rpc("aplicar_sucessao", { p_id: id });
+      if (eAplica) throw eAplica;
+      ids.push(id);
+      if (filha.chave === chaveDoFundo) sucessorDoFundo = linha.id;
+    }
+    if (!sucessorDoFundo) return null;
+    return { sucessaoId: ids.join(","), antecessorId, sucessorId: sucessorDoFundo, criouOculto };
+  }
+
+  const sucessao = costura;
   const antecessorId = await garantir(sucessao.antecessor, "antecessor");
   const sucessorId = await garantir(sucessao.sucessor, "sucessor");
 

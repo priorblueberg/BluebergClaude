@@ -247,10 +247,10 @@ Deno.serve(async (req) => {
           if (!d) continue;
           const [{ data: jaAvisado }, { data: jaCosturado }] = await Promise.all([
             sb.from("mudancas_de_fundo").select("id").eq("fundo_id", f.id).eq("ultima_cota_em", d.mudanca.ultimaCotaEm).maybeSingle(),
-            sb.from("sucessoes_de_fundo").select("id").eq("antecessor_id", f.id).eq("ativa", true).maybeSingle(),
+            sb.from("sucessoes_de_fundo").select("id").eq("antecessor_id", f.id).eq("ativa", true).limit(1),
           ]);
           // Ja costurado: a serie segue pelo sucessor assim que a carga dele avancar.
-          if (jaCosturado) continue;
+          if (jaCosturado?.length) continue;
           if (jaAvisado) {
             // Ja passou pela tentativa de costura: so atualiza quem precisa do alerta.
             await registrarMudanca(sb, f.fundo, d.mudanca, d.ultimaCota);

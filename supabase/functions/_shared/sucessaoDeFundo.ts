@@ -162,3 +162,73 @@ export function sucessoesInequivocas(
     .filter((lista) => lista.length === 1 && porSucessor.get(lista[0].sucessor.chave)!.length === 1)
     .map((lista) => lista[0]);
 }
+
+// ── Divisao em subclasses (cenario B4) ──────────────────────────────────────────────────────
+//
+// A classe cria subclasses e DIVIDE os cotistas entre elas. Nenhuma subclasse sozinha fica com o
+// patrimonio e os cotistas, entao a sucessao acima nao a reconhece - e nao deve: so o cotista sabe
+// em que subclasse caiu. Mas para TRAS nao ha duvida: ate a vespera todo cotista tinha a cota da
+// classe, e as subclasses nascem com ela. Por isso a divisao so costura para tras.
+//
+// Medido de dez/2024 a jul/2025: 47 divisoes, 15 limpas. Nas limpas a cota das subclasses no
+// primeiro dia difere no maximo 0,03% da classe, e a maior subclasse fica com 90% ou mais dos
+// cotistas. As que nao batem sao, em geral, divisao somada a incorporacao de FICs no mesmo dia
+// (os cotistas aumentam), e ficam de fora.
+
+export interface Divisao {
+  antecessor: PontaDeSerie;
+  sucessores: PontaDeSerie[];
+  diasUteis: number;
+  evidencias: {
+    subclasses: number;
+    maior_variacao_cota: number;
+    diferenca_pl: number;
+    diferenca_cotistas: number;
+    dias_uteis_entre: number;
+  };
+}
+
+/**
+ * Divisao inequivoca: a serie SEM subclasse para, e duas ou mais subclasses do MESMO CNPJ nascem
+ * ate `maxDiasUteis` depois, todas com a cota antiga (dentro de `tolCota`), com a SOMA de
+ * patrimonio e de cotistas batendo com a classe, que precisa ter `minCotistas` ou mais.
+ */
+export function divisoesInequivocas(
+  paradas: PontaDeSerie[],
+  nascidas: PontaDeSerie[],
+  diasUteis: string[],
+  criterio: CriterioDeSucessao = CRITERIO_DE_SUCESSAO,
+): Divisao[] {
+  const posicao = new Map(diasUteis.map((d, i) => [d, i] as const));
+  const out: Divisao[] = [];
+  for (const a of paradas) {
+    if (a.subclasse !== "" || a.cotistas < criterio.minCotistas || !(a.cota > 0) || !(a.pl > 0)) continue;
+    const ia = posicao.get(a.data);
+    if (ia == null) continue;
+    const filhas = nascidas.filter((s) => {
+      if (s.cnpj !== a.cnpj || !s.subclasse) return false;
+      const is = posicao.get(s.data);
+      return is != null && is - ia >= 1 && is - ia <= criterio.maxDiasUteis;
+    });
+    if (filhas.length < 2) continue;
+    const maiorVariacao = Math.max(...filhas.map((s) => Math.abs(s.cota / a.cota - 1)));
+    if (maiorVariacao > criterio.tolCota) continue;
+    const diferencaPl = filhas.reduce((t, s) => t + s.pl, 0) / a.pl - 1;
+    const diferencaCotistas = (filhas.reduce((t, s) => t + s.cotistas, 0) - a.cotistas) / a.cotistas;
+    if (Math.abs(diferencaPl) > criterio.tolPl || Math.abs(diferencaCotistas) > criterio.tolCotistas) continue;
+    const gap = Math.max(...filhas.map((s) => posicao.get(s.data)! - ia));
+    out.push({
+      antecessor: a,
+      sucessores: filhas,
+      diasUteis: gap,
+      evidencias: {
+        subclasses: filhas.length,
+        maior_variacao_cota: maiorVariacao,
+        diferenca_pl: diferencaPl,
+        diferenca_cotistas: diferencaCotistas,
+        dias_uteis_entre: gap,
+      },
+    });
+  }
+  return out;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  chaveDaSerie, type LinhaDoInforme, type PontaDeSerie, pontasDaJanela, sucessoesInequivocas,
+  chaveDaSerie, divisoesInequivocas, type LinhaDoInforme, type PontaDeSerie, pontasDaJanela, sucessoesInequivocas,
 } from "./sucessaoDeFundo.ts";
 
 const ponta = (cnpj: string, subclasse: string, data: string, cota: number, pl: number, cotistas: number): PontaDeSerie =>
@@ -99,5 +99,49 @@ describe("pontas da janela e o cenario B3 (Santa Fe Aquarius)", () => {
   it("cota zero nao e ponta de serie", () => {
     const comZero = [...linhas, { cnpj: "04621018000161", subclasse: "", data: "2025-04-08", cota: 0, pl: 0, cotistas: 0 }];
     expect(pontasDaJanela(comZero, janela).paradas[0].data).toBe("2025-04-07");
+  });
+});
+
+describe("divisao em subclasses (cenario B4)", () => {
+  // BTG Pactual Hedge: numeros reais de 14 e 15/05/2025.
+  const dias = ["2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15", "2025-05-16", "2025-05-19"];
+  const classe = ponta("00888897000131", "", "2025-05-14", 61.495388, 1063067117, 14810);
+  const subA = ponta("00888897000131", "MZMRC1747322915", "2025-05-15", 61.465207, 1025651357, 14783);
+  const subI = ponta("00888897000131", "RBMFN1747320951", "2025-05-15", 61.465207, 36677378, 1);
+
+  it("liga a classe as duas subclasses", () => {
+    const [d] = divisoesInequivocas([classe], [subA, subI], dias);
+    expect(d.antecessor.chave).toBe("00888897000131|");
+    expect(d.sucessores.map((s) => s.subclasse).sort()).toEqual(["MZMRC1747322915", "RBMFN1747320951"]);
+    expect(d.evidencias.subclasses).toBe(2);
+  });
+
+  it("nao e sucessao simples: nenhuma subclasse sozinha fica com o patrimonio", () => {
+    expect(sucessoesInequivocas([classe], [subA, subI], dias)).toEqual([]);
+  });
+
+  it("uma subclasse so nao e divisao", () => {
+    expect(divisoesInequivocas([classe], [subA], dias)).toEqual([]);
+  });
+
+  it("cotistas que aumentam na divisao (FICs incorporados no mesmo dia) ficam de fora", () => {
+    // Kinea Andes: 819 cotistas antes, 873 depois.
+    const antes = ponta("41993797000152", "", "2025-05-14", 1.548836, 3959.9e6, 819);
+    const a = ponta("41993797000152", "EEPEK1743430115", "2025-05-15", 1.549943, 126.6e6, 872);
+    const b = ponta("41993797000152", "VKQS81743430617", "2025-05-15", 1.549678, 3840.5e6, 1);
+    expect(divisoesInequivocas([antes], [a, b], dias)).toEqual([]);
+  });
+
+  it("patrimonio que sai na divisao fica de fora", () => {
+    // Moat Capital Equity Hedge: a soma das subclasses nao chega ao patrimonio da classe.
+    const antes = ponta("24140256000162", "", "2025-05-14", 2.451397, 185.9e6, 2743);
+    const a = ponta("24140256000162", "CEMTO1749244596", "2025-05-15", 2.445917, 142.2e6, 2720);
+    const b = ponta("24140256000162", "VHTO51749245333", "2025-05-15", 2.445943, 7.7e6, 1);
+    expect(divisoesInequivocas([antes], [a, b], dias)).toEqual([]);
+  });
+
+  it("subclasse de outro CNPJ nao entra na divisao", () => {
+    const outra = ponta("11111111000111", "XPTO", "2025-05-15", 61.465207, 36677378, 1);
+    expect(divisoesInequivocas([classe], [subA, outra], dias)).toEqual([]);
   });
 });
