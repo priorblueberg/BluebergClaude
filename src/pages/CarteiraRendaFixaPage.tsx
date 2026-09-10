@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import type { CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
+import { HistoricoRentabilidadeChart } from "@/components/HistoricoRentabilidadeChart";
 import { buildCdiSeries, buildIbovespaSeries } from "@/lib/cdiCalculations";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
@@ -8,15 +9,11 @@ import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart
 import { useCarteiraRF } from "@/hooks/useCarteiraRF";
 import { ProductDetail, type CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { CircleCheck, CircleX } from "lucide-react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell,
-} from "recharts";
+import { Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
 
 
@@ -33,21 +30,6 @@ const PIE_COLORS = [
   "hsl(240, 50%, 55%)",
 ];
 
-const CustomTooltipChart = ({ active, payload, label }: any) => {
-  if (active && payload?.length) {
-    return (
-      <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-sm">
-        <p className="text-foreground font-medium mb-1">{label}</p>
-        {payload.map((entry: any) => (
-          <p key={entry.dataKey} style={{ color: entry.color }} className="font-semibold">
-            {entry.name}: {entry.value?.toFixed(2)}%
-          </p>
-        ))}
-      </div>
-    );
-  }
-  return null;
-};
 
 const PieTooltip = ({ active, payload }: any) => {
   if (active && payload?.length) {
@@ -71,7 +53,6 @@ export default function CarteiraRendaFixaPage() {
     ibovespaData, productList, loading, allCustodiaForCategoria,
   } = useCarteiraRF();
   const [selectedProduct, setSelectedProduct] = useState<AnalysisCustodiaProduct | null>(null);
-  const [seriesVisibility, setSeriesVisibility] = useState({ cdi: true, ibovespa: false });
 
   // Chart: Rentabilidade vs CDI vs Ibovespa
   /** O Gorila nao lista posicao que nao existiu na janela; aqui tambem nao. Papel que morreu
@@ -273,50 +254,11 @@ export default function CarteiraRendaFixaPage() {
 
           {/* Charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-md border border-border bg-card p-6">
-              <div className="flex items-start justify-between flex-wrap gap-2">
-                <div>
-                  <h2 className="text-sm font-semibold text-foreground">Histórico de Rentabilidade</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">Variação acumulada (%) no período</p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Switch
-                      checked={seriesVisibility.cdi}
-                      onCheckedChange={(v) => setSeriesVisibility(prev => ({ ...prev, cdi: v }))}
-                      className="h-4 w-8 [&>span]:h-3 [&>span]:w-3 data-[state=checked]:[&>span]:translate-x-4"
-                    />
-                    CDI
-                  </label>
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Switch
-                      checked={seriesVisibility.ibovespa}
-                      onCheckedChange={(v) => setSeriesVisibility(prev => ({ ...prev, ibovespa: v }))}
-                      className="h-4 w-8 [&>span]:h-3 [&>span]:w-3 data-[state=checked]:[&>span]:translate-x-4"
-                    />
-                    Ibovespa
-                  </label>
-                </div>
-              </div>
-              <div className="mt-4 h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} tickFormatter={(v) => `${v}%`} />
-                    <Tooltip content={<CustomTooltipChart />} />
-                    <Legend iconType="plainline" wrapperStyle={{ fontSize: 11 }} />
-                    <Line type="monotone" dataKey="titulo_acumulado" name="Carteira RF" stroke="hsl(210, 100%, 45%)" strokeWidth={2} dot={false} activeDot={{ r: 4, strokeWidth: 0 }} connectNulls />
-                    {seriesVisibility.cdi && (
-                      <Line type="monotone" dataKey="cdi_acumulado" name="CDI" stroke="hsl(0, 0%, 55%)" strokeWidth={1.5} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} strokeDasharray="5 3" connectNulls />
-                    )}
-                    {seriesVisibility.ibovespa && (
-                      <Line type="monotone" dataKey="ibovespa_acumulado" name="Ibovespa" stroke="hsl(30, 90%, 50%)" strokeWidth={1.5} dot={false} activeDot={{ r: 3, strokeWidth: 0 }} strokeDasharray="3 2" connectNulls />
-                    )}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+            <HistoricoRentabilidadeChart
+              dados={chartData}
+              chaveSerie="titulo_acumulado"
+              rotuloSerie="Carteira RF"
+            />
 
             <PatrimonioChart dados={patrimonioChartData} comEspacador={false} />
           </div>

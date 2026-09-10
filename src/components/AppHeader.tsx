@@ -2,11 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { useBoleta } from "@/contexts/BoletaContext";
 import { format, parse, isValid, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Bell, CalendarIcon, ChevronDown, RefreshCw, Plus } from "lucide-react";
+import { Bell, CalendarIcon, ChevronDown, Plus } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
-import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { recalculateAllForDataReferencia } from "@/lib/syncEngine";
 import { haVersaoNovaPublicada } from "@/lib/versaoDoApp";
@@ -23,14 +23,12 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
   const { dataReferencia, setDataReferencia, applyDataReferencia, setIsRecalculating, maxDate } = useDataReferencia();
   const [inputValue, setInputValue] = useState(format(dataReferencia, "dd/MM/yyyy"));
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [isForceRecalculating, setIsForceRecalculating] = useState(false);
   // Staged date: what the user picked but hasn't applied yet
   const [stagedDate, setStagedDate] = useState<Date>(dataReferencia);
   const inputRef = useRef<HTMLInputElement>(null);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const { abrirBoleta } = useBoleta();
-  const isAdmin = useIsAdmin();
 
   const isStagedSameAsApplied = format(stagedDate, "yyyy-MM-dd") === format(dataReferencia, "yyyy-MM-dd");
 
@@ -53,24 +51,6 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
     toast.info("Ha uma versao mais nova do app. Recarregando antes de recalcular...");
     setTimeout(() => window.location.reload(), 1200);
     return true;
-  };
-
-  const handleForceRecalculate = async () => {
-    if (!user || isForceRecalculating) return;
-    if (await bloqueadoPorVersaoAntiga()) return;
-    setIsForceRecalculating(true);
-    setIsRecalculating(true);
-    try {
-      await recalculateAllForDataReferencia(user.id, format(dataReferencia, "yyyy-MM-dd"));
-      applyDataReferencia();
-      toast.success("Reprocessamento completo realizado com sucesso");
-    } catch (err) {
-      console.error("Erro no reprocessamento forçado", err);
-      toast.error("Erro ao reprocessar");
-    } finally {
-      setIsRecalculating(false);
-      setIsForceRecalculating(false);
-    }
   };
 
   const handleApply = async () => {
@@ -179,13 +159,29 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
                 className="w-[80px] bg-transparent text-foreground text-xs outline-none"
                 placeholder="dd/mm/aaaa"
               />
-              <button
-                onClick={() => setCalendarOpen(!calendarOpen)}
-                className="text-muted-foreground hover:text-primary"
-                style={{ transition: "color 120ms linear" }}
-              >
-                <CalendarIcon size={14} strokeWidth={1.5} />
-              </button>
+              <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    className="text-muted-foreground hover:text-primary"
+                    style={{ transition: "color 120ms linear" }}
+                    aria-label="Abrir calendário"
+                  >
+                    <CalendarIcon size={14} strokeWidth={1.5} />
+                  </button>
+                </PopoverTrigger>
+                {/* Ancorado no botao, e nao numa faixa abaixo do header: antes o calendario
+                    ocupava a largura da tela e empurrava a pagina inteira para baixo. */}
+                <PopoverContent align="end" className="w-auto p-0">
+                  <Calendar
+                    mode="single"
+                    selected={dataReferencia}
+                    onSelect={handleDateSelect}
+                    locale={ptBR}
+                    disabled={{ after: maxDate }}
+                    className="pointer-events-auto"
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <button
               onClick={handleApply}
@@ -198,38 +194,12 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
             </button>
           </div>
 
-          {isAdmin && (
-            <button
-              onClick={handleForceRecalculate}
-              disabled={isForceRecalculating}
-              className="flex items-center gap-1 rounded-md border border-destructive/50 px-2 py-1 text-xs text-destructive hover:bg-destructive hover:text-destructive-foreground disabled:opacity-50 bg-background"
-              style={{ transition: "all 120ms linear" }}
-              title="Forçar reprocessamento completo de todos os ativos"
-            >
-              <RefreshCw size={12} strokeWidth={1.5} className={isForceRecalculating ? "animate-spin" : ""} />
-              <span>Reprocessar</span>
-            </button>
-          )}
-
           <button className="relative text-muted-foreground hover:text-primary" style={{ transition: "color 120ms linear" }}>
             <Bell size={18} strokeWidth={1.5} />
             <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-primary" />
           </button>
         </div>
       </header>
-
-      {calendarOpen && (
-        <div className="border-b border-border bg-card flex justify-end px-4 py-2">
-          <Calendar
-            mode="single"
-            selected={dataReferencia}
-            onSelect={handleDateSelect}
-            locale={ptBR}
-            disabled={{ after: maxDate }}
-            className="pointer-events-auto"
-          />
-        </div>
-      )}
     </div>
   );
 }

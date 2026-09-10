@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { buildCdiSeries, type CdiRecord } from "@/lib/cdiCalculations";
+import { HistoricoRentabilidadeChart } from "@/components/HistoricoRentabilidadeChart";
+import { useIbovespa } from "@/hooks/useIbovespa";
+import { buildCdiSeries, buildIbovespaSeries, type CdiRecord } from "@/lib/cdiCalculations";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import type { CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
@@ -10,9 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from "recharts";
 
 export interface LinhaCarteira {
   chave: string;
@@ -48,19 +47,6 @@ const fmtPct = (v: number | null) => (v != null ? `${v.toFixed(2)}%` : "—");
 const fmtData = (d: string | null) =>
   d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
-const ChartTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-sm">
-      <p className="mb-1 font-medium text-foreground">{label}</p>
-      {payload.map((e: any) => (
-        <p key={e.dataKey} style={{ color: e.color }} className="font-semibold">
-          {e.name}: {Number(e.value).toFixed(2)}%
-        </p>
-      ))}
-    </div>
-  );
-};
 
 /**
  * Lâmina de uma categoria com motor próprio (Fundos, Moedas).
@@ -78,9 +64,14 @@ export default function CarteiraCategoriaView({
   const { dataReferenciaISO } = useDataReferencia();
   const [mostrarEncerrados, setMostrarEncerrados] = useState(true);
 
+  // O benchmark do gráfico. Vem de hook próprio porque os hooks de carteira por categoria não
+  // buscam o Ibovespa - só o de renda fixa busca.
+  const ibovespaData = useIbovespa();
+
   const chartData = useMemo(() => {
     if (!carteiraInfo?.data_inicio || carteiraRows.length === 0) return [];
     const cdiSeries = buildCdiSeries(cdiRecords, carteiraInfo.data_inicio, carteiraInfo.data_calculo ?? undefined);
+    const ibovSeries = buildIbovespaSeries(ibovespaData, carteiraInfo.data_inicio, carteiraInfo.data_calculo ?? undefined);
     const map = new Map<string, any>();
     for (const p of cdiSeries) map.set(p.data, { data: p.data, label: p.label, cdi_acumulado: p.cdi_acumulado });
     for (const r of carteiraRows) {
@@ -92,8 +83,12 @@ export default function CarteiraCategoriaView({
       atual.carteira_acumulado = parseFloat((r.rentAcumuladaPct * 100).toFixed(4));
       map.set(r.data, atual);
     }
+    for (const [data, valor] of ibovSeries) {
+      const atual = map.get(data);
+      if (atual) atual.ibovespa_acumulado = valor;
+    }
     return Array.from(map.values()).sort((a, b) => a.data.localeCompare(b.data));
-  }, [carteiraRows, cdiRecords, carteiraInfo]);
+  }, [carteiraRows, cdiRecords, carteiraInfo, ibovespaData]);
 
   const patrimonioChartData = useMemo(
     () => serieDePatrimonio(carteiraRows, dataReferenciaISO),
@@ -168,23 +163,11 @@ export default function CarteiraCategoriaView({
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-md border border-border bg-card p-6">
-          <h2 className="text-sm font-semibold text-foreground">Histórico de Rentabilidade</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Variação acumulada (%) no período</p>
-          <div className="mt-4 h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(215, 20%, 88%)" />
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(215, 15%, 50%)" }} tickLine={false} interval="preserveStartEnd" />
-                <YAxis tick={{ fontSize: 11, fill: "hsl(215, 15%, 50%)" }} tickLine={false} tickFormatter={(v) => `${v}%`} />
-                <Tooltip content={<ChartTooltip />} />
-                <Legend iconType="plainline" wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="carteira_acumulado" name={labelSerie} stroke="hsl(210, 100%, 45%)" strokeWidth={2} dot={false} connectNulls />
-                <Line type="monotone" dataKey="cdi_acumulado" name="CDI" stroke="hsl(0, 0%, 55%)" strokeWidth={1.5} strokeDasharray="5 3" dot={false} connectNulls />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        <HistoricoRentabilidadeChart
+          dados={chartData}
+          chaveSerie="carteira_acumulado"
+          rotuloSerie={labelSerie}
+        />
 
         <PatrimonioChart dados={patrimonioChartData} comEspacador={false} />
       </div>

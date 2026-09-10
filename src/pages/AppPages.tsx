@@ -7,6 +7,7 @@ import { useCarteiraRF } from "@/hooks/useCarteiraRF";
 import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
 import { useCarteiraMoedas } from "@/hooks/useCarteiraMoedas";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
+import { HistoricoRentabilidadeChart } from "@/components/HistoricoRentabilidadeChart";
 import { buildCdiSeries, buildIbovespaSeries } from "@/lib/cdiCalculations";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
@@ -15,43 +16,9 @@ import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
 import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
 import { useBoleta } from "@/contexts/BoletaContext";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
 
-interface SeriesConfig {
-  key: string;
-  label: string;
-  color: string;
-}
 
-/** A carteira entra como série do gráfico — antes só CDI e Ibovespa eram plotados. */
-const AVAILABLE_SERIES: SeriesConfig[] = [
-  { key: "carteira_acumulado", label: "Investimentos", color: "hsl(210, 100%, 45%)" },
-  { key: "cdi_acumulado", label: "CDI", color: "hsl(0, 0%, 55%)" },
-  { key: "ibovespa_acumulado", label: "Ibovespa", color: "hsl(25, 95%, 53%)" },
-];
 
-const CustomTooltipChart = ({ active, payload, label }: any) => {
-  if (!active || !payload || payload.length === 0) return null;
-  return (
-    <div className="rounded-md border border-border bg-card px-3 py-2 shadow-md">
-      <p className="text-xs font-medium text-foreground mb-1">{label}</p>
-      {payload.map((entry: any) => (
-        <p key={entry.dataKey} className="text-xs" style={{ color: entry.color }}>
-          {entry.name}: {Number(entry.value).toFixed(2)}%
-        </p>
-      ))}
-    </div>
-  );
-};
 
 const fmtBrlValue = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -70,9 +37,6 @@ export const CarteiraVisaoGeral = () => {
   } | null>(null);
   const [infoLoading, setInfoLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [activeSeries, setActiveSeries] = useState<Set<string>>(
-    new Set(["carteira_acumulado", "cdi_acumulado"])
-  );
   const { appliedVersion, dataReferenciaISO } = useDataReferencia();
   const navigate = useNavigate();
 
@@ -239,15 +203,6 @@ export const CarteiraVisaoGeral = () => {
     });
   }, [productList, allProductRows, allCustodiaForCategoria, calendario, cdiRecords, carteiraInfo, dataReferenciaISO]);
 
-  const toggleSeries = (key: string) => {
-    setActiveSeries(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
   const fmtDate = (d: string | null) =>
     d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
@@ -341,75 +296,11 @@ export const CarteiraVisaoGeral = () => {
 
           {/* Gráficos lado a lado: rentabilidade (metade) + patrimônio */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="rounded-md border border-border bg-card p-6">
-              <div>
-                <h2 className="text-sm font-semibold text-foreground">Histórico de Rentabilidade</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Variação acumulada (%) no período
-                </p>
-              </div>
-              {/* Botões numa linha própria: no card estreito eles brigavam com o título */}
-              <div className="mt-3 flex items-center gap-2 flex-wrap">
-                {AVAILABLE_SERIES.map((s) => (
-                  <button
-                    key={s.key}
-                    onClick={() => toggleSeries(s.key)}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium leading-none transition-colors ${
-                      activeSeries.has(s.key)
-                        ? "border-transparent text-primary-foreground"
-                        : "border-border text-muted-foreground bg-muted/50 hover:bg-muted"
-                    }`}
-                    style={activeSeries.has(s.key) ? { backgroundColor: s.color } : undefined}
-                  >
-                    <span
-                      className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: s.color }}
-                    />
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-4 h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(215, 20%, 88%)" />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fontSize: 10, fill: "hsl(215, 15%, 50%)" }}
-                      axisLine={{ stroke: "hsl(215, 20%, 88%)" }}
-                      tickLine={false}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: "hsl(215, 15%, 50%)" }}
-                      axisLine={{ stroke: "hsl(215, 20%, 88%)" }}
-                      tickLine={false}
-                      tickFormatter={(v) => `${v}%`}
-                    />
-                    <Tooltip content={<CustomTooltipChart />} />
-                    <Legend
-                      iconType="plainline"
-                      wrapperStyle={{ fontSize: 11 }}
-                      formatter={(value: string) => <span className="text-muted-foreground">{value}</span>}
-                    />
-                    {AVAILABLE_SERIES.filter(s => activeSeries.has(s.key)).map((s) => (
-                      <Line
-                        key={s.key}
-                        type="monotone"
-                        dataKey={s.key}
-                        name={s.label}
-                        stroke={s.color}
-                        strokeWidth={s.key === "carteira_acumulado" ? 2 : 1.5}
-                        strokeDasharray={s.key === "carteira_acumulado" ? undefined : "5 3"}
-                        dot={false}
-                        activeDot={{ r: 4, fill: s.color, strokeWidth: 0 }}
-                        connectNulls
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+            <HistoricoRentabilidadeChart
+              dados={chartData}
+              chaveSerie="carteira_acumulado"
+              rotuloSerie="Investimentos"
+            />
 
             <PatrimonioChart dados={patrimonioChartData} />
           </div>

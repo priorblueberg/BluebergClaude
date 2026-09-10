@@ -7,15 +7,16 @@ import { Search, ChevronUp, ChevronDown, ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   buildCdiSeries,
+  buildIbovespaSeries,
   CdiRecord, DiaUtilRecord,
 } from "@/lib/cdiCalculations";
 import { calcularRendaFixaDiario, permiteVendaNoSecundario, DailyRow } from "@/lib/rendaFixaEngine";
 import { pisoDoCalendario } from "@/lib/ipcaSeries";
 import RentabilidadeDetailTable, { DetailRow } from "@/components/RentabilidadeDetailTable";
+import { HistoricoRentabilidadeChart } from "@/components/HistoricoRentabilidadeChart";
+import { useIbovespa } from "@/hooks/useIbovespa";
 
-import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 export interface CustodiaProduct {
   id: string;
@@ -40,21 +41,6 @@ export interface CustodiaProduct {
 type SortKey = "nome" | "categoria_nome" | "produto_nome" | "instituicao_nome";
 type SortDir = "asc" | "desc";
 
-const CustomTooltipChart = ({ active, payload, label }: any) => {
-  if (active && payload?.length) {
-    return (
-      <div className="rounded-md border border-border bg-card px-3 py-2 text-xs shadow-sm">
-        <p className="text-foreground font-medium mb-1">{label}</p>
-        {payload.map((entry: any) => (
-          <p key={entry.dataKey} style={{ color: entry.color }} className="font-semibold">
-            {entry.name}: {entry.value?.toFixed(2)}%
-          </p>
-        ))}
-      </div>
-    );
-  }
-  return null;
-};
 
 import { buildDetailRowsFromEngine } from "@/lib/detailRowsBuilder";
 
@@ -68,6 +54,7 @@ function getDateMinus(dateStr: string, days: number): string {
 export function ProductDetail({ product, onBack, backLabel = "Voltar para lista de produtos" }: { product: CustodiaProduct; onBack: () => void; backLabel?: string }) {
   const { appliedVersion, dataReferenciaISO, dataReferencia } = useDataReferencia();
   const [cdiRecords, setCdiRecords] = useState<CdiRecord[]>([]);
+  const ibovespaData = useIbovespa();
   const [diasUteis, setDiasUteis] = useState<DiaUtilRecord[]>([]);
   const [engineRows, setEngineRows] = useState<DailyRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -160,6 +147,10 @@ export function ProductDetail({ product, onBack, backLabel = "Voltar para lista 
     const chartEndDate = effectiveEnd < dataReferenciaISO ? effectiveEnd : dataReferenciaISO;
 
     const cdiSeries = buildCdiSeries(cdiRecords, product.data_inicio, chartEndDate);
+    const ibovSeries = buildIbovespaSeries(ibovespaData, product.data_inicio, chartEndDate);
+    const comIbov = <T extends { data: string }>(pontos: T[]) => pontos.map((p) => ({
+      ...p, ibovespa_acumulado: ibovSeries.get(p.data),
+    }));
 
     if (isPrefixado && engineRows.length > 0) {
       const useRentAcum2 = product.pagamento != null && product.pagamento !== "No Vencimento";
@@ -194,15 +185,15 @@ export function ProductDetail({ product, onBack, backLabel = "Voltar para lista 
         existing.label = existing.label || p.label;
         map.set(p.data, existing);
       }
-      return Array.from(map.values()).sort((a, b) => a.data.localeCompare(b.data));
+      return comIbov(Array.from(map.values()).sort((a, b) => a.data.localeCompare(b.data)));
     }
 
     // Non-prefixado: titulo = CDI
-    return cdiSeries.map(p => ({
+    return comIbov(cdiSeries.map(p => ({
       ...p,
       titulo_acumulado: p.cdi_acumulado,
-    }));
-  }, [cdiRecords, engineRows, product, isPrefixado, dataReferenciaISO]);
+    })));
+  }, [cdiRecords, engineRows, product, isPrefixado, dataReferenciaISO, ibovespaData]);
 
   // Detail table rows
   const detailRows = useMemo(() => {
@@ -344,55 +335,11 @@ export function ProductDetail({ product, onBack, backLabel = "Voltar para lista 
           {/* Charts side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Line chart */}
-            <div className="rounded-md border border-border bg-card p-6">
-              <h2 className="text-sm font-semibold text-foreground">
-                Histórico de Rentabilidade
-              </h2>
-              <p className="mt-1 text-xs text-muted-foreground">Variação acumulada (%) no período</p>
-              <div className="mt-4 h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
-                      axisLine={{ stroke: "hsl(var(--border))" }}
-                      tickLine={false}
-                      interval="preserveStartEnd"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
-                      axisLine={{ stroke: "hsl(var(--border))" }}
-                      tickLine={false}
-                      tickFormatter={(v) => `${v}%`}
-                    />
-                    <Tooltip content={<CustomTooltipChart />} />
-                    <Legend iconType="plainline" wrapperStyle={{ fontSize: 11 }} />
-                    <Line
-                      type="monotone"
-                      dataKey="titulo_acumulado"
-                      name={tituloLabel}
-                      stroke="hsl(210, 100%, 45%)"
-                      strokeWidth={2}
-                      dot={false}
-                      activeDot={{ r: 4, strokeWidth: 0 }}
-                      connectNulls
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="cdi_acumulado"
-                      name="CDI"
-                      stroke="hsl(0, 0%, 55%)"
-                      strokeWidth={1.5}
-                      dot={false}
-                      activeDot={{ r: 3, strokeWidth: 0 }}
-                      strokeDasharray="5 3"
-                      connectNulls
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
+            <HistoricoRentabilidadeChart
+              dados={chartData}
+              chaveSerie="titulo_acumulado"
+              rotuloSerie={tituloLabel}
+            />
 
             {/* Bar chart — Patrimônio Mensal */}
             <div className="rounded-md border border-border bg-card p-6">
