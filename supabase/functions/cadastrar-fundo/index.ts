@@ -23,6 +23,8 @@ type LinhaCvm = Record<string, string>;
 const URL_CADASTRO = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/registro_fundo_classe.zip";
 /** Cadastro ANTIGO (ICVM 555): fundos que nao chegaram a se adaptar, inclusive os cancelados. */
 const URL_CAD_FI = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/cad_fi.csv";
+/** Historico do cadastro antigo, com um arquivo por campo (nome, classe, situacao...) e vigencia. */
+const URL_CAD_FI_HIST = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/cad_fi_hist.zip";
 
 const normalizar = (t: string) =>
   t.toUpperCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/\s+/g, " ").trim();
@@ -117,6 +119,60 @@ Deno.serve(async (req) => {
     //
     // Nao ha rotina periodica, e e deliberado: o catalogo de acoes deixou de ter uma em
     // 10/09/2026 pelos mesmos motivos. Esta carga e manual, e roda quando alguem quiser.
+    // ── Nomes ANTIGOS dos fundos do catalogo ───────────────────────────────────────────────
+    //
+    //   POST { catalogo: "nomes" }  (+ seco: true)
+    //
+    // 83% do catalogo mudou de nome desde 2023, quase todo na adaptacao a RCVM 175, e o cliente
+    // procura pelo nome que esta na nota antiga. So entram os nomes que deixaram de valer depois
+    // do inicio da ferramenta, e so de CNPJs que estao no catalogo.
+    if (body.catalogo === "nomes") {
+      const noCatalogo = new Set<string>();
+      for (let de = 0; ; de += 1000) {
+        const { data, error } = await sb.from("cadastro_de_fundos").select("cnpj_classe").range(de, de + 999);
+        if (error) throw error;
+        for (const r of (data ?? []) as { cnpj_classe: string }[]) noCatalogo.add(r.cnpj_classe);
+        if (!data || data.length < 1000) break;
+      }
+
+      const nomes: { cnpj: string; nome: string; desde: string | null; ate: string }[] = [];
+      const vistos = new Set<string>();
+      let lidas = 0;
+      await percorrerCsv(
+        await membroRemoto(URL_CAD_FI_HIST, (n) => n === "cad_fi_hist_denom_social.csv"),
+        (linha, idx) => {
+          lidas++;
+          const c = (nome: string) => campo(linha, idx.get(nome) ?? -1).trim();
+          const ate = c("DT_FIM_DENOM_SOCIAL");
+          // Sem fim e o nome vigente, que ja esta no catalogo; antes do piso, ninguem procura.
+          if (!ate || ate < PISO_SERIE) return;
+          const cnpj = soDigitos(c("CNPJ_FUNDO"));
+          if (!noCatalogo.has(cnpj)) return;
+          const nome = c("DENOM_SOCIAL");
+          if (!nome) return;
+          const chave = `${cnpj}|${nome}|${ate}`;
+          if (vistos.has(chave)) return;
+          vistos.add(chave);
+          nomes.push({ cnpj, nome, desde: c("DT_INI_DENOM_SOCIAL") || null, ate });
+        },
+      );
+
+      const porCnpj = new Map<string, number>();
+      for (const n of nomes) porCnpj.set(n.cnpj, (porCnpj.get(n.cnpj) ?? 0) + 1);
+      const resumo = {
+        modo: "nomes", lidas, nomes_antigos: nomes.length, fundos_com_nome_antigo: porCnpj.size,
+        fundos_com_mais_de_um_nome_antigo: [...porCnpj.values()].filter((v) => v > 1).length,
+      };
+      if (body.seco === true) return json({ ok: true, seco: true, ...resumo });
+
+      for (let i = 0; i < nomes.length; i += 1000) {
+        const { error } = await sb.from("nomes_de_fundo")
+          .upsert(nomes.slice(i, i + 1000), { onConflict: "cnpj,nome,ate", ignoreDuplicates: true });
+        if (error) throw new Error(`upsert nomes (lote ${i / 1000 + 1}): ${error.message}`);
+      }
+      return json({ ok: true, ...resumo });
+    }
+
     const modoCatalogo = body.catalogo === true ? "classes" : body.catalogo;
     if (modoCatalogo === "classes" || modoCatalogo === "subclasses" || modoCatalogo === "cancelados") {
       // `ignoreDuplicates` e o que protege os fundos JA carregados. Sem ele, a carga passaria
