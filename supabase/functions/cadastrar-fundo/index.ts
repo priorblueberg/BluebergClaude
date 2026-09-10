@@ -506,17 +506,17 @@ Deno.serve(async (req) => {
       const linhas = await cotasDoMes(mes, cnpj);
       for (const l of linhas) subclassesVistas.add(l.subclasse);
 
-      // Mais de uma subclasse publicando cota: sem escolher, gravaria a cota errada
-      // em silencio. Devolve as opcoes para o usuario decidir.
-      if (subclassesVistas.size > 1 && !cfg?.cvm_id_subclasse) {
+      // So a serie DESTE fundo: a subclasse escolhida, ou as linhas sem subclasse.
+      const alvo = cfg?.cvm_id_subclasse ?? "";
+      const doFundo = linhas.filter((l) => l.subclasse === alvo);
+      // CNPJ que so publica por subclasse, sem subclasse escolhida e sem nenhuma cota: devolve as
+      // opcoes em vez de gravar a cota de uma delas em silencio.
+      if (!alvo && !doFundo.length && linhas.length && inseridas === 0 && !ultima) {
         return json({
           fundoId, nomeCurto, cotasInseridas: inseridas, proximoMes: mes,
           precisaSubclasse: Array.from(subclassesVistas).filter(Boolean),
         });
       }
-
-      const alvo = cfg?.cvm_id_subclasse ?? null;
-      const doFundo = alvo ? linhas.filter((l) => l.subclasse === alvo) : linhas;
       if (doFundo.length === 0) continue;
 
       const { error } = await sb.from("cotas_fundos").upsert(

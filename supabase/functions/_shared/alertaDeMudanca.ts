@@ -6,6 +6,9 @@
  * fundo no dia da ultima cota. Quem ja respondeu (lancou a "Mudança de Fundo") ou zerou a
  * posicao tem o alerta resolvido sozinho.
  *
+ * Antes do alerta vem a tentativa de costura automatica (`costura.ts`): so quando a sucessao NAO
+ * e inequivoca o cliente e chamado a responder.
+ *
  * Idempotente: roda a cada passada da rotina diaria. Um cliente que cadastra hoje uma posicao
  * num fundo que ja parou recebe o alerta na passada seguinte.
  */
@@ -38,17 +41,20 @@ export async function diasUteisDesde(sb: SupabaseClient, desdeISO: string): Prom
 }
 
 /**
- * Roda o detector num fundo a partir do que ja esta no banco e, havendo mudanca, registra.
+ * Roda o detector num fundo a partir do que ja esta no banco, sem gravar nada.
+ *
+ * A ultima cota considerada inclui as COPIADAS por uma sucessao: fundo antigo cuja serie segue
+ * pelo sucessor nao parou para quem tem posicao nele.
  *
  * `extras` traz o que so a leitura do informe enxerga (linhas com cota zero, subclasses novas).
  * Sem ele o detector ainda pega a serie parada, que e o sinal que sempre aparece.
  */
-export async function verificarMudanca(
+export async function detectarMudancaDoFundo(
   sb: SupabaseClient,
   fundo: FundoAcompanhado,
   extras: { datasComCotaZero?: string[]; subclassesNovas?: string[] } = {},
   diasUteis?: string[],
-): Promise<Mudanca | null> {
+): Promise<{ mudanca: Mudanca; ultimaCota: number } | null> {
   const { data: ultima, error } = await sb.from("cotas_fundos").select("data, valor_cota")
     .eq("fundo_id", fundo.id).order("data", { ascending: false }).limit(1).maybeSingle();
   if (error) throw error;
@@ -68,9 +74,20 @@ export async function verificarMudanca(
     diasUteis: uteis,
     ...extras,
   });
-  if (!mudanca) return null;
-  await registrarMudanca(sb, fundo, mudanca, Number(ultima.valor_cota));
-  return mudanca;
+  return mudanca ? { mudanca, ultimaCota: Number(ultima.valor_cota) } : null;
+}
+
+/** Detecta e, havendo mudanca, registra e avisa. Sem tentar costura. */
+export async function verificarMudanca(
+  sb: SupabaseClient,
+  fundo: FundoAcompanhado,
+  extras: { datasComCotaZero?: string[]; subclassesNovas?: string[] } = {},
+  diasUteis?: string[],
+): Promise<Mudanca | null> {
+  const d = await detectarMudancaDoFundo(sb, fundo, extras, diasUteis);
+  if (!d) return null;
+  await registrarMudanca(sb, fundo, d.mudanca, d.ultimaCota);
+  return d.mudanca;
 }
 
 export async function registrarMudanca(

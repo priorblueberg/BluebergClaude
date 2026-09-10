@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { EVENTO_ALERTAS } from "@/lib/verificarMudancaDoFundo";
 
 export interface DetalheMudancaDeFundo {
   fundo_id: string;
@@ -54,8 +55,14 @@ export function useAlertas() {
     void carregar();
     const t = setInterval(() => void carregar(), INTERVALO_MS);
     const aoVoltar = () => { if (document.visibilityState === "visible") void carregar(); };
+    const aoAvisar = () => void carregar();
     document.addEventListener("visibilitychange", aoVoltar);
-    return () => { clearInterval(t); document.removeEventListener("visibilitychange", aoVoltar); };
+    window.addEventListener(EVENTO_ALERTAS, aoAvisar);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", aoVoltar);
+      window.removeEventListener(EVENTO_ALERTAS, aoAvisar);
+    };
   }, [carregar]);
 
   const marcar = useCallback(async (id: string, status: "resolvido" | "descartado") => {

@@ -185,7 +185,8 @@ export async function cotasDoMes(mes: string, cnpj: string): Promise<CotaMes[]> 
  * vazios. Fundo em funcionamento ou em liquidacao nao tem limite.
  */
 export function fimDaSerie(situacao: string | null | undefined, dataSituacao: string | null | undefined): string | null {
-  if (!situacao || !dataSituacao || !/^cancelad/i.test(situacao)) return null;
+  // "Sucedido" e a linha oculta que a costura cria para guardar a serie de um fundo que virou outro.
+  if (!situacao || !dataSituacao || !/^(cancelad|sucedid)/i.test(situacao)) return null;
   const d = new Date(`${dataSituacao}T00:00:00`);
   d.setMonth(d.getMonth() + 2);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

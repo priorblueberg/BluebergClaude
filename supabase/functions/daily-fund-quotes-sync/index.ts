@@ -35,7 +35,7 @@
 // anos de uma vez pode estourar o tempo da edge function. Fatiar por ano e o uso normal.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ficaComNova } from "../_shared/informeCvm.ts";
-import { diasUteisDesde, verificarMudanca } from "../_shared/alertaDeMudanca.ts";
+import { detectarMudancaDoFundo, diasUteisDesde, registrarMudanca } from "../_shared/alertaDeMudanca.ts";
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const JANELA_MESES = 3;
@@ -147,7 +147,7 @@ Deno.serve(async (req) => {
 
     const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { db: { schema: "invest" } });
     const { data: fundos, error: err } = await sb.from("cadastro_de_fundos")
-      .select("id, nome_curto, cnpj_classe, cvm_id_subclasse").eq("ativo", true).eq("sincronizar_cotas", true);
+      .select("id, nome_curto, cnpj_classe, cvm_id_subclasse").eq("sincronizar_cotas", true);
     if (err) throw err;
     if (!fundos?.length) return json({ fundos: 0, inseridas: 0, detalhe: [] });
 
@@ -239,11 +239,32 @@ Deno.serve(async (req) => {
       const dias = await diasUteisDesde(sb, [reais[0] ?? trintaDias, trintaDias].sort()[0]);
       for (const f of acompanhados) {
         try {
-          const m = await verificarMudanca(sb, f.fundo, {
+          const extras = {
             datasComCotaZero: zerosPorFundo.get(f.id),
             subclassesNovas: [...(subclassesNovasPorFundo.get(f.id) ?? [])],
-          }, dias);
-          if (m) mudancas.push({ fundo: f.nome, ...m });
+          };
+          const d = await detectarMudancaDoFundo(sb, f.fundo, extras, dias);
+          if (!d) continue;
+          const [{ data: jaAvisado }, { data: jaCosturado }] = await Promise.all([
+            sb.from("mudancas_de_fundo").select("id").eq("fundo_id", f.id).eq("ultima_cota_em", d.mudanca.ultimaCotaEm).maybeSingle(),
+            sb.from("sucessoes_de_fundo").select("id").eq("antecessor_id", f.id).eq("ativa", true).maybeSingle(),
+          ]);
+          // Ja costurado: a serie segue pelo sucessor assim que a carga dele avancar.
+          if (jaCosturado) continue;
+          if (jaAvisado) {
+            // Ja passou pela tentativa de costura: so atualiza quem precisa do alerta.
+            await registrarMudanca(sb, f.fundo, d.mudanca, d.ultimaCota);
+            mudancas.push({ fundo: f.nome, ...d.mudanca, etapa: "alerta" });
+          } else {
+            // Primeira vez: a costura le o informe em volta da troca, entao roda numa chamada
+            // propria, com CPU cheia. Sem sucessao inequivoca, ela mesma registra o alerta.
+            const { error } = await sb.rpc("disparar_funcao", {
+              nome: "carga-cotas-fundo",
+              corpo: { fundoId: f.id, costura: "avancar", extras },
+            });
+            if (error) throw error;
+            mudancas.push({ fundo: f.nome, ...d.mudanca, etapa: "costura agendada" });
+          }
         } catch (e) {
           mudancas.push({ fundo: f.nome, erro: String((e as Error).message ?? e) });
         }

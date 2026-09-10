@@ -8,6 +8,7 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
+import { verificarMudancaDoFundo } from "@/lib/verificarMudancaDoFundo";
 import { calcularRendaFixaDiario, opcoesPagamentoDoProduto, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaSeNecessario, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
@@ -1407,6 +1408,7 @@ Confirma que o preço está certo?`,
           await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
           applyDataReferencia();
           toast.success("Movimentação de fundo atualizada com sucesso!");
+          verificarMudancaDoFundo(fundoId);
           onFechar?.();
           return;
         }
@@ -1433,6 +1435,7 @@ Confirma que o preço está certo?`,
         await fullSyncAfterMovimentacao(inserida.id, categoriaId, user.id, dataReferenciaISO);
         applyDataReferencia();
         toast.success("Movimentação de fundo cadastrada com sucesso!");
+        verificarMudancaDoFundo(fundoId);
         resetForm();
         setFundoId("");
         setQtdCotas("");
