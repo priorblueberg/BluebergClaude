@@ -8,6 +8,7 @@
  */
 import { supabase } from "@/integrations/supabase/client";
 import { posicaoNaData, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
+import { diasDeCotizacao } from "@/lib/fundoEngine";
 
 const TABELA_COTACAO: Record<string, string> = {
   USD: "historico_dolar",
@@ -191,6 +192,10 @@ export async function saldosNaData(
  * Data em que a operacao cotiza: D+n dias uteis a partir da data da operacao, com o n vindo do
  * cadastro do fundo (aplicacao e resgate podem ter prazos diferentes).
  *
+ * Na pratica o n e zero: o catalogo nao tem o prazo de nenhum fundo, e a decisao do Daniel em
+ * 10/09/2026 foi a boleta pedir a data de COTIZACAO do extrato, como o Gorila. O D+n fica aqui para
+ * quando houver fonte para os prazos.
+ *
  * Mora aqui porque a boleta precisa dela duas vezes: para MOSTRAR a cota que sera usada e para
  * GRAVAR a quantidade. Enquanto o calculo estava so no submit, a tela nao tinha como exibir a
  * cota certa - e duas copias da regra divergiriam na primeira mudanca.
@@ -211,9 +216,7 @@ export async function dataCotizacaoFundo(
     .eq("id", fundoId)
     .maybeSingle();
 
-  const dias = tipoMovimentacao === "Aplicação"
-    ? ((cfg as any)?.dias_cotizacao_aplicacao ?? 0)
-    : ((cfg as any)?.dias_cotizacao_resgate ?? 0);
+  const dias = diasDeCotizacao(tipoMovimentacao, cfg as any);
 
   const { data: diasCal } = await supabase
     .from("calendario_dias_uteis")

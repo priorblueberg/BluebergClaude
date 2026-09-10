@@ -2101,7 +2101,7 @@ Confirma que o preço está certo?`,
         {showFundoFields && (ehSaida || !!fundoId) && (
           <>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Data da Transação" required>
+              <Field label="Data de Cotização" required>
                 <Input type="date" value={data} min={limitesData.min} max={limitesData.max} onChange={(e) => setData(e.target.value)} />
               </Field>
               <Field label="Valor" required>
@@ -2215,7 +2215,7 @@ Confirma que o preço está certo?`,
                 : ""}
               {ehComeCotas
                 ? "No come-cotas quem calcula as cotas canceladas é o administrador, a partir do ganho de cada cotista, então a quantidade vem do extrato. Entra como saída de cotas: reduz a posição sem dinheiro saindo da carteira."
-                : "A cota vem da série da CVM e a quantidade é valor ÷ cota, por isso os dois campos são somente leitura."}
+                : "Use a data de cotização do extrato, não a data do pedido: a cota usada é a desse dia. A cota vem da série da CVM e a quantidade é valor ÷ cota, por isso os dois campos são somente leitura."}
             </p>
 
             <div className="flex gap-3">

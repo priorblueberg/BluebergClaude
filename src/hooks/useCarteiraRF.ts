@@ -173,22 +173,55 @@ export function useCarteiraRF() {
         }));
 
       if (rfProducts.length === 0 || !cartData || !cartData.data_inicio || !cartData.data_calculo || cartData.status === "Não Iniciada") {
-        setCarteiraInfo(cartData ? {
+        const infoSemRF: CarteiraInfo | null = cartData ? {
           nome_carteira: cartData.nome_carteira,
           status: cartData.status,
           data_inicio: cartData.data_inicio,
           data_calculo: cartData.data_calculo,
           data_limite: cartData.data_limite,
           resgate_total: cartData.resgate_total,
-        } : null);
+        } : null;
+
+        // Sem renda fixa o hook continua entregando CDI e Ibovespa. A lamina de Investimentos tira
+        // os benchmarks daqui, e num portfolio so de fundos o CDI aparecia zerado (10/09/2026).
+        let cdiSemRF: CdiRecord[] = [];
+        let ibovSemRF: { data: string; pontos: number }[] = [];
+        if (dataInicioMercado) {
+          const [calMercado, cdiMercado, ibovMercado] = await Promise.all([
+            fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+              .gte("data", dataInicioMercado).lte("data", dataReferenciaISO).order("data").range(de, ate)),
+            fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
+              .gte("data", dataInicioMercado).lte("data", dataReferenciaISO).order("data").range(de, ate)),
+            fetchAllRows((de, ate) => supabase.from("historico_ibovespa").select("data, pontos")
+              .gte("data", dataInicioMercado).lte("data", dataReferenciaISO).order("data").range(de, ate)),
+          ]);
+          const diaUtil = new Map<string, boolean>(calMercado.map((c: any) => [c.data, c.dia_util]));
+          cdiSemRF = cdiMercado.map((c: any) => ({
+            data: c.data, taxa_anual: Number(c.taxa_anual), dia_util: diaUtil.get(c.data) ?? false,
+          }));
+          ibovSemRF = ibovMercado.map((r: any) => ({ data: r.data, pontos: Number(r.pontos) }));
+        }
+
+        setCarteiraInfo(infoSemRF);
         setCarteiraRows([]);
         setAllProductRows([]);
-        setCdiRecords([]);
-        setIbovespaData([]);
+        setCdiRecords(cdiSemRF);
+        setIbovespaData(ibovSemRF);
         setProductList([]);
         setCalendario([]);
         setLoading(false);
         _cartRFCachedVersion = appliedVersion;
+        // O cache acompanha a versao: sem isto, quem montasse o hook depois (voltar para a lamina)
+        // herdava as series de um carregamento anterior e o CDI sumia de novo.
+        _cartRFCached = {
+          carteiraInfo: infoSemRF, carteiraRows: [], allProductRows: [], cdiRecords: cdiSemRF,
+          ibovespaData: ibovSemRF, productList: [], calendario: [],
+          allCustodiaForCategoria: (custodiaData || []).filter((r: any) => !r.resgate_total).map((r: any) => ({
+            categoria_nome: r.categorias?.nome || "Outros",
+            valor_investido: Number(r.valor_investido),
+            custodia_no_dia: r.custodia_no_dia != null ? Number(r.custodia_no_dia) : null,
+          })),
+        };
         return;
       }
 

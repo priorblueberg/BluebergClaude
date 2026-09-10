@@ -13,6 +13,21 @@ import type { DailyRow } from "./rendaFixaEngine";
 
 const TIPOS_ENTRADA = new Set(["Aplicação", "Aplicacao", "Aplicação Inicial", "Aplicacao Inicial"]);
 const TIPOS_SAIDA = new Set(["Resgate", "Resgate Total", "Come-Cotas", "Come-cotas", "Resgate no Vencimento"]);
+
+/**
+ * Prazo de cotizacao, em dias uteis, que vale para o tipo de movimentacao. Toda entrada usa o prazo
+ * de aplicacao, "Aplicação Inicial" inclusive: a boleta comparava so com "Aplicação", e a primeira
+ * aplicacao de uma posicao caia no prazo de RESGATE. Come-cotas nao tem prazo: e retencao na cota
+ * do proprio dia.
+ */
+export function diasDeCotizacao(
+  tipo: string,
+  prazos: { dias_cotizacao_aplicacao?: number | null; dias_cotizacao_resgate?: number | null } | null | undefined,
+): number {
+  if (tipo === "Come-Cotas" || tipo === "Come-cotas") return 0;
+  if (TIPOS_ENTRADA.has(tipo)) return prazos?.dias_cotizacao_aplicacao ?? 0;
+  return prazos?.dias_cotizacao_resgate ?? 0;
+}
 /**
  * O fundo da posicao mudou (CVM 175: troca de CNPJ, virou subclasse, absorcao). Nao e entrada
  * nem saida de dinheiro: a posicao passa a ter `qtd_cotas` cotas do fundo novo, com o MESMO
