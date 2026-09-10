@@ -389,3 +389,68 @@ describe("serie que ja vem ajustada pelo evento", () => {
     expect(ultimo(rows).valorPosicao).toBeCloseTo(120 * 20, 6);
   });
 });
+
+describe("calendario da bolsa x calendario do banco", () => {
+  // De 02/01/2023 a 09/09/2026 sao 926 dias uteis bancarios contra 921 pregoes. As 5 diferencas
+  // sao vespera de Natal e ultimo dia do ano: o banco abre e a bolsa nao.
+  //
+  // 22/12/2023 e sexta com pregao; 29/12/2023 e sexta SEM pregao, mas dia util no banco.
+  const calendarioComFeriadoDeBolsa = [
+    { data: "2023-12-21", dia_util: true, pregao: true },
+    { data: "2023-12-22", dia_util: true, pregao: true },
+    { data: "2023-12-25", dia_util: false, pregao: false },
+    { data: "2023-12-26", dia_util: true, pregao: true },
+    { data: "2023-12-29", dia_util: true, pregao: false },
+  ];
+
+  const rodarCom = (calendario: { data: string; dia_util: boolean; pregao?: boolean }[]) =>
+    calcularAcoesDiario({
+      dataInicio: "2023-12-21", dataCalculo: "2023-12-29",
+      calendario,
+      precos: precos([
+        ["2023-12-21", 10], ["2023-12-22", 10], ["2023-12-26", 10],
+      ]),
+      movimentacoes: [{ data: "2023-12-21", tipo: "Compra", valor: 1000, quantidade: 100 }],
+      proventos: [], eventos: [],
+    });
+
+  it("dia sem pregao NAO e marcado como preco estimado", () => {
+    const rows = rodarCom(calendarioComFeriadoDeBolsa);
+    const dia29 = rows.find((r) => r.data === "2023-12-29")!;
+    expect(dia29.precoEstimado).toBe(false);
+  });
+
+  it("mas continua sendo dia util para o benchmark, que acumula CDI", () => {
+    const rows = rodarCom(calendarioComFeriadoDeBolsa);
+    const dia29 = rows.find((r) => r.data === "2023-12-29")!;
+    // O CDI e publicado em dia de banco. Trocar este campo pelo pregao pararia a serie do
+    // benchmark em 5 dias por periodo - trocaria um erro por outro maior.
+    expect(dia29.diaUtil).toBe(true);
+  });
+
+  it("sem a marca de pregao, cai no calendario bancario - comportamento anterior", () => {
+    const semPregao = calendarioComFeriadoDeBolsa.map((c) => ({ data: c.data, dia_util: c.dia_util }));
+    const rows = rodarCom(semPregao);
+    const dia29 = rows.find((r) => r.data === "2023-12-29")!;
+    expect(dia29.precoEstimado).toBe(true);
+  });
+
+  it("dia util de banco E de bolsa sem cotacao continua sendo estimado", () => {
+    // 26/12 tem pregao no calendario mas nao ha preco na serie: aqui falta dado de verdade.
+    const rows = calcularAcoesDiario({
+      dataInicio: "2023-12-21", dataCalculo: "2023-12-26",
+      calendario: calendarioComFeriadoDeBolsa,
+      precos: precos([["2023-12-21", 10], ["2023-12-22", 10]]),
+      movimentacoes: [{ data: "2023-12-21", tipo: "Compra", valor: 1000, quantidade: 100 }],
+      proventos: [], eventos: [],
+    });
+    expect(rows.find((r) => r.data === "2023-12-26")!.precoEstimado).toBe(true);
+  });
+
+  it("o dia sem pregao nao inventa variacao: repete o preco e rende zero", () => {
+    const rows = rodarCom(calendarioComFeriadoDeBolsa);
+    const dia29 = rows.find((r) => r.data === "2023-12-29")!;
+    expect(dia29.preco).toBeCloseTo(10, 8);
+    expect(dia29.rentDiariaPct).toBeCloseTo(0, 10);
+  });
+});

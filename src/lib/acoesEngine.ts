@@ -80,7 +80,22 @@ export interface EventoCorporativo {
 export interface AcoesEngineInput {
   dataInicio: string;
   dataCalculo: string;
-  calendario: { data: string; dia_util: boolean }[];
+  /**
+   * `dia_util` é o calendário BANCÁRIO; `pregao` é o da bolsa. Eles divergem: de 02/01/2023 a
+   * 09/09/2026 são 926 dias úteis contra 921 pregões, e as 5 diferenças são véspera de Natal e
+   * último dia do ano, quando o banco abre e a bolsa não.
+   *
+   * A distinção importa em lugares opostos, e é por isso que os dois campos viajam juntos:
+   *
+   * - Para saber se falta cotação, vale o PREGÃO. Sem ele, um 24/12 sem negociação era rotulado
+   *   como "dia útil sem cotação divulgada", sugerindo dado faltando onde não havia o que
+   *   divulgar.
+   * - Para o BENCHMARK, vale o dia útil bancário: o CDI é publicado em dia de banco, e usar o
+   *   calendário da bolsa faria a série parar naqueles mesmos 5 dias.
+   *
+   * Sem `pregao`, cai no bancário - que é o comportamento anterior.
+   */
+  calendario: { data: string; dia_util: boolean; pregao?: boolean }[];
   /** Fechamento por pregão, no valor NOMINAL do dia. */
   precos: { data: string; fechamento: number }[];
   movimentacoes: AcaoMovimentacao[];
@@ -199,7 +214,17 @@ export function calcularAcoesDiario(input: AcoesEngineInput): AcaoDailyRow[] {
       };
     });
 
-  const base = { dataInicio: input.dataInicio, dataCalculo: input.dataCalculo, calendario: input.calendario,
+  // O motor de fundo decide `cotaEstimada` pelo `dia_util` que recebe. Para ações o critério é o
+  // PREGÃO, então é ele que vai no lugar - e o dia útil bancário é reposto na saída, mais abaixo,
+  // porque é dele que o benchmark depende.
+  const calendarioDePregao = input.calendario.map((c) => ({
+    data: c.data,
+    dia_util: c.pregao ?? c.dia_util,
+  }));
+  const diaUtilBancario = new Map(input.calendario.map((c) => [c.data, c.dia_util]));
+
+  const base = { dataInicio: input.dataInicio, dataCalculo: input.dataCalculo,
+                 calendario: calendarioDePregao,
                  movimentacoes: movs, fundo: { dias_cotizacao_aplicacao: 0, dias_cotizacao_resgate: 0 } };
 
   // 1a passada: preço puro. Dá posição, quantidade, custo médio e valor investido.
@@ -266,7 +291,9 @@ export function calcularAcoesDiario(input: AcoesEngineInput): AcaoDailyRow[] {
 
     return {
       data: r.data,
-      diaUtil: r.diaUtil,
+      // Bancário de propósito: o benchmark acumula CDI por este campo, e o CDI é publicado em
+      // dia de banco. `r.diaUtil` aqui já é o pregão, que serviu para marcar `precoEstimado`.
+      diaUtil: diaUtilBancario.get(r.data) ?? r.diaUtil,
       preco: precoNominal.get(r.data) ?? r.valorCota * fatorDoPreco(r.data, eventos),
       precoEstimado: r.cotaEstimada,
       compras: r.aplicacoes,

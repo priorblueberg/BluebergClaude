@@ -250,14 +250,17 @@ export type Database = {
         Row: {
           data: string
           dia_util: boolean
+          pregao: boolean
         }
         Insert: {
           data: string
           dia_util?: boolean
+          pregao?: boolean
         }
         Update: {
           data?: string
           dia_util?: boolean
+          pregao?: boolean
         }
         Relationships: []
       }

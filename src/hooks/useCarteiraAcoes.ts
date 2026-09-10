@@ -117,7 +117,7 @@ export function useCarteiraAcoes() {
       const codigos = posicoesCustodia.map((p) => p.codigo_custodia);
 
       const [calRaw, movRaw, cdiRaw, precoRaw, provRaw, evtRaw] = await Promise.all([
-        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
+        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util, pregao")
           .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("movimentacoes")
           .select("codigo_custodia, data, tipo_movimentacao, valor, quantidade, custos_operacao")
@@ -134,7 +134,12 @@ export function useCarteiraAcoes() {
           .in("ticker", tickers).order("data_ex").range(de, ate)),
       ]);
 
-      const calendario = calRaw.map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
+      // Os dois calendarios viajam juntos. O motor de acoes usa `pregao` para saber se falta
+      // cotacao; o benchmark usa `dia_util`, porque o CDI e publicado em dia de banco. Ver o
+      // comentario do tipo em `acoesEngine`.
+      const calendario = calRaw.map((c: any) => ({
+        data: c.data, dia_util: c.dia_util, pregao: c.pregao ?? c.dia_util,
+      }));
       const calMap = new Map<string, boolean>(calendario.map((c) => [c.data, c.dia_util]));
       const mergedCdi: CdiRecord[] = cdiRaw.map((c: any) => ({
         data: c.data, taxa_anual: Number(c.taxa_anual), dia_util: calMap.get(c.data) ?? false,
