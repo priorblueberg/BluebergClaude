@@ -134,6 +134,23 @@ export async function cotaFundo(fundoId: string, dataISO: string) {
 }
 
 /**
+ * Primeira e ultima cota da serie do fundo e o inicio dele no cadastro: a janela do calendario da
+ * boleta de fundo (`janelaDoCalendarioDoFundo`). Lida assim que o fundo e escolhido, antes da data.
+ */
+export async function limitesDaSerieDoFundo(fundoId: string) {
+  const [{ data: aPrimeira }, { data: aUltima }, { data: cadastro }] = await Promise.all([
+    supabase.from("cotas_fundos").select("data").eq("fundo_id", fundoId).order("data").limit(1).maybeSingle(),
+    supabase.from("cotas_fundos").select("data").eq("fundo_id", fundoId).order("data", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("cadastro_de_fundos").select("data_inicio").eq("id", fundoId).maybeSingle(),
+  ]);
+  return {
+    primeiraCota: (aPrimeira as { data: string } | null)?.data ?? null,
+    ultimaCota: (aUltima as { data: string } | null)?.data ?? null,
+    inicioDoFundo: (cadastro as { data_inicio: string | null } | null)?.data_inicio ?? null,
+  };
+}
+
+/**
  * Saldo por fundo (ou por moeda) que o usuario tinha NA DATA. So entra quem tem saldo
  * positivo, entao a presenca da chave ja responde "estava em custodia?" e o valor responde
  * "quanto?" - a boleta precisa das duas coisas: filtrar a lista e mostrar o disponivel.

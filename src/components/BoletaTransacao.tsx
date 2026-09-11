@@ -28,7 +28,9 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData, fundosComPosicao } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData, fundosComPosicao, limitesDaSerieDoFundo } from "@/lib/validacaoBoleta";
+import { janelaDoCalendarioDoFundo, mensagemDaDataDoFundo, type LimitesDoFundo } from "@/lib/validacaoDataFundo";
+import CampoDataCalendario from "@/components/CampoDataCalendario";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -440,6 +442,32 @@ export default function BoletaTransacao({
       vivo = false;
     };
   }, [isFundo, fundoId, data, tipoMovimentacao]);
+
+  // Janela do calendario do fundo: primeira e ultima cota, lidas assim que o fundo e escolhido.
+  // `undefined` enquanto carrega; a mensagem embaixo da data espera.
+  const [limitesFundo, setLimitesFundo] = useState<LimitesDoFundo | null | undefined>(undefined);
+  useEffect(() => {
+    if (!isFundo || !fundoId) {
+      setLimitesFundo(undefined);
+      return;
+    }
+    let vivo = true;
+    setLimitesFundo(undefined);
+    limitesDaSerieDoFundo(fundoId).then((l) => { if (vivo) setLimitesFundo(l); });
+    return () => { vivo = false; };
+  }, [isFundo, fundoId]);
+
+  // Feriado so o calendario do banco sabe; fim de semana a validacao ja pega sem ir ao banco.
+  const [diaUtilFundo, setDiaUtilFundo] = useState<{ data: string; util: boolean } | null>(null);
+  useEffect(() => {
+    if (!isFundo || !data) {
+      setDiaUtilFundo(null);
+      return;
+    }
+    let vivo = true;
+    ehDiaUtil(data).then((util) => { if (vivo) setDiaUtilFundo({ data, util }); });
+    return () => { vivo = false; };
+  }, [isFundo, data]);
 
   // Load produtos when categoria changes (for Aplicação flow)
   useEffect(() => {
@@ -929,6 +957,22 @@ export default function BoletaTransacao({
     return chave ? comSaldo.get(chave) ?? null : null;
   }, [ehSaida, comSaldo, isFundo, fundoId, moedaSel]);
 
+  /**
+   * Validacao da data de fundo, embaixo do campo (pedido do Daniel, 11/09/2026): data invalida, antes
+   * da constituicao do fundo, cota ainda nao divulgada e, na saida, sem custodia na data. Substituiu o
+   * alerta vermelho e os avisos que so apareciam ao cadastrar.
+   */
+  const janelaFundo = janelaDoCalendarioDoFundo(limitesFundo ?? null, DATA_MINIMA_CARTEIRA);
+  const mensagemDataFundo = !isFundo ? null : mensagemDaDataDoFundo({
+    data,
+    piso: DATA_MINIMA_CARTEIRA,
+    limites: limitesFundo,
+    diaUtil: diaUtilFundo && diaUtilFundo.data === data ? diaUtilFundo.util : undefined,
+    cotaNaData: cotaOp && cotaOp.dataCotizacao === data ? cotaOp.cota : undefined,
+    ehSaida,
+    saldoNaData: !ehSaida || comSaldo == null ? undefined : saldoDaSaida,
+  });
+
   // Mudou a data numa venda de moeda: a moeda escolhida pode nao existir na nova data, entao sai.
   // O fundo fica: ele vem antes da data, e a falta de saldo aparece abaixo do valor.
   useEffect(() => {
@@ -1332,13 +1376,14 @@ Confirma que o preço está certo?`,
       }
       setValidationErrors(new Set());
 
-      const foraJanela = foraDaJanela(data, maxDataISO);
-      if (foraJanela) {
-        toast.error(foraJanela);
+      // A data errada ja se explica embaixo do campo. Aqui so impede a gravacao, sem aviso vermelho.
+      if (mensagemDataFundo) {
+        setValidationErrors(new Set(["data"]));
         return;
       }
       if (!(await ehDiaUtil(data))) {
-        toast.error("A data da operação deve ser um dia útil.");
+        setDiaUtilFundo({ data, util: false });
+        setValidationErrors(new Set(["data"]));
         return;
       }
 
@@ -1812,16 +1857,6 @@ Confirma que o preço está certo?`,
       : 0;
   const ehVendaComPrecoProprio = Math.abs(diferencaParaCurva) >= 0.01;
 
-  /**
-   * O fundo comecou DEPOIS da data da operacao.
-   *
-   * Quando a primeira cota que temos coincide com o inicio do fundo na CVM, a serie nao esta
-   * curta: o fundo e que nao existia. Carregar nao traria nada, e a correcao e na data.
-   */
-  const fundoNovoDemais = !!cotaOp?.inicioDoFundo && !!cotaOp?.primeira
-    && cotaOp.primeira <= cotaOp.inicioDoFundo
-    && cotaOp.dataCotizacao < cotaOp.primeira;
-
   /*
    * O campo do fundo muda de lugar conforme a movimentacao.
    *
@@ -2107,7 +2142,14 @@ Confirma que o preço está certo?`,
           <>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Data de Cotização" required>
-                <Input type="date" value={data} min={limitesData.min} max={limitesData.max} onChange={(e) => setData(e.target.value)} />
+                {/* Calendario de 02/01/2023 (ou da primeira cota) ate a ultima cota, sem fim de semana. */}
+                <CampoDataCalendario
+                  value={data}
+                  onChange={setData}
+                  min={janelaFundo.min}
+                  max={janelaFundo.max}
+                  mensagem={mensagemDataFundo}
+                />
               </Field>
               <Field label="Valor" required>
                 <Input
@@ -2122,11 +2164,9 @@ Confirma que o preço está certo?`,
                   <p className="mt-1 text-xs text-muted-foreground">
                     {comSaldo == null
                       ? "Calculando o saldo..."
-                      : saldoDaSaida == null
-                        ? `Sem saldo deste fundo em ${fmtData(data)}.`
-                        : cotaOp?.cota != null
-                          ? `Saldo disponível em ${fmtData(data)}: ${fmtBrlDisplay(saldoDaSaida * cotaOp.cota)}`
-                          : ""}
+                      : saldoDaSaida != null && cotaOp?.cota != null
+                        ? `Saldo disponível em ${fmtData(data)}: ${fmtBrlDisplay(saldoDaSaida * cotaOp.cota)}`
+                        : ""}
                   </p>
                 )}
               </Field>
@@ -2171,30 +2211,6 @@ Confirma que o preço está certo?`,
                 />
               </Field>
             </div>
-
-            {/*
-              A validacao de cota fica, e ela esta certa: sem cota nao ha como derivar a
-              quantidade, e gravar a operacao deixaria a posicao errada. O que mudou e a SAIDA.
-              Antes as tres situacoes chegavam aqui como a mesma frase, e a de fundo novo virava
-              beco sem saida: o fundo aparecia na lista e nao aceitava lancamento, sem dizer o
-              que fazer a respeito.
-            */}
-            {cotaOp && cotaOp.cota == null && (
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertDescription className="text-xs space-y-2">
-                  <p>
-                    {cotaOp.ultima
-                      ? `O fundo ainda não divulgou a cota de ${fmtData(cotaOp.dataCotizacao)}. A última é de ${fmtData(cotaOp.ultima.data)}. Como a quantidade de cotas vem de valor ÷ cota, a operação só pode ser lançada quando a cota sair.`
-                      : fundoNovoDemais
-                        ? `Este fundo começou em ${fmtData(cotaOp.inicioDoFundo!)}, depois de ${fmtData(cotaOp.dataCotizacao)}. Não há cota nessa data porque o fundo ainda não existia: ajuste a data da operação.`
-                        : cotaOp.primeira
-                          ? `A série deste fundo na ferramenta começa em ${fmtData(cotaOp.primeira)}, depois de ${fmtData(cotaOp.dataCotizacao)}, mas o fundo já existia antes disso.`
-                          : "A série de cotas deste fundo ainda não foi carregada."}
-                  </p>
-                </AlertDescription>
-              </Alert>
-            )}
 
             <div className="flex gap-3">
               <Button onClick={handleSubmit} disabled={submitting}>
