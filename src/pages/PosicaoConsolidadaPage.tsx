@@ -8,7 +8,8 @@ import { calcularRendaFixaDiario, permiteVendaNoSecundario, type DailyRow } from
 import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
-import { buildCdiSeries } from "@/lib/cdiCalculations";
+import { buildCdiSeries, type CdiRecord } from "@/lib/cdiCalculations";
+import type { PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
 import { calcularCambioDiario, cambioRowsToDailyRows } from "@/lib/cambioEngine";
@@ -86,6 +87,8 @@ interface PosicaoRow {
   ativo: boolean;
   product: CustodiaProduct;
   dados?: DadosDaPosicao;
+  /** Rentabilidade acumulada (%) por dia util, na mesma medida de `rentabilidade`. Vai para o grafico. */
+  serie?: { data: string; pct: number }[];
 }
 
 // Module-level cache to persist across navigation
@@ -94,6 +97,7 @@ let _cachedRows: PosicaoRow[] = [];
 let _cachedRentabilidade = 0;
 let _cachedAlocacaoInst: GrupoMetricas[] = [];
 let _cachedCdiTotal: number | null = null;
+let _cachedCdiRecords: CdiRecord[] = [];
 
 export default function PosicaoConsolidadaPage() {
   const { user } = useAuth();
@@ -102,6 +106,8 @@ export default function PosicaoConsolidadaPage() {
   const [carteiraRentabilidade, setCarteiraRentabilidade] = useState(_cachedRentabilidade);
   const [alocacaoInstituicao, setAlocacaoInstituicao] = useState<GrupoMetricas[]>(_cachedAlocacaoInst);
   const [cdiAcumuladoTotal, setCdiAcumuladoTotal] = useState<number | null>(_cachedCdiTotal);
+  /** CDI do periodo, guardado para o % do CDI e o grafico do detalhe da posicao. */
+  const [cdiRecordsPosicao, setCdiRecordsPosicao] = useState<CdiRecord[]>(_cachedCdiRecords);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -205,6 +211,8 @@ export default function PosicaoConsolidadaPage() {
       }));
       const cdiMap = new Map<string, number>();
       for (const c of cdiRecords) cdiMap.set(c.data, c.taxa_anual);
+      setCdiRecordsPosicao(cdiRecords);
+      _cachedCdiRecords = cdiRecords;
       const selicRecords = ((selicRes as any).data || []).map((s: any) => ({ data: s.data, taxa_anual: Number(s.taxa_anual) }));
       const trRecords = ((trRes as any).data || []).map((t: any) => ({ data: t.data, taxa_mensal: Number(t.taxa_mensal) }));
       const poupancaRendimentoRecords = ((poupRendRes as any).data || []).map((r: any) => ({ data: r.data, rendimento_mensal: Number(r.rendimento_mensal) }));
@@ -325,6 +333,10 @@ export default function PosicaoConsolidadaPage() {
             ativo: !encerrado,
             product,
             dados: { ...SEM_DADOS, valorInvestido: lastRow.valorInvestido },
+            serie: engineRows.filter((r) => r.diaUtil).map((r) => ({
+              data: r.data,
+              pct: ((usePeriodic ? r.rentAcumulada2 : r.rentabilidadeAcumuladaPct) ?? 0) * 100,
+            })),
           });
         }
       }
@@ -364,6 +376,7 @@ export default function PosicaoConsolidadaPage() {
               ativo: !isEncerrado,
               product,
               dados: { ...SEM_DADOS, valorInvestido: product.valor_investido },
+              serie: engineRows.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaPct * 100 })),
             });
           }
         }
@@ -406,6 +419,7 @@ export default function PosicaoConsolidadaPage() {
             ult.saldoCotas,
             ultimoAte(cotasSerie.map((c) => ({ data: c.data, valor: c.valor_cota })), fim),
           ),
+          serie: rowsFundo.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaMWPct * 100 })),
         });
       }
 
@@ -443,6 +457,7 @@ export default function PosicaoConsolidadaPage() {
             ult.saldoMoeda,
             ultimoAte((cotacoesPorMoeda.get(product.moeda!) || []).map((c) => ({ data: c.data, valor: c.cotacao })), fim),
           ),
+          serie: rowsMoeda.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaMWPct * 100 })),
         });
       }
 
@@ -531,11 +546,6 @@ export default function PosicaoConsolidadaPage() {
   const totalValor = useMemo(() => filteredRows.reduce((s, r) => s + r.valorAtualizado, 0), [filteredRows]);
   const totalGanho = useMemo(() => filteredRows.reduce((s, r) => s + r.ganhoFinanceiro, 0), [filteredRows]);
 
-  /** Inicio do portfolio: o "Período de análise" do detalhe começa aqui, como no Gorila. */
-  const inicioCarteira = useMemo(
-    () => rows.reduce((min, r) => (r.product.data_inicio && r.product.data_inicio < min ? r.product.data_inicio : min), dataReferenciaISO),
-    [rows, dataReferenciaISO],
-  );
 
   // Boleta helpers
   function openBoleta(row: PosicaoRow, tipo: "Aplicação" | "Resgate", e?: React.MouseEvent) {
@@ -589,6 +599,20 @@ export default function PosicaoConsolidadaPage() {
       .filter((x, i, todos) => !!x && todos.indexOf(x) === i)
       .join(" / ");
     const dados = row.dados ?? SEM_DADOS;
+
+    // Janela da posicao: do inicio dela ate a data de referencia, ou ate o resgate total.
+    const inicio = p.data_inicio;
+    const fim = p.resgate_total && p.resgate_total < dataReferenciaISO ? p.resgate_total : dataReferenciaISO;
+    const cdiSerie = buildCdiSeries(cdiRecordsPosicao, inicio, fim);
+    const pontos = new Map<string, PontoRentabilidade>();
+    for (const c of cdiSerie) pontos.set(c.data, { data: c.data, cdi_acumulado: c.cdi_acumulado });
+    for (const s of row.serie ?? []) {
+      if (s.data < inicio || s.data > fim) continue;
+      const ponto = pontos.get(s.data) ?? { data: s.data };
+      ponto.posicao_acumulado = Number(s.pct.toFixed(4));
+      pontos.set(s.data, ponto);
+    }
+
     return {
       tipo,
       nome: row.nome,
@@ -596,15 +620,14 @@ export default function PosicaoConsolidadaPage() {
       classificacao,
       custodiante: row.custodiante,
       valorAtualizado: row.valorAtualizado,
+      valorInvestido: dados.valorInvestido ?? p.valor_investido,
       pnl: row.ganhoFinanceiro,
       rentabilidadePct: row.rentabilidade,
-      inicioPeriodo: inicioCarteira,
-      fimPeriodo: dataReferenciaISO,
-      valorInvestido: dados.valorInvestido ?? p.valor_investido,
-      quantidade: dados.quantidade,
+      cdiAcumuladoPct: cdiSerie.length ? cdiSerie[cdiSerie.length - 1].cdi_acumulado : null,
       ultimoPreco: dados.ultimoPreco,
       dataUltimoPreco: dados.dataUltimoPreco,
       precoMedio: dados.precoMedio,
+      grafico: [...pontos.values()].sort((a, b) => a.data.localeCompare(b.data)),
       dataInicio: p.data_inicio,
       codigoCustodia: p.codigo_custodia,
       categoriaId: p.categoria_id,
@@ -616,6 +639,12 @@ export default function PosicaoConsolidadaPage() {
       vencimento: p.vencimento,
     };
   }
+
+  const detalheData = useMemo(
+    () => (detalheRow ? getDetalheData(detalheRow) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [detalheRow, cdiRecordsPosicao, dataReferenciaISO],
+  );
 
   return (
     <div className="space-y-6">
@@ -732,19 +761,14 @@ export default function PosicaoConsolidadaPage() {
       )}
 
       {/* Detalhe */}
-      {detalheRow && user && (
+      {detalheRow && detalheData && user && (
         <PosicaoDetalheDialog
           open={!!detalheRow}
           onClose={() => setDetalheRow(null)}
-          data={getDetalheData(detalheRow)}
+          data={detalheData}
           userId={user.id}
           dataReferenciaISO={dataReferenciaISO}
           onDataChanged={() => { calculate(); applyDataReferencia(); }}
-          onBoletar={(tipo) => {
-            const linha = detalheRow;
-            setDetalheRow(null);
-            openBoleta(linha, tipo);
-          }}
         />
       )}
 

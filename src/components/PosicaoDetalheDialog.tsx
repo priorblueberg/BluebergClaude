@@ -1,13 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useBoleta } from "@/contexts/BoletaContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ChevronDown, Pencil, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -15,6 +12,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { HistoricoRentabilidadeChart, type PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
 import {
   textoConfirmacaoDeExclusao, AVISO_EXCLUSAO_ATIVO, AVISO_EXCLUSAO_MOVIMENTACAO, TITULO_CONFIRMACAO_DE_EXCLUSAO,
@@ -26,14 +24,12 @@ interface Movimentacao {
   data: string;
   tipo_movimentacao: string;
   valor: number;
-  quantidade: number | null;
   preco_unitario: number | null;
-  custos_operacao: number | null;
   origem: string;
 }
 
 export interface PosicaoDetalheData {
-  /** Decide o que entra em "Dados da posição": preço e quantidade so existem em fundo e moeda. */
+  /** Decide a linha de informacoes: preco da cota so existe em fundo e moeda. */
   tipo: "fundo" | "moeda" | "renda_fixa" | "outro";
   nome: string;
   /** CNPJ da classe, nos fundos. Vai junto do nome, como no Gorila. */
@@ -42,17 +38,17 @@ export interface PosicaoDetalheData {
   classificacao: string;
   custodiante: string;
   valorAtualizado: number;
+  valorInvestido: number | null;
   pnl: number;
   /** Ja em %, a mesma da linha da Posição Consolidada. */
   rentabilidadePct: number;
-  /** Periodo de analise: do inicio do portfolio ate a data de referencia. */
-  inicioPeriodo: string;
-  fimPeriodo: string;
-  valorInvestido: number | null;
-  quantidade: number | null;
+  /** CDI acumulado na janela da posicao, em %. Base do "% do CDI". */
+  cdiAcumuladoPct: number | null;
   ultimoPreco: number | null;
   dataUltimoPreco: string | null;
   precoMedio: number | null;
+  /** Rentabilidade acumulada da posicao e do CDI, dia util a dia util. */
+  grafico: PontoRentabilidade[];
   dataInicio: string;
   codigoCustodia: string;
   categoriaId: string;
@@ -71,46 +67,40 @@ interface Props {
   userId: string;
   dataReferenciaISO: string;
   onDataChanged: () => void;
-  /** "Boletar" da gaveta: abre a boleta da propria posicao. */
-  onBoletar?: (tipo: "Aplicação" | "Resgate") => void;
 }
 
-const TIPOS_SAIDA = new Set(["Resgate", "Resgate Total", "Resgate no Vencimento", "Come-Cotas", "Come-cotas", "Venda"]);
-
-const ORIGEM: Record<string, string> = {
-  manual: "Manual",
-  importacao: "Importação",
-  automatico: "Automático",
-  mudanca_de_fundo: "Mudança de fundo",
-  teste: "Teste",
-};
+/** A gaveta abre abaixo do header do site (h-14), que continua visivel e clicavel. */
+const ALTURA_DO_HEADER = 56;
+const LINHAS_POR_PAGINA = 10;
 
 const fmtBrl = (v: number | null) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 /** Preco com as casas que a fonte tem, ate 8: "R$ 14,8072282". */
 const fmtPreco = (v: number | null) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 8 });
-const fmtQtd = (v: number | null) =>
-  v == null ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 8 });
 const fmtData = (d: string | null) => (d ? new Date(d + "T12:00:00").toLocaleDateString("pt-BR") : "—");
-const fmtPct = (v: number) => `${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+const fmtPct = (v: number | null) =>
+  v == null ? "—" : `${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 const corDoSinal = (v: number) => (v > 0 ? "text-emerald-700" : v < 0 ? "text-destructive" : "text-foreground");
 
 /**
- * Detalhes da posição, na gaveta lateral, no modelo do Gorila (conferido na tela dele em
- * 11/09/2026): cabeçalho com o período de análise e "Boletar"; classificação, nome e custodiante;
- * valor atualizado, P&L e rentabilidade; dados da posição; histórico de movimentações.
+ * Detalhes da posição, na gaveta lateral, a partir do modelo do Gorila e com os ajustes do Daniel
+ * (11/09/2026): sem cabeçalho proprio (o do site ja tem a data e o cadastro de transação), box com
+ * patrimônio, valor investido, ganho, rentabilidade e % do CDI; último preço e preço médio numa
+ * linha; gráfico de rentabilidade; histórico paginado.
  *
- * A TIR que o Gorila mostra ao lado da TWR fica para depois (decisão do Daniel).
+ * A TIR que o Gorila mostra fica para depois (decisão do Daniel).
  */
-export default function PosicaoDetalheDialog({ open, onClose, data, userId, dataReferenciaISO, onDataChanged, onBoletar }: Props) {
+export default function PosicaoDetalheDialog({ open, onClose, data, userId, dataReferenciaISO, onDataChanged }: Props) {
   const { abrirBoleta } = useBoleta();
   const [movs, setMovs] = useState<Movimentacao[]>([]);
   const [loading, setLoading] = useState(false);
   const [deleteId, setDeleteId] = useState<Movimentacao | null>(null);
+  const [pagina, setPagina] = useState(0);
 
   useEffect(() => {
     if (open) fetchMovs();
+    setPagina(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, data.codigoCustodia]);
 
@@ -118,7 +108,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
     setLoading(true);
     const { data: rows } = await supabase
       .from("movimentacoes")
-      .select("id, data, tipo_movimentacao, valor, quantidade, preco_unitario, custos_operacao, origem, created_at")
+      .select("id, data, tipo_movimentacao, valor, preco_unitario, origem, created_at")
       .eq("codigo_custodia", data.codigoCustodia)
       .eq("user_id", userId)
       .order("data", { ascending: false })
@@ -169,42 +159,37 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
   }
 
   const temPreco = data.tipo === "fundo" || data.tipo === "moeda";
+  const sobreCdi = data.cdiAcumuladoPct != null && data.cdiAcumuladoPct > 0
+    ? (data.rentabilidadePct / data.cdiAcumuladoPct) * 100
+    : null;
+
+  const totalPaginas = Math.max(1, Math.ceil(movs.length / LINHAS_POR_PAGINA));
+  const paginaAtual = Math.min(pagina, totalPaginas - 1);
+  const movsDaPagina = useMemo(
+    () => movs.slice(paginaAtual * LINHAS_POR_PAGINA, (paginaAtual + 1) * LINHAS_POR_PAGINA),
+    [movs, paginaAtual],
+  );
 
   return (
     <>
-      <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <Sheet open={open} onOpenChange={(o) => !o && onClose()} modal={false}>
         <SheetContent
           side="right"
-          overlayClassName="bg-black/10"
           className="w-full sm:max-w-[960px] p-0 overflow-y-auto"
+          style={{ top: ALTURA_DO_HEADER, height: `calc(100% - ${ALTURA_DO_HEADER}px)` }}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          onInteractOutside={(e) => {
+            // O header fica utilizavel com a gaveta aberta, e a confirmacao de exclusao e dela.
+            const alvo = e.target as HTMLElement | null;
+            if (alvo?.closest("header") || alvo?.closest("[role=alertdialog]")) e.preventDefault();
+          }}
         >
-          {/* Cabecalho */}
-          <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-4 pr-14">
-            <div className="min-w-0">
-              <SheetTitle className="text-sm font-bold">Detalhes da posição</SheetTitle>
-              <SheetDescription className="text-xs">
-                Período de análise: Desde o início ({fmtData(data.inicioPeriodo)} - {fmtData(data.fimPeriodo)})
-              </SheetDescription>
-            </div>
-            {onBoletar && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" className="h-8 gap-1 shrink-0">
-                    Boletar
-                    <ChevronDown size={14} strokeWidth={1.5} />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem className="text-xs cursor-pointer" onClick={() => onBoletar("Aplicação")}>Aplicação</DropdownMenuItem>
-                  <DropdownMenuItem className="text-xs cursor-pointer" onClick={() => onBoletar("Resgate")}>Resgate</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
+          <SheetTitle className="sr-only">Detalhes da posição</SheetTitle>
+          <SheetDescription className="sr-only">{data.nome}</SheetDescription>
 
-          <div className="space-y-6 px-6 py-5">
+          <div className="space-y-5 px-6 py-5">
             {/* Identificacao */}
-            <div className="space-y-1">
+            <div className="space-y-1 pr-8">
               <p className="text-xs text-muted-foreground">{data.classificacao}</p>
               <h4 className="text-base font-bold text-foreground break-words">
                 {data.nome}
@@ -214,41 +199,47 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
             </div>
 
             {/* Resultado */}
-            <div className="grid grid-cols-3 gap-4 rounded-lg border border-border p-4">
-              <Metrica rotulo="Valor atualizado" valor={fmtBrl(data.valorAtualizado)} />
-              <Metrica rotulo="P&L" valor={fmtBrl(data.pnl)} cor={corDoSinal(data.pnl)} />
-              <Metrica rotulo="Rentabilidade (TWR)" valor={fmtPct(data.rentabilidadePct)} cor={corDoSinal(data.rentabilidadePct)} />
+            <div className="grid grid-cols-5 gap-4 rounded-lg border border-border p-4">
+              <Metrica rotulo="Patrimônio" valor={fmtBrl(data.valorAtualizado)} />
+              <Metrica rotulo="Valor Investido" valor={fmtBrl(data.valorInvestido)} />
+              <Metrica rotulo="Ganho Financeiro" valor={fmtBrl(data.pnl)} cor={corDoSinal(data.pnl)} />
+              <Metrica rotulo="Rentabilidade" valor={fmtPct(data.rentabilidadePct)} cor={corDoSinal(data.rentabilidadePct)} />
+              <Metrica rotulo="% do CDI" valor={fmtPct(sobreCdi)} />
             </div>
 
-            {/* Dados da posicao */}
-            <section className="space-y-2">
-              <h6 className="text-sm font-bold text-foreground">Dados da posição</h6>
-              <div className="grid grid-cols-2 gap-x-8">
-                <Linha rotulo="Valor investido" valor={fmtBrl(data.valorInvestido)} />
-                {temPreco ? (
-                  <>
-                    <Linha
-                      rotulo={`Último preço no período${data.dataUltimoPreco ? ` (${fmtData(data.dataUltimoPreco)})` : ""}`}
-                      valor={fmtPreco(data.ultimoPreco)}
-                    />
-                    <Linha rotulo="Quantidade total" valor={fmtQtd(data.quantidade)} />
-                    <Linha rotulo="Preço médio" valor={fmtPreco(data.precoMedio)} />
-                  </>
-                ) : (
-                  <>
-                    <Linha rotulo="Emissor" valor={data.emissor ?? "—"} />
-                    <Linha rotulo="Indexador" valor={data.indexador ?? "—"} />
-                    <Linha
-                      rotulo="Taxa"
-                      valor={data.taxa != null ? `${data.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "—"}
-                    />
-                    <Linha rotulo="Modalidade" valor={data.modalidade ?? "—"} />
-                    <Linha rotulo="Pagamento" valor={data.pagamento ?? "—"} />
-                    <Linha rotulo="Vencimento" valor={fmtData(data.vencimento)} />
-                  </>
-                )}
-              </div>
-            </section>
+            {/* Linha de informacoes */}
+            <div className="flex flex-wrap gap-x-8 gap-y-1 px-1 text-sm">
+              {temPreco ? (
+                <>
+                  <Info
+                    rotulo={`Último preço do período${data.dataUltimoPreco ? ` (${fmtData(data.dataUltimoPreco)})` : ""}`}
+                    valor={fmtPreco(data.ultimoPreco)}
+                  />
+                  <Info rotulo="Preço Médio" valor={fmtPreco(data.precoMedio)} />
+                </>
+              ) : (
+                <>
+                  <Info rotulo="Emissor" valor={data.emissor ?? "—"} />
+                  <Info rotulo="Indexador" valor={data.indexador ?? "—"} />
+                  <Info
+                    rotulo="Taxa"
+                    valor={data.taxa != null ? `${data.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "—"}
+                  />
+                  <Info rotulo="Pagamento" valor={data.pagamento ?? "—"} />
+                  <Info rotulo="Vencimento" valor={fmtData(data.vencimento)} />
+                </>
+              )}
+            </div>
+
+            {/* Grafico */}
+            {data.grafico.length > 1 && (
+              <HistoricoRentabilidadeChart
+                dados={data.grafico}
+                chaveSerie="posicao_acumulado"
+                rotuloSerie="Posição"
+                temIbovespa={false}
+              />
+            )}
 
             {/* Historico */}
             <section className="space-y-2">
@@ -258,58 +249,77 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
               ) : movs.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-4">Nenhuma movimentação.</p>
               ) : (
-                <div className="rounded-md border border-border overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs">Data</TableHead>
-                        <TableHead className="text-xs">Tipo</TableHead>
-                        <TableHead className="text-xs text-right">Quantidade</TableHead>
-                        <TableHead className="text-xs text-right">Preço</TableHead>
-                        <TableHead className="text-xs text-right">Custos Op.</TableHead>
-                        <TableHead className="text-xs text-right">Valor total</TableHead>
-                        <TableHead className="text-xs">Origem</TableHead>
-                        <TableHead className="w-[72px]" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {movs.map((m) => {
-                        const isAuto = m.origem === "automatico";
-                        const saida = TIPOS_SAIDA.has(m.tipo_movimentacao);
-                        const qtd = m.quantidade != null ? (saida ? -Math.abs(m.quantidade) : m.quantidade) : null;
-                        return (
-                          <TableRow key={m.id}>
-                            <TableCell className="whitespace-nowrap text-sm">{fmtData(m.data)}</TableCell>
-                            <TableCell className="whitespace-nowrap text-sm">{m.tipo_movimentacao}</TableCell>
-                            <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtQtd(qtd)}</TableCell>
-                            <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtPreco(m.preco_unitario)}</TableCell>
-                            <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtBrl(m.custos_operacao ?? 0)}</TableCell>
-                            <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtBrl(m.valor)}</TableCell>
-                            <TableCell className="whitespace-nowrap text-sm">{ORIGEM[m.origem] ?? m.origem}</TableCell>
-                            <TableCell className="text-right">
-                              {!isAuto && (
-                                <div className="flex justify-end gap-1">
-                                  <Button
-                                    variant="ghost" size="icon" className="h-7 w-7" title="Editar"
-                                    onClick={() => { onClose(); abrirBoleta(m.id); }}
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Excluir"
-                                    onClick={() => setDeleteId(m)}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
+                <>
+                  <div className="rounded-md border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Data</TableHead>
+                          <TableHead className="text-xs">Tipo</TableHead>
+                          <TableHead className="text-xs text-right">Valor da Cota</TableHead>
+                          <TableHead className="text-xs text-right">Valor total</TableHead>
+                          <TableHead className="w-[72px]" />
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {movsDaPagina.map((m) => {
+                          const isAuto = m.origem === "automatico";
+                          return (
+                            <TableRow key={m.id}>
+                              <TableCell className="whitespace-nowrap text-sm">{fmtData(m.data)}</TableCell>
+                              <TableCell className="whitespace-nowrap text-sm">{m.tipo_movimentacao}</TableCell>
+                              <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtPreco(m.preco_unitario)}</TableCell>
+                              <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtBrl(m.valor)}</TableCell>
+                              <TableCell className="text-right">
+                                {!isAuto && (
+                                  <div className="flex justify-end gap-1">
+                                    <Button
+                                      variant="ghost" size="icon" className="h-7 w-7" title="Editar"
+                                      onClick={() => { onClose(); abrirBoleta(m.id); }}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Excluir"
+                                      onClick={() => setDeleteId(m)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {totalPaginas > 1 && (
+                    <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                      <span>
+                        {paginaAtual * LINHAS_POR_PAGINA + 1}-{Math.min((paginaAtual + 1) * LINHAS_POR_PAGINA, movs.length)} de {movs.length}
+                      </span>
+                      <Button
+                        variant="outline" size="icon" className="h-7 w-7"
+                        disabled={paginaAtual === 0}
+                        onClick={() => setPagina(paginaAtual - 1)}
+                        title="Página anterior"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </Button>
+                      <span>Página {paginaAtual + 1} de {totalPaginas}</span>
+                      <Button
+                        variant="outline" size="icon" className="h-7 w-7"
+                        disabled={paginaAtual >= totalPaginas - 1}
+                        onClick={() => setPagina(paginaAtual + 1)}
+                        title="Próxima página"
+                      >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  )}
+                </>
               )}
             </section>
           </div>
@@ -344,16 +354,16 @@ function Metrica({ rotulo, valor, cor = "text-foreground" }: { rotulo: string; v
   return (
     <div className="min-w-0">
       <p className="text-xs text-muted-foreground">{rotulo}</p>
-      <p className={`mt-1 text-xl font-bold tabular-nums ${cor}`}>{valor}</p>
+      <p className={`mt-1 text-lg font-bold tabular-nums ${cor}`}>{valor}</p>
     </div>
   );
 }
 
-function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
+function Info({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-border/60 py-2 text-sm">
-      <span className="text-foreground">{rotulo}</span>
-      <span className="font-medium text-foreground tabular-nums text-right">{valor}</span>
-    </div>
+    <p>
+      <span className="text-muted-foreground">{rotulo}: </span>
+      <span className="font-semibold text-foreground tabular-nums">{valor}</span>
+    </p>
   );
 }
