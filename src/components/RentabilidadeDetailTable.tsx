@@ -22,6 +22,8 @@ export interface DetailRow {
   rentAcumulado: number | null;
   cdiNoAno: number | null;
   cdiAcumulado: number | null;
+  /** CDI acumulado com todas as casas, para o % do CDI dos cards (arredondar antes de dividir erra). */
+  cdiAcumuladoExato?: number | null;
   ganhoNoAno: number | null;
   ganhoAcumulado: number | null;
   /** % do CDI de cada mês e do ano calculado com todas as casas, quando quem monta a tabela tem. */

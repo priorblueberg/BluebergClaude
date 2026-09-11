@@ -72,7 +72,8 @@ export function calcularAlocacaoPorGrupo({
     for (let i = rows.length - 1; i >= 0; i--) {
       if (rows[i].data <= dataReferencia) {
         patrimonio = rows[i].liquido;
-        rentabilidade = parseFloat((rows[i].rentAcumuladaPct * 100).toFixed(2));
+        // Com todas as casas: o % do CDI sai desta conta, e quem exibe arredonda.
+        rentabilidade = rows[i].rentAcumuladaPct * 100;
         ganho = rows[i].rentAcumuladaRS;
         break;
       }

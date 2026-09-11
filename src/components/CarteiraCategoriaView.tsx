@@ -118,13 +118,15 @@ export default function CarteiraCategoriaView({
     for (let i = carteiraRows.length - 1; i >= 0; i--) {
       if (carteiraRows[i].data <= dataReferenciaISO) {
         patrimonio = carteiraRows[i].liquido;
-        rent = parseFloat((carteiraRows[i].rentAcumuladaPct * 100).toFixed(2));
+        rent = carteiraRows[i].rentAcumuladaPct * 100;
         ganho = carteiraRows[i].rentAcumuladaRS;
         break;
       }
     }
     const cdiAcum = detailRows.length > 0 ? detailRows[0].cdiAcumulado : null;
-    const sobreCdi = rent != null && cdiAcum ? (rent / cdiAcum) * 100 : null;
+    // % do CDI com todas as casas; arredondar antes de dividir erra a segunda casa (102,36 x 102,37).
+    const cdiExato = detailRows.length > 0 ? (detailRows[0].cdiAcumuladoExato ?? cdiAcum) : null;
+    const sobreCdi = rent != null && cdiExato ? (rent / cdiExato) * 100 : null;
     return { patrimonio, ganho, rent, cdiAcum, sobreCdi };
   }, [carteiraRows, detailRows, dataReferenciaISO]);
 

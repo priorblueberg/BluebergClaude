@@ -216,6 +216,7 @@ export function buildDetailRowsFromEngine(
       rentAcumulado: parseFloat(((rentFatorAcum - 1) * 100).toFixed(2)),
       cdiNoAno: cdiYearly.has(year) ? parseFloat(cdiYearly.get(year)!.toFixed(2)) : null,
       cdiAcumulado: parseFloat(((cdiFatorAcumRows - 1) * 100).toFixed(2)),
+      cdiAcumuladoExato: (cdiFatorAcumRows - 1) * 100,
       ganhoNoAno: ganhoAnualMap.has(year) ? parseFloat(ganhoAnualMap.get(year)!.toFixed(2)) : null,
       ganhoAcumulado: ganhoAcum,
     });

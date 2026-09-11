@@ -175,15 +175,17 @@ export const CarteiraVisaoGeral = () => {
     for (let i = carteiraRows.length - 1; i >= 0; i--) {
       if (carteiraRows[i].data <= dataReferenciaISO) {
         patrimonio = carteiraRows[i].liquido;
-        rent = parseFloat((carteiraRows[i].rentAcumuladaPct * 100).toFixed(2));
+        rent = carteiraRows[i].rentAcumuladaPct * 100;
         ganho = carteiraRows[i].rentAcumuladaRS;
         break;
       }
     }
 
     const cdiAcum = detailRows.length > 0 ? detailRows[0].cdiAcumulado : null;
-    const sobreCdi = rent != null && cdiAcum != null && cdiAcum !== 0
-      ? (rent / cdiAcum) * 100
+    // % do CDI com todas as casas; arredondar antes de dividir erra a segunda casa.
+    const cdiExato = detailRows.length > 0 ? (detailRows[0].cdiAcumuladoExato ?? cdiAcum) : null;
+    const sobreCdi = rent != null && cdiExato != null && cdiExato !== 0
+      ? (rent / cdiExato) * 100
       : null;
 
     return { patrimonio, ganho, rent, cdiAcum, sobreCdi };
