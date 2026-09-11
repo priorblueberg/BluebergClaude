@@ -65,12 +65,12 @@ const CLASSES = {
   },
   compacto: {
     cartao: "rounded-md border border-border bg-card p-4",
-    mes: "text-[11px] text-center whitespace-nowrap w-[58px] min-w-[58px] px-1",
-    mesCab: "text-[11px] font-semibold text-center whitespace-nowrap w-[58px] min-w-[58px] px-1",
-    destaque: "text-[11px] text-center font-semibold whitespace-nowrap bg-muted/50 w-[72px] min-w-[72px] px-1",
-    destaqueCab: "text-[11px] font-semibold text-center whitespace-nowrap bg-muted/50 w-[72px] min-w-[72px] px-1",
-    rotulo: "text-[11px] font-medium whitespace-nowrap w-[104px] min-w-[104px] px-2",
-    rotuloCab: "text-[11px] font-semibold whitespace-nowrap w-[104px] min-w-[104px] px-2",
+    mes: "text-[11px] text-center whitespace-nowrap w-[56px] min-w-[56px] px-1",
+    mesCab: "text-[11px] font-semibold text-center whitespace-nowrap w-[56px] min-w-[56px] px-1",
+    destaque: "text-[11px] text-center font-semibold whitespace-nowrap bg-muted/50 w-[68px] min-w-[68px] px-1",
+    destaqueCab: "text-[11px] font-semibold text-center whitespace-nowrap bg-muted/50 w-[68px] min-w-[68px] px-1",
+    rotulo: "text-[11px] font-medium whitespace-nowrap w-[96px] min-w-[96px] px-2",
+    rotuloCab: "text-[11px] font-semibold whitespace-nowrap w-[96px] min-w-[96px] px-2",
   },
 };
 
