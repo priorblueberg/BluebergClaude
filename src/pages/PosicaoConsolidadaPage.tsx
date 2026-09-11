@@ -12,6 +12,9 @@ import { buildCdiSeries, buildIbovespaSeries, type CdiRecord } from "@/lib/cdiCa
 import { useIbovespa } from "@/hooks/useIbovespa";
 import type { PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
+import {
+  SEM_DADOS, calcularPosicaoDeFundo, dadosDaPosicao, montarGraficoETabela, ultimoAte, type DadosDaPosicao,
+} from "@/lib/detalheDaPosicao";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
 import { calcularCambioDiario, cambioRowsToDailyRows } from "@/lib/cambioEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -66,18 +69,6 @@ interface CustodiaProduct {
   fundoCnpj?: string | null;
 }
 
-/** O que a gaveta de detalhes mostra em "Dados da posição", na data de referência. */
-interface DadosDaPosicao {
-  valorInvestido: number | null;
-  quantidade: number | null;
-  ultimoPreco: number | null;
-  dataUltimoPreco: string | null;
-  precoMedio: number | null;
-}
-
-const SEM_DADOS: DadosDaPosicao = {
-  valorInvestido: null, quantidade: null, ultimoPreco: null, dataUltimoPreco: null, precoMedio: null,
-};
 
 interface PosicaoRow {
   nome: string;
@@ -385,43 +376,31 @@ export default function PosicaoConsolidadaPage() {
       }
 
       for (const product of fundoProducts) {
-        const fim = product.resgate_total && product.resgate_total < dataReferenciaISO
-          ? product.resgate_total
-          : dataReferenciaISO;
-        const cotasSerie = cotasDoProduto(product);
-        const rowsFundo = calcularFundoDiario({
+        // A mesma conta da gaveta aberta na lâmina de Fundos: `calcularPosicaoDeFundo`.
+        const calculo = calcularPosicaoDeFundo({
           dataInicio: product.data_inicio,
-          dataCalculo: fim,
-          calendario,
-          cotas: cotasSerie,
+          resgateTotal: product.resgate_total,
+          fundoId: product.fundo_id!,
+          diasCotizacaoAplicacao: product.fundoCfg?.dias_cotizacao_aplicacao,
+          diasCotizacaoResgate: product.fundoCfg?.dias_cotizacao_resgate,
           movimentacoes: movFundoByCodigo.get(product.codigo_custodia) || [],
-          fundo: {
-            dias_cotizacao_aplicacao: product.fundoCfg?.dias_cotizacao_aplicacao ?? 0,
-            dias_cotizacao_resgate: product.fundoCfg?.dias_cotizacao_resgate ?? 0,
-          },
+          movimentosDaPosicao: trechoMovByCodigo.get(product.codigo_custodia) || [],
+          cotasPorFundo,
+          calendario,
+          dataReferenciaISO,
         });
-        if (rowsFundo.length === 0) continue;
-        allProductRows.push(fundoRowsToDailyRows(rowsFundo));
-
-        const ult = rowsFundo[rowsFundo.length - 1];
-        const { encerrada: encerrado, valorExibido } = situacaoDaPosicao(
-          ult.saldoBruto,
-          !!product.resgate_total && product.resgate_total <= dataReferenciaISO,
-        );
+        if (!calculo) continue;
+        allProductRows.push(fundoRowsToDailyRows(calculo.linhas));
         posicaoRows.push({
           nome: product.nome || product.produto_nome,
-          valorAtualizado: valorExibido,
-          ganhoFinanceiro: ult.ganhoAcumulado,
-          rentabilidade: ult.rentabilidadeAcumuladaMWPct * 100,
+          valorAtualizado: calculo.valorAtualizado,
+          ganhoFinanceiro: calculo.ganho,
+          rentabilidade: calculo.rentabilidadePct,
           custodiante: product.instituicao_nome,
-          ativo: !encerrado,
+          ativo: !calculo.encerrada,
           product,
-          dados: dadosDaPosicao(
-            ult.valorInvestido,
-            ult.saldoCotas,
-            ultimoAte(cotasSerie.map((c) => ({ data: c.data, valor: c.valor_cota })), fim),
-          ),
-          serie: rowsFundo.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaMWPct * 100 })),
+          dados: calculo.dados,
+          serie: calculo.serie,
         });
       }
 
@@ -601,21 +580,9 @@ export default function PosicaoConsolidadaPage() {
     // Janela da posicao: do inicio dela ate a data de referencia, ou ate o resgate total.
     const inicio = p.data_inicio;
     const fim = p.resgate_total && p.resgate_total < dataReferenciaISO ? p.resgate_total : dataReferenciaISO;
-    const cdiSerie = buildCdiSeries(cdiRecordsPosicao, inicio, fim);
-    const pontos = new Map<string, PontoRentabilidade>();
-    for (const c of cdiSerie) pontos.set(c.data, { data: c.data, cdi_acumulado: c.cdi_acumulado });
-    for (const s of row.serie ?? []) {
-      if (s.data < inicio || s.data > fim) continue;
-      const ponto = pontos.get(s.data) ?? { data: s.data };
-      ponto.posicao_acumulado = Number(s.pct.toFixed(4));
-      pontos.set(s.data, ponto);
-    }
-    // Ibovespa rebaseado no primeiro pregao da janela da posicao.
-    for (const [dia, valor] of buildIbovespaSeries(ibovespa, inicio, fim)) {
-      const ponto = pontos.get(dia) ?? { data: dia };
-      ponto.ibovespa_acumulado = valor;
-      pontos.set(dia, ponto);
-    }
+    const { grafico, cdiAcumuladoPct, tabela } = montarGraficoETabela({
+      serie: row.serie ?? [], cdiRecords: cdiRecordsPosicao, ibovespa, inicio, fim,
+    });
 
     return {
       tipo,
@@ -624,10 +591,11 @@ export default function PosicaoConsolidadaPage() {
       valorAtualizado: row.valorAtualizado,
       pnl: row.ganhoFinanceiro,
       rentabilidadePct: row.rentabilidade,
-      cdiAcumuladoPct: cdiSerie.length ? cdiSerie[cdiSerie.length - 1].cdi_acumulado : null,
+      cdiAcumuladoPct,
       ultimoPreco: dados.ultimoPreco,
       dataUltimoPreco: dados.dataUltimoPreco,
-      grafico: [...pontos.values()].sort((a, b) => a.data.localeCompare(b.data)),
+      grafico,
+      tabelaRentabilidade: tabela,
       dataInicio: p.data_inicio,
       codigoCustodia: p.codigo_custodia,
       categoriaId: p.categoria_id,
@@ -810,29 +778,4 @@ function getDateMinus(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() - days);
   return d.toISOString().slice(0, 10);
-}
-
-/** Ultimo preco publicado ate a data. */
-function ultimoAte(serie: { data: string; valor: number }[], ate: string): { data: string; valor: number } | null {
-  let achado: { data: string; valor: number } | null = null;
-  for (const ponto of serie) {
-    if (ponto.data <= ate && (!achado || ponto.data > achado.data)) achado = ponto;
-  }
-  return achado;
-}
-
-/** Dados da posicao com preco e quantidade. Preco medio como no Gorila: valor investido / quantidade. */
-function dadosDaPosicao(
-  valorInvestido: number,
-  quantidade: number,
-  ultimo: { data: string; valor: number } | null,
-): DadosDaPosicao {
-  const temSaldo = quantidade > 1e-8;
-  return {
-    valorInvestido,
-    quantidade: temSaldo ? quantidade : 0,
-    ultimoPreco: ultimo?.valor ?? null,
-    dataUltimoPreco: ultimo?.data ?? null,
-    precoMedio: temSaldo ? valorInvestido / quantidade : null,
-  };
 }

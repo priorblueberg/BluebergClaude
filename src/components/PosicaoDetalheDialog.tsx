@@ -13,6 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { HistoricoRentabilidadeChart, type PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
+import RentabilidadeDetailTable, { type DetailRow } from "@/components/RentabilidadeDetailTable";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
 import {
   textoConfirmacaoDeExclusao, AVISO_EXCLUSAO_ATIVO, AVISO_EXCLUSAO_MOVIMENTACAO, TITULO_CONFIRMACAO_DE_EXCLUSAO,
@@ -29,7 +30,7 @@ interface Movimentacao {
 }
 
 export interface PosicaoDetalheData {
-  /** Decide a linha abaixo do nome: preco da cota so existe em fundo e moeda. */
+  /** Decide a linha abaixo do nome: cota so existe em fundo, cotacao em moeda. */
   tipo: "fundo" | "moeda" | "renda_fixa" | "outro";
   nome: string;
   /** CNPJ da classe, nos fundos. Vai junto do nome, como no Gorila. */
@@ -42,8 +43,10 @@ export interface PosicaoDetalheData {
   cdiAcumuladoPct: number | null;
   ultimoPreco: number | null;
   dataUltimoPreco: string | null;
-  /** Rentabilidade acumulada da posicao e do CDI, dia util a dia util. */
+  /** Rentabilidade acumulada da posicao, do CDI e do Ibovespa, dia util a dia util. */
   grafico: PontoRentabilidade[];
+  /** Rentabilidade e CDI por mes e por ano, na janela da posicao. */
+  tabelaRentabilidade: DetailRow[];
   dataInicio: string;
   codigoCustodia: string;
   categoriaId: string;
@@ -79,9 +82,12 @@ const fmtPct = (v: number | null) =>
 
 /**
  * Detalhes da posição, na gaveta lateral (modelo do Gorila, com os ajustes do Daniel em
- * 11/09/2026): começa pelo nome do ativo com o último preço logo abaixo; o resumo é o MESMO do
- * dashboard (Patrimônio, Ganho Financeiro, Rentabilidade, CDI Acumulado, % do CDI); gráfico de
- * rentabilidade; histórico paginado.
+ * 11/09/2026): começa pelo nome do ativo com a última cota divulgada logo abaixo; o resumo é o
+ * MESMO do dashboard (Patrimônio, Ganho Financeiro, Rentabilidade, CDI Acumulado, % do CDI);
+ * gráfico de rentabilidade; tabela de rentabilidade por ano; histórico paginado.
+ *
+ * Abre na Posição Consolidada e na lâmina de Fundos de Investimentos, com os mesmos números
+ * (a conta está em `lib/detalheDaPosicao`).
  *
  * A gaveta não fecha ao clicar fora dela: com ela aberta o cliente usa o header (cadastrar
  * transação, trocar a data), e a boleta, o calendário e os menus do header abrem em camadas
@@ -161,6 +167,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
   }
 
   const temPreco = data.tipo === "fundo" || data.tipo === "moeda";
+  const rotuloDoPreco = data.tipo === "moeda" ? "Última cotação divulgada" : "Última cota divulgada";
   const sobreCdi = data.cdiAcumuladoPct != null && data.cdiAcumuladoPct > 0
     ? (data.rentabilidadePct / data.cdiAcumuladoPct) * 100
     : null;
@@ -195,7 +202,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
           <SheetDescription className="sr-only">{data.nome}</SheetDescription>
 
           <div className="space-y-5 px-6 py-5">
-            {/* Nome e ultimo preco */}
+            {/* Nome e ultima cota */}
             <div className="space-y-1 pr-8">
               <h4 className="text-base font-bold text-foreground break-words">
                 {data.nome}
@@ -204,7 +211,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
               <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
                 {temPreco ? (
                   <Info
-                    rotulo={`Último preço do período${data.dataUltimoPreco ? ` (${fmtData(data.dataUltimoPreco)})` : ""}`}
+                    rotulo={`${rotuloDoPreco}${data.dataUltimoPreco ? ` (${fmtData(data.dataUltimoPreco)})` : ""}`}
                     valor={fmtPreco(data.ultimoPreco)}
                   />
                 ) : (
@@ -238,7 +245,16 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                 dados={data.grafico}
                 chaveSerie="posicao_acumulado"
                 rotuloSerie="Posição"
-                seletor="legenda"
+              />
+            )}
+
+            {/* Tabela de rentabilidade: o mesmo elemento das lâminas, só com Rentabilidade e % do CDI */}
+            {data.tabelaRentabilidade.length > 0 && (
+              <RentabilidadeDetailTable
+                rows={data.tabelaRentabilidade}
+                tituloLabel={data.nome}
+                linhas={["rentabilidade", "percentualCdi"]}
+                compacto
               />
             )}
 

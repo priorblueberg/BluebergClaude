@@ -26,6 +26,11 @@ export interface DetailRow {
   ganhoAcumulado: number | null;
 }
 
+/** Linhas que a tabela sabe mostrar. "% do CDI" sai da rentabilidade e do CDI de cada período. */
+export type LinhaDaTabela = "patrimonio" | "ganho" | "rentabilidade" | "cdi" | "percentualCdi";
+
+const LINHAS_PADRAO: LinhaDaTabela[] = ["patrimonio", "ganho", "rentabilidade", "cdi"];
+
 function fmtPct(v: number | null): string {
   if (v === null) return "—";
   return v.toFixed(2) + "%";
@@ -36,21 +41,55 @@ function fmtBrl(v: number | null): string {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+const percentualDoCdi = (rent: number | null, cdi: number | null) =>
+  rent != null && cdi != null && cdi > 0 ? (rent / cdi) * 100 : null;
+
 interface Props {
   rows: DetailRow[];
   tituloLabel: string;
+  /** Padrão: Patrimônio, Ganho Financeiro, Rentabilidade e CDI, como nas lâminas de carteira. */
+  linhas?: LinhaDaTabela[];
+  /** Colunas estreitas, para caber na gaveta de detalhes da posição sem rolagem. */
+  compacto?: boolean;
 }
 
-const monthCellClass = "text-xs text-center whitespace-nowrap w-[80px] min-w-[80px]";
-const monthHeadClass = "text-xs font-semibold text-center whitespace-nowrap w-[80px] min-w-[80px]";
-const highlightCellClass = "text-xs text-center font-semibold whitespace-nowrap bg-muted/50 w-[100px] min-w-[100px]";
-const highlightHeadClass = "text-xs font-semibold text-center whitespace-nowrap bg-muted/50 w-[100px] min-w-[100px]";
-const labelCellClass = "text-xs font-medium whitespace-nowrap w-[130px] min-w-[130px]";
-const labelHeadClass = "text-xs font-semibold whitespace-nowrap w-[130px] min-w-[130px]";
+const CLASSES = {
+  normal: {
+    cartao: "rounded-md border border-border bg-card p-6",
+    mes: "text-xs text-center whitespace-nowrap w-[80px] min-w-[80px]",
+    mesCab: "text-xs font-semibold text-center whitespace-nowrap w-[80px] min-w-[80px]",
+    destaque: "text-xs text-center font-semibold whitespace-nowrap bg-muted/50 w-[100px] min-w-[100px]",
+    destaqueCab: "text-xs font-semibold text-center whitespace-nowrap bg-muted/50 w-[100px] min-w-[100px]",
+    rotulo: "text-xs font-medium whitespace-nowrap w-[130px] min-w-[130px]",
+    rotuloCab: "text-xs font-semibold whitespace-nowrap w-[130px] min-w-[130px]",
+  },
+  compacto: {
+    cartao: "rounded-md border border-border bg-card p-4",
+    mes: "text-[11px] text-center whitespace-nowrap w-[58px] min-w-[58px] px-1",
+    mesCab: "text-[11px] font-semibold text-center whitespace-nowrap w-[58px] min-w-[58px] px-1",
+    destaque: "text-[11px] text-center font-semibold whitespace-nowrap bg-muted/50 w-[72px] min-w-[72px] px-1",
+    destaqueCab: "text-[11px] font-semibold text-center whitespace-nowrap bg-muted/50 w-[72px] min-w-[72px] px-1",
+    rotulo: "text-[11px] font-medium whitespace-nowrap w-[104px] min-w-[104px] px-2",
+    rotuloCab: "text-[11px] font-semibold whitespace-nowrap w-[104px] min-w-[104px] px-2",
+  },
+};
 
-function YearTable({ row }: { row: DetailRow }) {
+function YearTable({ row, linhas, compacto }: { row: DetailRow; linhas: LinhaDaTabela[]; compacto: boolean }) {
+  const k = compacto ? CLASSES.compacto : CLASSES.normal;
+  const conteudo: Record<LinhaDaTabela, { rotulo: string; meses: string[]; ano: string }> = {
+    patrimonio: { rotulo: "Patrimônio", meses: row.patrimonioMonths.map(fmtBrl), ano: "—" },
+    ganho: { rotulo: "Ganho Financeiro", meses: row.ganhoFinanceiroMonths.map(fmtBrl), ano: fmtBrl(row.ganhoNoAno) },
+    rentabilidade: { rotulo: "Rentabilidade", meses: row.rentabilidadeMonths.map(fmtPct), ano: fmtPct(row.rentNoAno) },
+    cdi: { rotulo: "CDI", meses: row.cdiMonths.map(fmtPct), ano: fmtPct(row.cdiNoAno) },
+    percentualCdi: {
+      rotulo: "% do CDI",
+      meses: row.rentabilidadeMonths.map((r, i) => fmtPct(percentualDoCdi(r, row.cdiMonths[i]))),
+      ano: fmtPct(percentualDoCdi(row.rentNoAno, row.cdiNoAno)),
+    },
+  };
+
   return (
-    <div className="rounded-md border border-border bg-card p-6">
+    <div className={k.cartao}>
       <h2 className="text-sm font-semibold text-foreground">
         Tabela de Rentabilidade — {row.year}
       </h2>
@@ -61,42 +100,23 @@ function YearTable({ row }: { row: DetailRow }) {
         <Table className="table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className={labelHeadClass}>{row.year}</TableHead>
+              <TableHead className={k.rotuloCab}>{row.year}</TableHead>
               {MONTH_HEADERS.map((m) => (
-                <TableHead key={m} className={monthHeadClass}>{m}</TableHead>
+                <TableHead key={m} className={k.mesCab}>{m}</TableHead>
               ))}
-              <TableHead className={highlightHeadClass}>No Ano</TableHead>
+              <TableHead className={k.destaqueCab}>No Ano</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            <TableRow>
-              <TableCell className={labelCellClass}>Patrimônio</TableCell>
-              {row.patrimonioMonths.map((v, i) => (
-                <TableCell key={i} className={monthCellClass}>{fmtBrl(v)}</TableCell>
-              ))}
-              <TableCell className={highlightCellClass}>—</TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell className={labelCellClass}>Ganho Financeiro</TableCell>
-              {row.ganhoFinanceiroMonths.map((v, i) => (
-                <TableCell key={i} className={monthCellClass}>{fmtBrl(v)}</TableCell>
-              ))}
-              <TableCell className={highlightCellClass}>{fmtBrl(row.ganhoNoAno)}</TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell className={labelCellClass}>Rentabilidade</TableCell>
-              {row.rentabilidadeMonths.map((v, i) => (
-                <TableCell key={i} className={monthCellClass}>{fmtPct(v)}</TableCell>
-              ))}
-              <TableCell className={highlightCellClass}>{fmtPct(row.rentNoAno)}</TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell className={labelCellClass}>CDI</TableCell>
-              {row.cdiMonths.map((v, i) => (
-                <TableCell key={i} className={monthCellClass}>{fmtPct(v)}</TableCell>
-              ))}
-              <TableCell className={highlightCellClass}>{fmtPct(row.cdiNoAno)}</TableCell>
-            </TableRow>
+            {linhas.map((linha) => (
+              <TableRow key={linha}>
+                <TableCell className={k.rotulo}>{conteudo[linha].rotulo}</TableCell>
+                {conteudo[linha].meses.map((v, i) => (
+                  <TableCell key={i} className={k.mes}>{v}</TableCell>
+                ))}
+                <TableCell className={k.destaque}>{conteudo[linha].ano}</TableCell>
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
       </div>
@@ -104,7 +124,7 @@ function YearTable({ row }: { row: DetailRow }) {
   );
 }
 
-export default function RentabilidadeDetailTable({ rows, tituloLabel }: Props) {
+export default function RentabilidadeDetailTable({ rows, linhas = LINHAS_PADRAO, compacto = false }: Props) {
   const [open, setOpen] = useState(false);
 
   if (rows.length === 0) return null;
@@ -113,8 +133,8 @@ export default function RentabilidadeDetailTable({ rows, tituloLabel }: Props) {
   const previousYears = rows.slice(1);
 
   return (
-    <div className="space-y-6">
-      <YearTable row={latestYear} />
+    <div className={compacto ? "space-y-4" : "space-y-6"}>
+      <YearTable row={latestYear} linhas={linhas} compacto={compacto} />
 
       {previousYears.length > 0 && (
         <Collapsible open={open} onOpenChange={setOpen}>
@@ -124,9 +144,9 @@ export default function RentabilidadeDetailTable({ rows, tituloLabel }: Props) {
             />
             Anos anteriores ({previousYears.length})
           </CollapsibleTrigger>
-          <CollapsibleContent className="mt-4 space-y-6">
+          <CollapsibleContent className={compacto ? "mt-4 space-y-4" : "mt-4 space-y-6"}>
             {previousYears.map((row) => (
-              <YearTable key={row.year} row={row} />
+              <YearTable key={row.year} row={row} linhas={linhas} compacto={compacto} />
             ))}
           </CollapsibleContent>
         </Collapsible>

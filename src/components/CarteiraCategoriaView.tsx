@@ -39,6 +39,8 @@ interface Props {
   loading: boolean;
   mensagemVazio: string;
   nota?: string;
+  /** Clique na linha: abre o detalhe da posição (a chave é o código de custódia). */
+  onClicarLinha?: (chave: string) => void;
 }
 
 const fmtBrl = (v: number | null) =>
@@ -59,7 +61,7 @@ const fmtData = (d: string | null) =>
 export default function CarteiraCategoriaView({
   titulo, labelSerie, labelColuna, tituloTabela,
   carteiraInfo, carteiraRows, allProductRows, cdiRecords, linhas, loading,
-  mensagemVazio, nota,
+  mensagemVazio, nota, onClicarLinha,
 }: Props) {
   const { dataReferenciaISO } = useDataReferencia();
   const [mostrarEncerrados, setMostrarEncerrados] = useState(true);
@@ -198,7 +200,11 @@ export default function CarteiraCategoriaView({
             </TableHeader>
             <TableBody>
               {visiveis.map((l) => (
-                <TableRow key={l.chave}>
+                <TableRow
+                  key={l.chave}
+                  className={onClicarLinha ? "cursor-pointer" : undefined}
+                  onClick={onClicarLinha ? () => onClicarLinha(l.chave) : undefined}
+                >
                   <TableCell className="max-w-[320px] font-medium">
                     <span className="block truncate">{l.nome}</span>
                     {l.detalhe && <span className="block text-xs text-muted-foreground">{l.detalhe}</span>}

@@ -33,9 +33,9 @@ interface Props {
   /** Some com o Ibovespa do seletor quando a tela não tem a série. */
   temIbovespa?: boolean;
   /**
-   * Onde o usuário liga e desliga os benchmarks. "etiquetas": botões acima do gráfico (as telas
-   * de carteira). "legenda": a própria legenda é o seletor e a série principal fica sempre
-   * visível, sem alternância (detalhe da posição, pedido do Daniel em 11/09/2026).
+   * Onde o usuário liga e desliga os benchmarks. "legenda" (padrão desde 11/09/2026, pedido do
+   * Daniel): a própria legenda é o seletor e a série principal fica sempre visível.
+   * "etiquetas": botões acima do gráfico, o modelo anterior.
    */
   seletor?: "etiquetas" | "legenda";
 }
@@ -71,7 +71,7 @@ const Tooltipzinho = ({ active, payload, label }: {
 };
 
 export function HistoricoRentabilidadeChart({
-  dados, chaveSerie, rotuloSerie, temIbovespa = true, seletor = "etiquetas",
+  dados, chaveSerie, rotuloSerie, temIbovespa = true, seletor = "legenda",
 }: Props) {
   const series = useMemo(() => [
     { key: chaveSerie, label: rotuloSerie, color: COR_PRINCIPAL, tracejado: undefined as string | undefined },
