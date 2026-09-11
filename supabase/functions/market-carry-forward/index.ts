@@ -17,13 +17,19 @@
 // funcao usa - faria o benchmark compor o fim de semana e inflar a rentabilidade em silencio.
 // O seletor alcanca D0 pelo lado dos motores, que percorrem o calendario ate a data de calculo.
 //
-// Cada serie roda isolada, em tres etapas:
-//   1. apaga as linhas provisorias (as estimativas da rodada anterior)
-//   2. busca na fonte a partir do ultimo dia CONFIRMADO e grava como oficial
+// Cada serie roda isolada, em quatro etapas, e NENHUMA delas abre buraco se falhar:
+//   1. busca na fonte a partir do ultimo dia CONFIRMADO (a leitura filtra `provisorio = false`,
+//      entao os dias estimados sao reconsultados sem precisar apaga-los antes)
+//   2. grava o oficial por cima (upsert por data: a estimativa do mesmo dia vira oficial)
 //   3. completa os dias uteis restantes ate hoje repetindo o ultimo valor, como provisorio
+//   4. so entao apaga as estimativas que sobraram fora da janela nova
 //
-// A etapa 1 e o que faz a 2 reconsultar os dias estimados: partindo de max(data) eles seriam
-// pulados para sempre e a estimativa viraria permanente. Por isso a coluna `provisorio`.
+// ATE 11/09/2026 A ORDEM ERA OUTRA: apagava as provisorias primeiro. Uma falha na gravacao
+// seguinte deixava a serie sem os dias estimados ate a rodada seguinte. Aconteceu as 14h de
+// 11/09: o upsert do CDI de 10/09 recebeu 504 Gateway Timeout e o CDI ficou parado em 09/09 com o
+// benchmark das laminas dois dias curto. Os 504 do gateway caem na virada de minuto em que varios
+// crons disparam juntos, sempre na PRIMEIRA chamada ao banco de uma funcao recem-iniciada - e o
+// CDI e a primeira serie do loop. Por isso, alem da ordem, toda escrita e leitura tem retentativa.
 //
 // Esta funcao e a autoridade das 7 series diarias. O `daily-market-sync` fica so com o
 // calendario. Cotas de fundo NAO entram aqui - ver a nota no fim do arquivo.
@@ -155,22 +161,35 @@ async function oficialIbov(de: Date, hoje: Date): Promise<{ rows: Record<string,
   return rows.length ? { rows, nota: `confirmou ${rows.length} dia(s)` } : { rows: [], nota: "sem dado novo" };
 }
 
+const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Chamada ao banco com retentativa em falha de gateway ou de rede (502, 503, 504, timeout).
+ * Erro de dado (constraint, coluna) nao e retentado: repetir nao muda o resultado.
+ */
+async function noBanco<T>(
+  etapa: string,
+  chamada: () => PromiseLike<{ data: T; error: { message: string } | null }>,
+): Promise<T> {
+  const esperas = [1000, 3000, 6000];
+  for (let tentativa = 0; ; tentativa++) {
+    const { data, error } = await chamada();
+    if (!error) return data;
+    const transitorio = /gateway|timeout|timed out|50[234]|fetch failed|connection|network/i.test(error.message);
+    if (!transitorio || tentativa >= esperas.length) throw new Error(`${etapa}: ${error.message}`);
+    await esperar(esperas[tentativa]);
+  }
+}
+
 async function rodarSerie(sb: SupabaseClient, s: Serie, hoje: Date) {
   const t = () => sb.schema("invest").from(s.tabela);
   const relato: Record<string, unknown> = {};
 
-  // 1. limpa as estimativas da rodada anterior
-  const { data: apagadas, error: eDel } = await t().delete().eq("provisorio", true).select("data");
-  if (eDel) throw new Error(`limpeza: ${eDel.message}`);
-  relato.removidas = (apagadas ?? []).map((r: { data: string }) => r.data);
+  const ultimo = async () => (await noBanco("ultima", () => t().select(`data, ${s.coluna}`)
+    .eq("provisorio", false).order("data", { ascending: false }).limit(1).maybeSingle())) as
+    Record<string, unknown> | null;
 
-  // 2. fonte oficial, a partir do ultimo dia confirmado
-  const ultimo = async () => {
-    const { data, error } = await t().select(`data, ${s.coluna}`)
-      .eq("provisorio", false).order("data", { ascending: false }).limit(1).maybeSingle();
-    if (error) throw new Error(`ultima: ${error.message}`);
-    return data as Record<string, unknown> | null;
-  };
+  // 1. fonte oficial, a partir do ultimo dia confirmado
   const antes = await ultimo();
   if (!antes) return { ...relato, erro: "serie vazia, precisa de carga inicial" };
 
@@ -180,10 +199,8 @@ async function rodarSerie(sb: SupabaseClient, s: Serie, hoje: Date) {
       ? await oficialSgs(s, inicio, hoje)
       : await oficialIbov(inicio, hoje);
     relato.fonte = nota;
-    if (rows.length) {
-      const { error } = await t().upsert(rows, { onConflict: "data" });
-      if (error) throw new Error(`upsert oficial: ${error.message}`);
-    }
+    // 2. grava o oficial por cima da estimativa do mesmo dia
+    if (rows.length) await noBanco("upsert oficial", () => t().upsert(rows, { onConflict: "data" }));
   } else relato.fonte = "nada a buscar";
 
   // 3. repete o ultimo valor confirmado nos dias uteis que faltam
@@ -193,9 +210,16 @@ async function rodarSerie(sb: SupabaseClient, s: Serie, hoje: Date) {
   const faltando = diasUteisApos(String(base.data), hoje);
   if (faltando.length) {
     const linhas = faltando.map((data) => ({ data, [s.coluna]: valor, ...(s.extras ?? {}), provisorio: true }));
-    const { error } = await t().upsert(linhas, { onConflict: "data" });
-    if (error) throw new Error(`upsert provisorio: ${error.message}`);
+    await noBanco("upsert provisorio", () => t().upsert(linhas, { onConflict: "data" }));
   }
+
+  // 4. apaga as estimativas que ficaram fora da janela nova (dia que a fonte confirmou, ou que
+  //    deixou de ser dia util). Se esta etapa falhar, sobra uma estimativa a mais, nunca um dia a menos.
+  const provisorias = await noBanco("provisorias", () => t().select("data").eq("provisorio", true)) as { data: string }[] | null;
+  const sobras = (provisorias ?? []).map((r) => r.data).filter((d) => !faltando.includes(d));
+  if (sobras.length) await noBanco("limpeza", () => t().delete().eq("provisorio", true).in("data", sobras));
+  relato.removidas = sobras;
+
   return { ...relato, ultimoOficial: base.data, valorRepetido: valor, provisorios: faltando };
 }
 
