@@ -61,7 +61,21 @@ interface CustodiaProduct {
   fundo_id?: string | null;
   moeda?: string | null;
   fundoCfg?: { dias_cotizacao_aplicacao: number | null; dias_cotizacao_resgate: number | null } | null;
+  fundoCnpj?: string | null;
 }
+
+/** O que a gaveta de detalhes mostra em "Dados da posição", na data de referência. */
+interface DadosDaPosicao {
+  valorInvestido: number | null;
+  quantidade: number | null;
+  ultimoPreco: number | null;
+  dataUltimoPreco: string | null;
+  precoMedio: number | null;
+}
+
+const SEM_DADOS: DadosDaPosicao = {
+  valorInvestido: null, quantidade: null, ultimoPreco: null, dataUltimoPreco: null, precoMedio: null,
+};
 
 interface PosicaoRow {
   nome: string;
@@ -71,6 +85,7 @@ interface PosicaoRow {
   custodiante: string;
   ativo: boolean;
   product: CustodiaProduct;
+  dados?: DadosDaPosicao;
 }
 
 // Module-level cache to persist across navigation
@@ -109,7 +124,7 @@ export default function PosicaoConsolidadaPage() {
     try {
       const { data: products } = await supabase
         .from("custodia")
-        .select("id, codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, multiplicador, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, data_limite, quantidade, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, moeda, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
+        .select("id, codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, multiplicador, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, data_limite, quantidade, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, moeda, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(cnpj_classe, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
         .eq("user_id", user!.id);
 
       if (!products || products.length === 0) { setRows([]); _cachedRows = []; _cachedVersion = appliedVersion; setLoading(false); return; }
@@ -142,6 +157,7 @@ export default function PosicaoConsolidadaPage() {
         fundo_id: r.fundo_id ?? null,
         moeda: r.moeda ?? null,
         fundoCfg: r.cadastro_de_fundos ?? null,
+        fundoCnpj: r.cadastro_de_fundos?.cnpj_classe ?? null,
       }));
 
       const rfProducts = mapped.filter((p) => p.categoria_nome === "Renda Fixa" && p.modalidade !== "Poupança");
@@ -308,6 +324,7 @@ export default function PosicaoConsolidadaPage() {
             custodiante: product.instituicao_nome,
             ativo: !encerrado,
             product,
+            dados: { ...SEM_DADOS, valorInvestido: lastRow.valorInvestido },
           });
         }
       }
@@ -346,6 +363,7 @@ export default function PosicaoConsolidadaPage() {
               custodiante: product.instituicao_nome,
               ativo: !isEncerrado,
               product,
+              dados: { ...SEM_DADOS, valorInvestido: product.valor_investido },
             });
           }
         }
@@ -355,11 +373,12 @@ export default function PosicaoConsolidadaPage() {
         const fim = product.resgate_total && product.resgate_total < dataReferenciaISO
           ? product.resgate_total
           : dataReferenciaISO;
+        const cotasSerie = cotasDoProduto(product);
         const rowsFundo = calcularFundoDiario({
           dataInicio: product.data_inicio,
           dataCalculo: fim,
           calendario,
-          cotas: cotasDoProduto(product),
+          cotas: cotasSerie,
           movimentacoes: movFundoByCodigo.get(product.codigo_custodia) || [],
           fundo: {
             dias_cotizacao_aplicacao: product.fundoCfg?.dias_cotizacao_aplicacao ?? 0,
@@ -382,6 +401,11 @@ export default function PosicaoConsolidadaPage() {
           custodiante: product.instituicao_nome,
           ativo: !encerrado,
           product,
+          dados: dadosDaPosicao(
+            ult.valorInvestido,
+            ult.saldoCotas,
+            ultimoAte(cotasSerie.map((c) => ({ data: c.data, valor: c.valor_cota })), fim),
+          ),
         });
       }
 
@@ -414,6 +438,11 @@ export default function PosicaoConsolidadaPage() {
           custodiante: product.instituicao_nome,
           ativo: !encerrado,
           product,
+          dados: dadosDaPosicao(
+            ult.valorInvestido,
+            ult.saldoMoeda,
+            ultimoAte((cotacoesPorMoeda.get(product.moeda!) || []).map((c) => ({ data: c.data, valor: c.cotacao })), fim),
+          ),
         });
       }
 
@@ -426,6 +455,7 @@ export default function PosicaoConsolidadaPage() {
           custodiante: product.instituicao_nome,
           ativo: true,
           product,
+          dados: { ...SEM_DADOS, valorInvestido: product.valor_investido },
         });
       }
 
@@ -501,9 +531,15 @@ export default function PosicaoConsolidadaPage() {
   const totalValor = useMemo(() => filteredRows.reduce((s, r) => s + r.valorAtualizado, 0), [filteredRows]);
   const totalGanho = useMemo(() => filteredRows.reduce((s, r) => s + r.ganhoFinanceiro, 0), [filteredRows]);
 
+  /** Inicio do portfolio: o "Período de análise" do detalhe começa aqui, como no Gorila. */
+  const inicioCarteira = useMemo(
+    () => rows.reduce((min, r) => (r.product.data_inicio && r.product.data_inicio < min ? r.product.data_inicio : min), dataReferenciaISO),
+    [rows, dataReferenciaISO],
+  );
+
   // Boleta helpers
-  function openBoleta(row: PosicaoRow, tipo: "Aplicação" | "Resgate", e: React.MouseEvent) {
-    e.stopPropagation();
+  function openBoleta(row: PosicaoRow, tipo: "Aplicação" | "Resgate", e?: React.MouseEvent) {
+    e?.stopPropagation();
     const p = row.product;
     setDialogRow({
       id: p.id,
@@ -547,10 +583,28 @@ export default function PosicaoConsolidadaPage() {
 
   function getDetalheData(row: PosicaoRow): PosicaoDetalheData {
     const p = row.product;
+    const tipo = p.fundo_id ? "fundo" : p.moeda ? "moeda" : p.categoria_nome === "Renda Fixa" ? "renda_fixa" : "outro";
+    // "Categoria / Produto", sem repetir quando os dois tem o mesmo nome (Fundos de Investimentos).
+    const classificacao = [p.categoria_nome, p.produto_nome]
+      .filter((x, i, todos) => !!x && todos.indexOf(x) === i)
+      .join(" / ");
+    const dados = row.dados ?? SEM_DADOS;
     return {
+      tipo,
       nome: row.nome,
+      cnpj: p.fundoCnpj ?? null,
+      classificacao,
       custodiante: row.custodiante,
       valorAtualizado: row.valorAtualizado,
+      pnl: row.ganhoFinanceiro,
+      rentabilidadePct: row.rentabilidade,
+      inicioPeriodo: inicioCarteira,
+      fimPeriodo: dataReferenciaISO,
+      valorInvestido: dados.valorInvestido ?? p.valor_investido,
+      quantidade: dados.quantidade,
+      ultimoPreco: dados.ultimoPreco,
+      dataUltimoPreco: dados.dataUltimoPreco,
+      precoMedio: dados.precoMedio,
       dataInicio: p.data_inicio,
       codigoCustodia: p.codigo_custodia,
       categoriaId: p.categoria_id,
@@ -686,6 +740,11 @@ export default function PosicaoConsolidadaPage() {
           userId={user.id}
           dataReferenciaISO={dataReferenciaISO}
           onDataChanged={() => { calculate(); applyDataReferencia(); }}
+          onBoletar={(tipo) => {
+            const linha = detalheRow;
+            setDetalheRow(null);
+            openBoleta(linha, tipo);
+          }}
         />
       )}
 
@@ -716,4 +775,29 @@ function getDateMinus(dateStr: string, days: number): string {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() - days);
   return d.toISOString().slice(0, 10);
+}
+
+/** Ultimo preco publicado ate a data. */
+function ultimoAte(serie: { data: string; valor: number }[], ate: string): { data: string; valor: number } | null {
+  let achado: { data: string; valor: number } | null = null;
+  for (const ponto of serie) {
+    if (ponto.data <= ate && (!achado || ponto.data > achado.data)) achado = ponto;
+  }
+  return achado;
+}
+
+/** Dados da posicao com preco e quantidade. Preco medio como no Gorila: valor investido / quantidade. */
+function dadosDaPosicao(
+  valorInvestido: number,
+  quantidade: number,
+  ultimo: { data: string; valor: number } | null,
+): DadosDaPosicao {
+  const temSaldo = quantidade > 1e-8;
+  return {
+    valorInvestido,
+    quantidade: temSaldo ? quantidade : 0,
+    ultimoPreco: ultimo?.valor ?? null,
+    dataUltimoPreco: ultimo?.data ?? null,
+    precoMedio: temSaldo ? valorInvestido / quantidade : null,
+  };
 }

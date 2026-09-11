@@ -9,6 +9,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { posicaoNaData, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
 import { diasDeCotizacao } from "@/lib/fundoEngine";
+import { fetchAllRows } from "@/lib/fetchAllRows";
 
 const TABELA_COTACAO: Record<string, string> = {
   USD: "historico_dolar",
@@ -148,11 +149,14 @@ export async function saldosNaData(
   userId: string,
   ateDataISO: string,
   chave: "fundo_id" | "moeda",
+  /** Movimentacao em edicao: fica de fora, senao o resgate editado descontaria a si mesmo. */
+  ignorarId?: string,
 ): Promise<Map<string, number>> {
-  const { data } = await supabase
+  const { data: todas } = await supabase
     .from("movimentacoes")
-    .select("codigo_custodia, fundo_id, moeda, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario, created_at")
+    .select("id, codigo_custodia, fundo_id, moeda, data, data_cotizacao, tipo_movimentacao, valor, quantidade, preco_unitario, created_at")
     .eq("user_id", userId);
+  const data = ((todas || []) as any[]).filter((m) => !ignorarId || m.id !== ignorarId);
 
   const saldos = new Map<string, number>();
   if (chave === "fundo_id") {
@@ -263,4 +267,17 @@ export async function saldoEmQuantidade(
     saldo += ENTRADAS.includes(m.tipo_movimentacao) ? qtd : -qtd;
   }
   return saldo;
+}
+
+/**
+ * Fundos com alguma posicao no portfolio em uso: a lista de um resgate. O fundo vem antes da data
+ * na boleta, entao a lista nao pode depender do saldo num dia; o saldo aparece depois, abaixo do
+ * valor.
+ */
+export async function fundosComPosicao(userId: string): Promise<Set<string>> {
+  const linhas = await fetchAllRows<{ fundo_id: string | null }>((de, ate) =>
+    supabase.from("movimentacoes").select("fundo_id").eq("user_id", userId)
+      .not("fundo_id", "is", null).range(de, ate),
+  );
+  return new Set(linhas.map((m) => m.fundo_id).filter((id): id is string => !!id));
 }

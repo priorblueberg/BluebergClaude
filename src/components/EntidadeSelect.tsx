@@ -66,6 +66,9 @@ export default function EntidadeSelect({
   const [buscando, setBuscando] = useState(false);
   const [selectedLabel, setSelectedLabel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  /** Instituicoes em que o cliente ja tem custodia (portfolio em uso). null = ainda nao lidas. */
+  const [daCustodia, setDaCustodia] = useState<Entidade[] | null>(null);
+  const mostrandoDaCustodia = tipo === "instituicao" && !search.trim() && !!daCustodia?.length;
   const ref = useRef<HTMLDivElement>(null);
 
   // Resolve o rotulo do id ja selecionado (ex.: boleta carregada de uma custodia
@@ -93,9 +96,38 @@ export default function EntidadeSelect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, tipo]);
 
+  // Ao clicar no campo de instituicao, a lista suspensa traz as instituicoes onde o cliente ja tem
+  // custodia. Digitando, a busca volta a ser na lista inteira do Banco Central.
+  useEffect(() => {
+    if (tipo !== "instituicao" || !open || daCustodia !== null) return;
+    let cancelado = false;
+    supabase
+      .from("custodia")
+      .select("instituicao_id, instituicoes(id, nome)")
+      .not("instituicao_id", "is", null)
+      .then(({ data, error }) => {
+        if (cancelado) return;
+        if (error) console.error("Erro ao ler as instituições da custódia", error);
+        const unicas = new Map<string, Entidade>();
+        for (const r of (data ?? []) as any[]) {
+          const i = r.instituicoes;
+          if (i?.id && i?.nome) unicas.set(i.id, { id: i.id, nome: i.nome });
+        }
+        setDaCustodia([...unicas.values()].sort((x, y) => x.nome.localeCompare(y.nome, "pt-BR")));
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [tipo, open, daCustodia]);
+
   // Busca com debounce enquanto o dropdown esta aberto.
   useEffect(() => {
     if (!open) return;
+    if (mostrandoDaCustodia) {
+      setOptions(daCustodia!);
+      setBuscando(false);
+      return;
+    }
     let cancelado = false;
     setBuscando(true);
     const timer = setTimeout(async () => {
@@ -117,7 +149,7 @@ export default function EntidadeSelect({
       cancelado = true;
       clearTimeout(timer);
     };
-  }, [search, open, tipo]);
+  }, [search, open, tipo, mostrandoDaCustodia, daCustodia]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -176,6 +208,12 @@ export default function EntidadeSelect({
         <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-border bg-popover shadow-md">
           {buscando && (
             <div className="px-3 py-2 text-sm text-muted-foreground">Buscando...</div>
+          )}
+
+          {!buscando && mostrandoDaCustodia && (
+            <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+              Instituições da sua custódia
+            </div>
           )}
 
           {!buscando &&

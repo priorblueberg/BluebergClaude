@@ -28,7 +28,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData, fundosComPosicao } from "@/lib/validacaoBoleta";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Categoria {
@@ -873,7 +873,8 @@ export default function BoletaTransacao({
   const ehComeCotas = tipoMovimentacao === "Come-Cotas";
 
   /** Saida (resgate, come-cotas, venda) so pode incidir sobre o que existia na data. */
-  const ehSaida = !!tipoMovimentacao && !["Aplicação", "Compra"].includes(tipoMovimentacao);
+  // "Aplicação Inicial" e ENTRADA: e o tipo gravado da primeira aplicacao e so aparece na edicao.
+  const ehSaida = !!tipoMovimentacao && !["Aplicação", "Aplicação Inicial", "Compra"].includes(tipoMovimentacao);
 
   // Saldo por ativo na data. Enquanto for null a lista fica travada, porque oferecer tudo
   // enquanto carrega deixaria escolher um ativo que nao existia naquele dia.
@@ -884,11 +885,24 @@ export default function BoletaTransacao({
       return;
     }
     let vivo = true;
-    saldosNaData(user.id, data, isFundo ? "fundo_id" : "moeda").then((s) => {
+    saldosNaData(user.id, data, isFundo ? "fundo_id" : "moeda", editId ?? undefined).then((s) => {
       if (vivo) setComSaldo(s);
     });
     return () => { vivo = false; };
-  }, [user, ehSaida, data, isFundo, isMoeda]);
+  }, [user, ehSaida, data, isFundo, isMoeda, editId]);
+
+  // Fundos com posicao no portfolio: a lista do resgate. O fundo vem ANTES da data, entao a lista
+  // nao depende do saldo num dia; o saldo na data aparece abaixo do valor, em reais.
+  const [fundosComPosicaoIds, setFundosComPosicaoIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!user || !isFundo || !ehSaida) {
+      setFundosComPosicaoIds(null);
+      return;
+    }
+    let vivo = true;
+    fundosComPosicao(user.id).then((s) => { if (vivo) setFundosComPosicaoIds(s); });
+    return () => { vivo = false; };
+  }, [user, isFundo, ehSaida]);
 
   /** Cotacao da moeda na data, so para mostrar o saldo tambem em reais. */
   const [cotacaoOp, setCotacaoOp] = useState<number | null>(null);
@@ -911,18 +925,18 @@ export default function BoletaTransacao({
     return chave ? comSaldo.get(chave) ?? null : null;
   }, [ehSaida, comSaldo, isFundo, fundoId, moedaSel]);
 
-  // Mudou a data numa saida: o ativo escolhido pode nao existir na nova data, entao sai.
+  // Mudou a data numa venda de moeda: a moeda escolhida pode nao existir na nova data, entao sai.
+  // O fundo fica: ele vem antes da data, e a falta de saldo aparece abaixo do valor.
   useEffect(() => {
     if (!ehSaida) return;
-    if (fundoId && comSaldo && !comSaldo.has(fundoId)) setFundoId("");
     if (moedaSel && comSaldo && !comSaldo.has(moedaSel)) setMoedaSel("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comSaldo, ehSaida]);
 
-  /** Fundos oferecidos: todos na aplicacao, so os que tinham cotas na data nas saidas. */
+  /** Fundos oferecidos: todos na aplicacao, so os com posicao no portfolio nas saidas. */
   const fundosDisponiveis = useMemo(
-    () => (ehSaida ? fundos.filter((f) => comSaldo?.has(f.id)) : fundos),
-    [fundos, ehSaida, comSaldo],
+    () => (ehSaida ? fundos.filter((f) => fundosComPosicaoIds?.has(f.id)) : fundos),
+    [fundos, ehSaida, fundosComPosicaoIds],
   );
 
   const moedasDisponiveis = useMemo(
@@ -1383,7 +1397,7 @@ Confirma que o preço está certo?`,
 
         // Resgate e come-cotas nao podem passar do saldo de cotas: posicao
         // negativa segue rendendo e o erro so aparece semanas depois.
-        if (tipoMovimentacao !== "Aplicação") {
+        if (ehSaida) {
           const saldo = await saldoEmQuantidade(codigoCustodia, user.id, dataCotizacao, editId);
           if (qtd > saldo + 1e-8) {
             setSubmitting(false);
@@ -1821,18 +1835,14 @@ Confirma que o preço está certo?`,
    * passou pela verificacao de cotas. Escolher um fundo sem serie fecha a boleta ("Adicionar")
    * ou limpa o campo ("Cancelar"), e o que o usuario tivesse digitado antes seria perdido.
    *
-   * Numa SAIDA ele vem depois da data: a lista so tem os fundos com cotas nela, entao o campo
-   * fica travado enquanto a data nao for informada.
+   * Numa SAIDA tambem (decisao do Daniel, 10/09/2026): logo depois do tipo, com os fundos que tem
+   * posicao no portfolio. O saldo na data aparece abaixo do campo de valor, em reais.
    */
   const campoFundo = (
     <Field label="Fundo" required>
-      {ehSaida && !data ? (
+      {ehSaida && fundosComPosicaoIds && fundosDisponiveis.length === 0 ? (
         <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-          Informe a data da operação
-        </p>
-      ) : ehSaida && comSaldo && fundosDisponiveis.length === 0 ? (
-        <p className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-          Nenhum fundo em custódia nessa data
+          Nenhum fundo em custódia neste portfólio
         </p>
       ) : (
         <FundoSelect
@@ -1843,7 +1853,7 @@ Confirma que o preço está certo?`,
           hasError={validationErrors.has("fundoId")}
           permitirCatalogo={!ehSaida}
           onFecharBoleta={() => onFechar?.()}
-          abrirAoMontar={!ehSaida && !isEditing}
+          abrirAoMontar={!isEditing}
         />
       )}
     </Field>
@@ -2090,15 +2100,15 @@ Confirma que o preço está certo?`,
         )}
 
         {/* ── Fundos de Investimentos ── */}
-        {showFundoFields && !ehSaida && campoFundo}
-        {showFundoFields && !ehSaida && !fundoId && (
+        {showFundoFields && campoFundo}
+        {showFundoFields && !fundoId && (
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => onFechar?.()}>
               Cancelar
             </Button>
           </div>
         )}
-        {showFundoFields && (ehSaida || !!fundoId) && (
+        {showFundoFields && !!fundoId && (
           <>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Data de Cotização" required>
@@ -2111,10 +2121,20 @@ Confirma que o preço está certo?`,
                   placeholder="0,00"
                   inputMode="numeric"
                 />
+                {/* Numa saida, o saldo na data compoe o campo: so o valor em reais. */}
+                {ehSaida && data && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {comSaldo == null
+                      ? "Calculando o saldo..."
+                      : saldoDaSaida == null
+                        ? `Sem saldo deste fundo em ${fmtData(data)}.`
+                        : cotaOp?.cota != null
+                          ? `Saldo disponível em ${fmtData(data)}: ${fmtBrlDisplay(saldoDaSaida * cotaOp.cota)}`
+                          : ""}
+                  </p>
+                )}
               </Field>
             </div>
-
-            {ehSaida && campoFundo}
 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Valor da Cota">
@@ -2165,26 +2185,6 @@ Confirma que o preço está certo?`,
               </Field>
             </div>
 
-            {/* Numa saida o usuario precisa ver o que tem antes de digitar quanto tira. */}
-            {ehSaida && data && (
-              <div className="rounded-md border border-border bg-muted/30 px-4 py-3">
-                <p className="text-xs text-muted-foreground">
-                  {ehComeCotas ? "Cotas em custódia em " : "Saldo disponível para resgate em "}
-                  {fmtData(data)}:
-                </p>
-                <p className="mt-0.5 text-sm font-semibold text-foreground">
-                  {!fundoId
-                    ? "Selecione o fundo"
-                    : comSaldo == null
-                      ? "Calculando..."
-                      : saldoDaSaida == null
-                        ? "—"
-                        : `${saldoDaSaida.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })} cotas` +
-                          (cotaOp?.cota != null ? ` (${fmtBrlDisplay(saldoDaSaida * cotaOp.cota)})` : "")}
-                </p>
-              </div>
-            )}
-
             {/*
               A validacao de cota fica, e ela esta certa: sem cota nao ha como derivar a
               quantidade, e gravar a operacao deixaria a posicao errada. O que mudou e a SAIDA.
@@ -2209,14 +2209,11 @@ Confirma que o preço está certo?`,
               </Alert>
             )}
 
-            <p className="text-xs text-muted-foreground">
-              {cotaOp?.cota != null && cotaOp.dataCotizacao !== data
-                ? `Cota de ${fmtData(cotaOp.dataCotizacao)}, data em que a operação cotiza. `
-                : ""}
-              {ehComeCotas
-                ? "No come-cotas quem calcula as cotas canceladas é o administrador, a partir do ganho de cada cotista, então a quantidade vem do extrato. Entra como saída de cotas: reduz a posição sem dinheiro saindo da carteira."
-                : "Use a data de cotização do extrato, não a data do pedido: a cota usada é a desse dia. A cota vem da série da CVM e a quantidade é valor ÷ cota, por isso os dois campos são somente leitura."}
-            </p>
+            {ehComeCotas && (
+              <p className="text-xs text-muted-foreground">
+                No come-cotas quem calcula as cotas canceladas é o administrador, a partir do ganho de cada cotista, então a quantidade vem do extrato. Entra como saída de cotas: reduz a posição sem dinheiro saindo da carteira.
+              </p>
+            )}
 
             <div className="flex gap-3">
               <Button onClick={handleSubmit} disabled={submitting}>

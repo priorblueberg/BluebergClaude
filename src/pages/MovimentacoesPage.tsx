@@ -21,6 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { textoConfirmacaoDeExclusao, AVISO_EXCLUSAO_ATIVO, AVISO_EXCLUSAO_MOVIMENTACAO } from "@/lib/confirmacaoDeExclusao";
 
 interface Movimentacao {
   id: string;
@@ -183,7 +184,7 @@ export default function MovimentacoesPage() {
         console.error(custError);
       }
 
-      toast.success("Ativo, custódia e todas as movimentações excluídos com sucesso.");
+      toast.success(AVISO_EXCLUSAO_ATIVO);
       setRows((prev) => prev.filter((r) => r.codigo_custodia !== movData.codigo_custodia));
 
       await fullSyncAfterDelete(
@@ -199,7 +200,7 @@ export default function MovimentacoesPage() {
         toast.error("Erro ao excluir movimentação.");
         console.error(error);
       } else {
-        toast.success("Movimentação excluída com sucesso.");
+        toast.success(AVISO_EXCLUSAO_MOVIMENTACAO);
         setRows((prev) => prev.filter((r) => r.id !== deleteId));
 
         if (movData) {
@@ -363,17 +364,7 @@ export default function MovimentacoesPage() {
                 isso nao da como conferir se a linha certa foi clicada - e a exclusao nao
                 tem volta.
               */}
-              {(() => {
-                const row = rows.find((r) => r.id === deleteId);
-                if (!row) return "Tem certeza que deseja excluir esta movimentação? Esta ação não pode ser desfeita.";
-                const valor = row.valor != null
-                  ? row.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
-                  : "valor não informado";
-                const alvo = `${row.tipo_movimentacao.toLowerCase()} de ${row.nome_ativo ?? "ativo sem nome"} em ${fmtDate(row.data)}, no valor de ${valor}`;
-                return row.tipo_movimentacao === "Aplicação Inicial"
-                  ? `A ${alvo} é a aplicação inicial do título. Excluí-la remove o título da custódia e apaga TODAS as movimentações desse código, permanentemente.`
-                  : `A ${alvo} será excluída. Esta ação não pode ser desfeita.`;
-              })()}
+              {textoConfirmacaoDeExclusao(rows.find((r) => r.id === deleteId))}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
