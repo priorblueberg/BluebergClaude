@@ -151,6 +151,8 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
       ibovespa,
       inicio: base.dataInicio,
       fim: base.fim,
+      // Respeitar a data do produto: CDI, grafico e tabela param na ultima cota divulgada.
+      ultimaDataDoProduto: base.calculo.dados.dataUltimoPreco,
     });
     return {
       tipo: "fundo",

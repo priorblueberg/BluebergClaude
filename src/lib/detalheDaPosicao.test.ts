@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { dadosDaPosicao, tabelaDeRentabilidade, ultimoAte } from "./detalheDaPosicao";
+import { buildCdiSeries } from "./cdiCalculations";
+import { dadosDaPosicao, montarGraficoETabela, tabelaDeRentabilidade, ultimoAte } from "./detalheDaPosicao";
 
 describe("tabela de rentabilidade da posição", () => {
   // Dezembro rende 1% (acumulado 1,00%) e janeiro mais 1% sobre isso (acumulado 2,01%).
@@ -31,8 +32,43 @@ describe("tabela de rentabilidade da posição", () => {
     expect(ano2025.rentabilidadeMonths.slice(0, 11).every((v) => v === null)).toBe(true);
   });
 
+  it("% do CDI com todas as casas, e não com os valores já arredondados", () => {
+    // Março de 2026 do SulAmérica: cota 1,2130% e CDI 1,2121%. Arredondados, dariam 100,00%.
+    const [ano] = tabelaDeRentabilidade(
+      [{ data: "2026-02-27", pct: 0 }, { data: "2026-03-31", pct: 1.213 }],
+      [{ data: "2026-02-27", cdi_acumulado: 0 }, { data: "2026-03-31", cdi_acumulado: 1.2121 }],
+    );
+    expect(ano.rentabilidadeMonths[2]).toBe(1.21);
+    expect(ano.cdiMonths[2]).toBe(1.21);
+    expect(ano.percentualCdiMonths?.[2]).toBe(100.07);
+  });
+
   it("sem série, sem tabela", () => {
     expect(tabelaDeRentabilidade([], [])).toEqual([]);
+  });
+});
+
+describe("janela do produto", () => {
+  // A cota saiu até 08/09; em 09 e 10/09 o fundo fica parado e o CDI anda.
+  const cdiRecords = ["2026-09-08", "2026-09-09", "2026-09-10"].map((data) => ({ data, taxa_anual: 14.9, dia_util: true }));
+  const serie = [
+    { data: "2026-09-08", pct: 0.05 },
+    { data: "2026-09-09", pct: 0.05 },
+    { data: "2026-09-10", pct: 0.05 },
+  ];
+
+  it("o CDI e o gráfico param na última cota divulgada", () => {
+    const r = montarGraficoETabela({
+      serie, cdiRecords, ibovespa: [], inicio: "2026-09-08", fim: "2026-09-10", ultimaDataDoProduto: "2026-09-08",
+    });
+    const ateACota = buildCdiSeries(cdiRecords, "2026-09-08", "2026-09-08");
+    expect(r.grafico.map((p) => p.data)).toEqual(["2026-09-08"]);
+    expect(r.cdiAcumuladoPct).toBe(ateACota[ateACota.length - 1].cdi_acumulado);
+  });
+
+  it("sem data do produto (renda fixa), vale o fim informado", () => {
+    const r = montarGraficoETabela({ serie, cdiRecords, ibovespa: [], inicio: "2026-09-08", fim: "2026-09-10" });
+    expect(r.grafico.map((p) => p.data)).toEqual(["2026-09-08", "2026-09-09", "2026-09-10"]);
   });
 });
 

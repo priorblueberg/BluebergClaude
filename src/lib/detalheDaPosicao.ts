@@ -4,6 +4,11 @@
  * A gaveta abre na Posição Consolidada e na lâmina de Fundos de Investimentos. As duas precisam
  * dos mesmos números para a mesma posição, então a conta da posição de fundo, o gráfico e a
  * tabela de rentabilidade saem daqui.
+ *
+ * REGRA (Daniel, 11/09/2026): respeitar a data do produto. A janela vai da primeira aplicação até
+ * a data da última cota divulgada; o CDI não passa dessa data. Sem isso o benchmark anda nos dias
+ * em que a cota ainda não saiu e o fundo fica parado, e o % do CDI do mês corrente despenca (setembro
+ * de 2026 dava 72% no SulAmérica; na mesma janela, 101,80%).
  */
 import { calcularFundoDiario, type FundoDailyRow, type FundoMovimentacao } from "@/lib/fundoEngine";
 import { cotasCosturadas, trechosDaPosicao, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
@@ -114,13 +119,18 @@ export function calcularPosicaoDeFundo(e: {
 }
 
 const MESES = 12;
+const arredonda = (v: number) => parseFloat(v.toFixed(2));
+
+/** % do CDI com todas as casas: arredondar antes de dividir erra até ~0,3 ponto (1,21 / 1,21). */
+const percentualDoCdi = (rent: number | null, cdi: number | null) =>
+  rent != null && cdi != null && cdi > 0 ? arredonda((rent / cdi) * 100) : null;
 
 /**
  * Tabela de rentabilidade por ano a partir das séries ACUMULADAS da posição e do CDI.
  *
  * Sair do acumulado, e não de retornos diários, é o que garante que o produto dos meses feche no
  * mesmo número do resumo e do fim do gráfico. Mês e ano valem (1 + acumulado no fim) /
- * (1 + acumulado no fim do período anterior) - 1.
+ * (1 + acumulado no fim do período anterior) - 1. O % do CDI é calculado ANTES de arredondar.
  */
 export function tabelaDeRentabilidade(
   serie: { data: string; pct: number }[],
@@ -136,7 +146,7 @@ export function tabelaDeRentabilidade(
   const meses = [...new Set([...rent.keys(), ...cdi.keys()])].sort();
   if (meses.length === 0) return [];
 
-  const noPeriodo = (fim: number, base: number) => parseFloat((((1 + fim / 100) / (1 + base / 100) - 1) * 100).toFixed(2));
+  const noPeriodo = (fim: number, base: number) => ((1 + fim / 100) / (1 + base / 100) - 1) * 100;
   const anos = [...new Set(meses.map((m) => Number(m.slice(0, 4))))].sort((a, b) => a - b);
 
   const linhas: DetailRow[] = [];
@@ -147,27 +157,35 @@ export function tabelaDeRentabilidade(
   for (const ano of anos) {
     const rentMeses: (number | null)[] = [];
     const cdiMeses: (number | null)[] = [];
+    const percentualMeses: (number | null)[] = [];
     for (let mes = 1; mes <= MESES; mes++) {
       const chave = `${ano}-${String(mes).padStart(2, "0")}`;
       const r = rent.get(chave);
       const c = cdi.get(chave);
-      rentMeses.push(r == null ? null : noPeriodo(r, rentFimMesAnterior));
-      cdiMeses.push(c == null ? null : noPeriodo(c, cdiFimMesAnterior));
+      const rentMes = r == null ? null : noPeriodo(r, rentFimMesAnterior);
+      const cdiMes = c == null ? null : noPeriodo(c, cdiFimMesAnterior);
+      rentMeses.push(rentMes == null ? null : arredonda(rentMes));
+      cdiMeses.push(cdiMes == null ? null : arredonda(cdiMes));
+      percentualMeses.push(percentualDoCdi(rentMes, cdiMes));
       if (r != null) rentFimMesAnterior = r;
       if (c != null) cdiFimMesAnterior = c;
     }
+    const rentAno = noPeriodo(rentFimMesAnterior, rentFimAnoAnterior);
+    const cdiAno = noPeriodo(cdiFimMesAnterior, cdiFimAnoAnterior);
     linhas.push({
       year: ano,
       patrimonioMonths: Array(MESES).fill(null),
       ganhoFinanceiroMonths: Array(MESES).fill(null),
       rentabilidadeMonths: rentMeses,
       cdiMonths: cdiMeses,
-      rentNoAno: noPeriodo(rentFimMesAnterior, rentFimAnoAnterior),
-      rentAcumulado: parseFloat(rentFimMesAnterior.toFixed(2)),
-      cdiNoAno: noPeriodo(cdiFimMesAnterior, cdiFimAnoAnterior),
-      cdiAcumulado: parseFloat(cdiFimMesAnterior.toFixed(2)),
+      rentNoAno: arredonda(rentAno),
+      rentAcumulado: arredonda(rentFimMesAnterior),
+      cdiNoAno: arredonda(cdiAno),
+      cdiAcumulado: arredonda(cdiFimMesAnterior),
       ganhoNoAno: null,
       ganhoAcumulado: null,
+      percentualCdiMonths: percentualMeses,
+      percentualCdiNoAno: percentualDoCdi(rentAno, cdiAno),
     });
     rentFimAnoAnterior = rentFimMesAnterior;
     cdiFimAnoAnterior = cdiFimMesAnterior;
@@ -175,16 +193,22 @@ export function tabelaDeRentabilidade(
   return linhas.reverse();
 }
 
-/** Gráfico (posição, CDI e Ibovespa), CDI acumulado e tabela de rentabilidade, na janela da posição. */
+/**
+ * Gráfico (posição, CDI e Ibovespa), CDI acumulado e tabela de rentabilidade, na janela do
+ * produto: do início da posição até `fim`, cortado na última data com preço divulgado
+ * (`ultimaDataDoProduto`, a última cota do fundo) quando ela vem antes.
+ */
 export function montarGraficoETabela(e: {
   serie: { data: string; pct: number }[];
   cdiRecords: CdiRecord[];
   ibovespa: PontoIbovespa[];
   inicio: string;
   fim: string;
+  ultimaDataDoProduto?: string | null;
 }): { grafico: PontoRentabilidade[]; cdiAcumuladoPct: number | null; tabela: DetailRow[] } {
-  const cdiSerie = buildCdiSeries(e.cdiRecords, e.inicio, e.fim);
-  const naJanela = e.serie.filter((s) => s.data >= e.inicio && s.data <= e.fim);
+  const fim = e.ultimaDataDoProduto && e.ultimaDataDoProduto < e.fim ? e.ultimaDataDoProduto : e.fim;
+  const cdiSerie = buildCdiSeries(e.cdiRecords, e.inicio, fim);
+  const naJanela = e.serie.filter((s) => s.data >= e.inicio && s.data <= fim);
 
   const pontos = new Map<string, PontoRentabilidade>();
   for (const c of cdiSerie) pontos.set(c.data, { data: c.data, cdi_acumulado: c.cdi_acumulado });
@@ -194,7 +218,7 @@ export function montarGraficoETabela(e: {
     pontos.set(s.data, ponto);
   }
   // Ibovespa rebaseado no primeiro pregao da janela da posicao.
-  for (const [dia, valor] of buildIbovespaSeries(e.ibovespa, e.inicio, e.fim)) {
+  for (const [dia, valor] of buildIbovespaSeries(e.ibovespa, e.inicio, fim)) {
     const ponto = pontos.get(dia) ?? { data: dia };
     ponto.ibovespa_acumulado = valor;
     pontos.set(dia, ponto);

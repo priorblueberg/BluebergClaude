@@ -24,6 +24,9 @@ export interface DetailRow {
   cdiAcumulado: number | null;
   ganhoNoAno: number | null;
   ganhoAcumulado: number | null;
+  /** % do CDI de cada mês e do ano calculado com todas as casas, quando quem monta a tabela tem. */
+  percentualCdiMonths?: (number | null)[];
+  percentualCdiNoAno?: number | null;
 }
 
 /** Linhas que a tabela sabe mostrar. "% do CDI" sai da rentabilidade e do CDI de cada período. */
@@ -83,8 +86,11 @@ function YearTable({ row, linhas, compacto }: { row: DetailRow; linhas: LinhaDaT
     cdi: { rotulo: "CDI", meses: row.cdiMonths.map(fmtPct), ano: fmtPct(row.cdiNoAno) },
     percentualCdi: {
       rotulo: "% do CDI",
-      meses: row.rentabilidadeMonths.map((r, i) => fmtPct(percentualDoCdi(r, row.cdiMonths[i]))),
-      ano: fmtPct(percentualDoCdi(row.rentNoAno, row.cdiNoAno)),
+      // Com os valores ja arredondados o % do CDI erra ate ~0,3 ponto; usa o calculado sem arredondar.
+      meses: row.percentualCdiMonths
+        ? row.percentualCdiMonths.map(fmtPct)
+        : row.rentabilidadeMonths.map((r, i) => fmtPct(percentualDoCdi(r, row.cdiMonths[i]))),
+      ano: fmtPct(row.percentualCdiMonths ? row.percentualCdiNoAno ?? null : percentualDoCdi(row.rentNoAno, row.cdiNoAno)),
     },
   };
 

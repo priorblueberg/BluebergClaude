@@ -580,8 +580,10 @@ export default function PosicaoConsolidadaPage() {
     // Janela da posicao: do inicio dela ate a data de referencia, ou ate o resgate total.
     const inicio = p.data_inicio;
     const fim = p.resgate_total && p.resgate_total < dataReferenciaISO ? p.resgate_total : dataReferenciaISO;
+    // Respeitar a data do produto: CDI, grafico e tabela param na ultima cota divulgada.
     const { grafico, cdiAcumuladoPct, tabela } = montarGraficoETabela({
       serie: row.serie ?? [], cdiRecords: cdiRecordsPosicao, ibovespa, inicio, fim,
+      ultimaDataDoProduto: dados.dataUltimoPreco,
     });
 
     return {
