@@ -8,7 +8,8 @@
  * REGRA (Daniel, 11/09/2026): respeitar a data do produto. A janela vai da primeira aplicação até
  * a data da última cota divulgada; o CDI não passa dessa data. Sem isso o benchmark anda nos dias
  * em que a cota ainda não saiu e o fundo fica parado, e o % do CDI do mês corrente despenca (setembro
- * de 2026 dava 72% no SulAmérica; na mesma janela, 101,80%).
+ * de 2026 dava 72% no SulAmérica; na mesma janela, 101,80%). O período de cada tipo de produto
+ * está em `src/lib/periodo.ts`.
  */
 import { calcularFundoDiario, type FundoDailyRow, type FundoMovimentacao } from "@/lib/fundoEngine";
 import { cotasCosturadas, trechosDaPosicao, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
@@ -16,6 +17,7 @@ import { situacaoDaPosicao } from "@/lib/situacaoDaPosicao";
 import { buildCdiSeries, buildIbovespaSeries, type CdiRecord, type PontoIbovespa } from "@/lib/cdiCalculations";
 import type { DetailRow } from "@/components/RentabilidadeDetailTable";
 import type { PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
+import { dataGlobalEfetiva, fimDoProduto, ultimaDataAte } from "@/lib/periodo";
 
 /** Dados da posição na data de referência. */
 export interface DadosDaPosicao {
@@ -65,6 +67,8 @@ export interface PosicaoDeFundoCalculada {
   dados: DadosDaPosicao;
   /** Rentabilidade acumulada (%) por dia util. */
   serie: { data: string; pct: number }[];
+  /** Fim do período do fundo: a última cota divulgada até a data global, ou o resgate total. */
+  fim: string | null;
 }
 
 /** A conta de uma posição de fundo, igual para todas as telas. */
@@ -82,7 +86,9 @@ export function calcularPosicaoDeFundo(e: {
   calendario: { data: string; dia_util: boolean }[];
   dataReferenciaISO: string;
 }): PosicaoDeFundoCalculada | null {
-  const fim = e.resgateTotal && e.resgateTotal < e.dataReferenciaISO ? e.resgateTotal : e.dataReferenciaISO;
+  // No fim de semana a data global cai no último dia útil.
+  const global = dataGlobalEfetiva(e.calendario, e.dataReferenciaISO);
+  const fim = e.resgateTotal && e.resgateTotal < global ? e.resgateTotal : global;
   const trechos = trechosDaPosicao(e.movimentosDaPosicao);
   const cotas = trechos.length > 1 ? cotasCosturadas(trechos, e.cotasPorFundo) : (e.cotasPorFundo.get(e.fundoId) || []);
   const linhas = calcularFundoDiario({
@@ -115,6 +121,7 @@ export function calcularPosicaoDeFundo(e: {
       ultimoAte(cotas.map((c) => ({ data: c.data, valor: c.valor_cota })), fim),
     ),
     serie: linhas.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaMWPct * 100 })),
+    fim: fimDoProduto({ dataGlobal: global, ultimoDado: ultimaDataAte(cotas, global), encerramento: e.resgateTotal }),
   };
 }
 

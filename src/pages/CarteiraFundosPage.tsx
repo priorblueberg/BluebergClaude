@@ -8,7 +8,7 @@ import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { useDetalheDeFundo } from "@/hooks/useDetalheDeFundo";
 
 export default function CarteiraFundosPage() {
-  const { carteiraInfo, carteiraRows, allProductRows, productList, cdiRecords, loading } = useCarteiraFundos();
+  const { carteiraInfo, carteiraRows, allProductRows, productList, cdiRecords, periodo, loading } = useCarteiraFundos();
   // Posicao com alerta de mudanca na composicao do fundo em aberto: a serie esta parada na
   // ultima cota ate o cliente informar o que aconteceu, e a linha precisa dizer isso.
   const { alertas } = useAlertas();
@@ -32,6 +32,7 @@ export default function CarteiraFundosPage() {
     ganho: p.ganhoFinanceiro,
     rentabilidade: p.rentabilidade,
     ativo: p.ativo,
+    lingueta: p.lingueta,
   }));
 
   return (
@@ -42,6 +43,7 @@ export default function CarteiraFundosPage() {
       labelColuna="Fundo"
       tituloTabela="Fundos na carteira"
       carteiraInfo={carteiraInfo}
+      periodo={periodo}
       carteiraRows={carteiraRows}
       allProductRows={allProductRows}
       cdiRecords={cdiRecords}

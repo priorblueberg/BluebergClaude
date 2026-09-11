@@ -2,7 +2,7 @@ import { useCarteiraMoedas } from "@/hooks/useCarteiraMoedas";
 import CarteiraCategoriaView, { type LinhaCarteira } from "@/components/CarteiraCategoriaView";
 
 export default function CarteiraMoedasPage() {
-  const { carteiraInfo, carteiraRows, allProductRows, posicoes, cdiRecords, loading } = useCarteiraMoedas();
+  const { carteiraInfo, carteiraRows, allProductRows, posicoes, cdiRecords, periodo, loading } = useCarteiraMoedas();
 
   const linhas: LinhaCarteira[] = posicoes.filter((p) => p.existiuNaJanela !== false).map((p) => ({
     chave: p.codigo_custodia,
@@ -13,6 +13,7 @@ export default function CarteiraMoedasPage() {
     ganho: p.ganho,
     rentabilidade: p.rentabilidade,
     ativo: p.ativo,
+    lingueta: p.lingueta,
   }));
 
   return (
@@ -22,6 +23,7 @@ export default function CarteiraMoedasPage() {
       labelColuna="Posição"
       tituloTabela="Moedas na carteira"
       carteiraInfo={carteiraInfo}
+      periodo={periodo}
       carteiraRows={carteiraRows}
       allProductRows={allProductRows}
       cdiRecords={cdiRecords}

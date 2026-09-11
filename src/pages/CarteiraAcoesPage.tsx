@@ -2,7 +2,7 @@ import { useCarteiraAcoes } from "@/hooks/useCarteiraAcoes";
 import CarteiraCategoriaView, { type LinhaCarteira } from "@/components/CarteiraCategoriaView";
 
 export default function CarteiraAcoesPage() {
-  const { carteiraInfo, carteiraRows, allProductRows, posicoes, cdiRecords, loading } = useCarteiraAcoes();
+  const { carteiraInfo, carteiraRows, allProductRows, posicoes, cdiRecords, periodo, loading } = useCarteiraAcoes();
 
   const linhas: LinhaCarteira[] = posicoes.filter((p) => p.existiuNaJanela !== false).map((p) => ({
     chave: p.codigo_custodia,
@@ -13,6 +13,7 @@ export default function CarteiraAcoesPage() {
     ganho: p.ganho,
     rentabilidade: p.rentabilidade,
     ativo: p.ativo,
+    lingueta: p.lingueta,
   }));
 
   return (
@@ -22,6 +23,7 @@ export default function CarteiraAcoesPage() {
       labelColuna="Posição"
       tituloTabela="Ações na carteira"
       carteiraInfo={carteiraInfo}
+      periodo={periodo}
       carteiraRows={carteiraRows}
       allProductRows={allProductRows}
       cdiRecords={cdiRecords}

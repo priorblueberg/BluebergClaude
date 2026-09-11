@@ -9,6 +9,7 @@ import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart
 import { useCarteiraRF } from "@/hooks/useCarteiraRF";
 import { ProductDetail, type CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 import { Badge } from "@/components/ui/badge";
+import LinguetaDeData from "@/components/LinguetaDeData";
 import { CircleCheck, CircleX } from "lucide-react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -50,7 +51,7 @@ export default function CarteiraRendaFixaPage() {
   // Carga e cálculo agora vivem no hook, compartilhado com o dashboard Total.
   const {
     carteiraInfo, carteiraRows, allProductRows, cdiRecords,
-    ibovespaData, productList, loading, allCustodiaForCategoria,
+    ibovespaData, productList, loading, allCustodiaForCategoria, periodo,
   } = useCarteiraRF();
   const [selectedProduct, setSelectedProduct] = useState<AnalysisCustodiaProduct | null>(null);
 
@@ -197,6 +198,7 @@ export default function CarteiraRendaFixaPage() {
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <p className="text-sm text-muted-foreground">
                 Período de Análise: De {fmtDate(carteiraInfo.data_inicio)} a {fmtDate(carteiraInfo.data_calculo)}
+                <LinguetaDeData data={periodo?.lingueta} dataGlobal={periodo?.dataGlobal} />
               </p>
               {statusBadge}
             </div>
@@ -341,7 +343,10 @@ export default function CarteiraRendaFixaPage() {
                         <TableCell className="text-foreground">{fmtBrl(row.valorAtualizado)}</TableCell>
                         <TableCell className="text-foreground">{fmtBrl(row.ganhoFinanceiro)}</TableCell>
                         <TableCell className="text-foreground">{row.rentabilidade.toFixed(2)}%</TableCell>
-                        <TableCell className="text-foreground">{row.custodiante}</TableCell>
+                        <TableCell className="text-foreground">
+                          {row.custodiante}
+                          <LinguetaDeData data={row.lingueta} dataGlobal={periodo?.dataGlobal} />
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

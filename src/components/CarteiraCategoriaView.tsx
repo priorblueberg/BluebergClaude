@@ -9,6 +9,8 @@ import type { DailyRow } from "@/lib/rendaFixaEngine";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
 import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
 import { Badge } from "@/components/ui/badge";
+import LinguetaDeData from "@/components/LinguetaDeData";
+import type { PeriodoDaCarteira } from "@/lib/periodo";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -23,6 +25,8 @@ export interface LinhaCarteira {
   ganho: number;
   rentabilidade: number;
   ativo: boolean;
+  /** Fim do periodo do produto quando ele termina antes da data global (lingueta cinza). */
+  lingueta?: string | null;
 }
 
 interface Props {
@@ -32,6 +36,8 @@ interface Props {
   labelColuna: string;
   tituloTabela: string;
   carteiraInfo: { data_inicio: string | null; data_calculo: string | null } | null;
+  /** Periodo da carteira: o fim e a lingueta do total. */
+  periodo?: PeriodoDaCarteira | null;
   carteiraRows: CarteiraRFRow[];
   allProductRows: DailyRow[][];
   cdiRecords: CdiRecord[];
@@ -60,7 +66,7 @@ const fmtData = (d: string | null) =>
  */
 export default function CarteiraCategoriaView({
   titulo, labelSerie, labelColuna, tituloTabela,
-  carteiraInfo, carteiraRows, allProductRows, cdiRecords, linhas, loading,
+  carteiraInfo, periodo, carteiraRows, allProductRows, cdiRecords, linhas, loading,
   mensagemVazio, nota, onClicarLinha,
 }: Props) {
   const { dataReferenciaISO } = useDataReferencia();
@@ -152,6 +158,7 @@ export default function CarteiraCategoriaView({
         <h1 className="text-lg font-semibold text-foreground">{titulo}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Período de Análise: de {fmtData(carteiraInfo.data_inicio)} a {fmtData(carteiraInfo.data_calculo)}
+          <LinguetaDeData data={periodo?.lingueta} dataGlobal={periodo?.dataGlobal} />
         </p>
       </div>
 
@@ -213,8 +220,9 @@ export default function CarteiraCategoriaView({
                   <TableCell className="text-right">{fmtBrl(l.patrimonio)}</TableCell>
                   <TableCell className="text-right">{fmtBrl(l.ganho)}</TableCell>
                   <TableCell className="text-right">{fmtPct(l.rentabilidade)}</TableCell>
-                  <TableCell className="text-center">
+                  <TableCell className="whitespace-nowrap text-center">
                     <Badge variant={l.ativo ? "default" : "secondary"}>{l.ativo ? "Ativo" : "Encerrado"}</Badge>
+                    <LinguetaDeData data={l.lingueta} dataGlobal={periodo?.dataGlobal} />
                   </TableCell>
                 </TableRow>
               ))}

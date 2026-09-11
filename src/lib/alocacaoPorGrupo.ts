@@ -10,6 +10,7 @@
 import { calcularCarteiraRendaFixa } from "./carteiraRendaFixaEngine";
 import { buildCdiSeries, CdiRecord } from "./cdiCalculations";
 import type { DailyRow } from "./rendaFixaEngine";
+import type { PeriodoDaCarteira } from "./periodo";
 
 export interface GrupoMetricas {
   nome: string;
@@ -19,6 +20,8 @@ export interface GrupoMetricas {
   cdiAcumulado: number | null;
   sobreCdi: number | null;
   alocacao: number;
+  /** Fim do periodo do grupo quando ele termina antes da data global (lingueta cinza). */
+  lingueta?: string | null;
 }
 
 interface Params {
@@ -32,6 +35,12 @@ interface Params {
   dataReferencia: string;
   /** Grupos sem motor (só patrimônio em custódia), ex.: categorias ainda não calculadas. */
   extras?: { nome: string; patrimonio: number }[];
+  /**
+   * Período de cada grupo que é uma carteira (a categoria Fundos de Investimentos, por exemplo).
+   * O grupo termina no fim DELE, com o CDI cortado ali, e não no fim da carteira de cima: é a regra
+   * do período (`src/lib/periodo.ts`) aplicada um nível acima.
+   */
+  periodoPorGrupo?: Map<string, PeriodoDaCarteira>;
 }
 
 export function calcularAlocacaoPorGrupo({
@@ -43,6 +52,7 @@ export function calcularAlocacaoPorGrupo({
   dataCalculo,
   dataReferencia,
   extras = [],
+  periodoPorGrupo,
 }: Params): GrupoMetricas[] {
   const linhas: GrupoMetricas[] = [];
 
@@ -50,7 +60,9 @@ export function calcularAlocacaoPorGrupo({
     const productRows = indices.map(i => allProductRows[i]).filter(Boolean);
     if (productRows.length === 0) continue;
 
-    const rows = calcularCarteiraRendaFixa({ productRows, calendario, dataInicio, dataCalculo });
+    const periodoDoGrupo = periodoPorGrupo?.get(nome);
+    const fimDoGrupo = periodoDoGrupo?.fim && periodoDoGrupo.fim < dataCalculo ? periodoDoGrupo.fim : dataCalculo;
+    const rows = calcularCarteiraRendaFixa({ productRows, calendario, dataInicio, dataCalculo: fimDoGrupo });
     if (rows.length === 0) continue;
 
     // Posição na data de referência (a carteira pode ir além dela).
@@ -70,7 +82,7 @@ export function calcularAlocacaoPorGrupo({
     // não deve ser comparado com o CDI da carteira inteira.
     const primeiraComPosicao = rows.find(r => r.liquido > 0 || r.liquido2 > 0);
     const inicioGrupo = primeiraComPosicao ? primeiraComPosicao.data : dataInicio;
-    const cdiSerie = buildCdiSeries(cdiRecords, inicioGrupo, dataCalculo);
+    const cdiSerie = buildCdiSeries(cdiRecords, inicioGrupo, fimDoGrupo);
     const cdiAcumulado = cdiSerie.length > 0 ? cdiSerie[cdiSerie.length - 1].cdi_acumulado : null;
 
     const sobreCdi =
@@ -86,6 +98,7 @@ export function calcularAlocacaoPorGrupo({
       cdiAcumulado,
       sobreCdi,
       alocacao: 0,
+      lingueta: periodoDoGrupo?.lingueta ?? null,
     });
   }
 

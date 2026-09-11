@@ -19,6 +19,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
+import { dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, type PeriodoDaCarteira } from "@/lib/periodo";
 
 export interface CarteiraInfo {
   nome_carteira: string;
@@ -60,6 +61,10 @@ export interface ProductListItem {
   rentabilidade: number;
   /** false quando o papel nao teve nenhum dia dentro da janela. Some da lista. */
   existiuNaJanela?: boolean;
+  /** Fim do periodo do produto (`src/lib/periodo.ts`). */
+  fim?: string | null;
+  /** Data da lingueta cinza quando o periodo termina antes da data global. */
+  lingueta?: string | null;
   custodiante: string;
   ativo: boolean;
   estrategia: string | null;
@@ -91,6 +96,7 @@ let _cartRFCached: {
   productList: ProductListItem[];
   allCustodiaForCategoria: CustodiaCategoriaItem[];
   calendario: { data: string; dia_util: boolean }[];
+  periodo: PeriodoDaCarteira | null;
 } | null = null;
 
 export function useCarteiraRF() {
@@ -107,6 +113,7 @@ export function useCarteiraRF() {
   // Calendário sai do hook porque o dashboard roda o motor de carteira por grupo
   // (categoria/instituição) para obter a rentabilidade de cada linha.
   const [calendario, setCalendario] = useState<{ data: string; dia_util: boolean }[]>(_cartRFCached?.calendario ?? []);
+  const [periodo, setPeriodo] = useState<PeriodoDaCarteira | null>(_cartRFCached?.periodo ?? null);
 
   useEffect(() => {
     if (!user) return;
@@ -209,13 +216,14 @@ export function useCarteiraRF() {
         setIbovespaData(ibovSemRF);
         setProductList([]);
         setCalendario([]);
+        setPeriodo(null);
         setLoading(false);
         _cartRFCachedVersion = appliedVersion;
         // O cache acompanha a versao: sem isto, quem montasse o hook depois (voltar para a lamina)
         // herdava as series de um carregamento anterior e o CDI sumia de novo.
         _cartRFCached = {
           carteiraInfo: infoSemRF, carteiraRows: [], allProductRows: [], cdiRecords: cdiSemRF,
-          ibovespaData: ibovSemRF, productList: [], calendario: [],
+          ibovespaData: ibovSemRF, productList: [], calendario: [], periodo: null,
           allCustodiaForCategoria: (custodiaData || []).filter((r: any) => !r.resgate_total).map((r: any) => ({
             categoria_nome: r.categorias?.nome || "Outros",
             valor_investido: Number(r.valor_investido),
@@ -225,17 +233,8 @@ export function useCarteiraRF() {
         return;
       }
 
-      const info: CarteiraInfo = {
-        nome_carteira: cartData.nome_carteira,
-        status: cartData.status,
-        data_inicio: cartData.data_inicio,
-        data_calculo: cartData.data_calculo,
-        data_limite: cartData.data_limite,
-        resgate_total: cartData.resgate_total,
-      };
-      setCarteiraInfo(info);
-
       const dataInicio = cartData.data_inicio;
+      // A data do cabecalho. As buscas vao ate ela; o calculo, ate a data global efetiva.
       const dataCalculo = cartData.data_calculo;
       const pisoSeries = dataInicioMercado && dataInicioMercado < dataInicio ? dataInicioMercado : dataInicio;
 
@@ -272,6 +271,9 @@ export function useCarteiraRF() {
 
       const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
       setCalendario(calendario);
+      // Renda fixa vai ate a data global (o CDI vigente vale ate a proxima reuniao do Copom), e no
+      // fim de semana ela cai no ultimo dia util.
+      const global = dataGlobalEfetiva(calendario, dataCalculo);
       const cdiRaw = (cdiRes.data || []).map((c: any) => ({ data: c.data, taxa_anual: Number(c.taxa_anual) }));
       const ibovRaw = (ibovRes.data || []).map((r: any) => ({ data: r.data, pontos: Number(r.pontos) }));
       setIbovespaData(ibovRaw);
@@ -317,10 +319,10 @@ export function useCarteiraRF() {
 
       // Renda Fixa products
       for (const product of rfProducts.filter(p => p.modalidade !== "Poupança")) {
-        const dataFim = product.resgate_total || product.vencimento || dataCalculo;
+        const dataFim = product.resgate_total || product.vencimento || global;
         allProdRows.push(calcularRendaFixaDiario({
           dataInicio: product.data_inicio,
-          dataCalculo: dataFim > dataCalculo ? dataCalculo : dataFim,
+          dataCalculo: dataFim > global ? global : dataFim,
           taxa: product.taxa || 0,
           modalidade: product.modalidade || "",
           // Debenture, CRI e CRA rendem no proprio dia da compra.
@@ -349,7 +351,7 @@ export function useCarteiraRF() {
 
         allProdRows.push(calcularPoupancaDiario({
           dataInicio: lotesForEngine[0].data_aplicacao,
-          dataCalculo: dataCalculo,
+          dataCalculo: global,
           calendario,
           movimentacoes: allMovsForProduct,
           lotes: lotesForEngine,
@@ -363,26 +365,34 @@ export function useCarteiraRF() {
 
       setAllProductRows(allProdRows);
 
+      const periodos: { fim: string | null; comPosicao: boolean }[] = [];
       const pList = prodRowProducts.map((product, idx) => {
         const rows = allProdRows[idx];
         const isEncerradoNaDataCalculo = product.resgate_total
-          ? product.resgate_total <= dataCalculo
+          ? product.resgate_total <= global
           : product.vencimento
-            ? product.vencimento <= dataCalculo
+            ? product.vencimento <= global
             : false;
-        // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
-        const m = metricasDoProdutoNaJanela(rows, calendario, dataInicio, dataCalculo);
+        // Periodo do titulo: sem serie propria, vai ate a data global ou ate o encerramento.
+        const fimTitulo = fimDoProduto({
+          dataGlobal: global, encerramento: product.resgate_total || product.vencimento,
+        }) ?? global;
+        // Ganho e rentabilidade DO PERIODO, pela mesma conta do card e dos grupos.
+        const m = metricasDoProdutoNaJanela(rows, calendario, dataInicio, fimTitulo);
         // "Encerrado" vem do SALDO calculado, nao so do cadastro. `custodia.resgate_total`
         // guarda o vencimento quando o papel foi zerado por uma movimentacao do tipo
         // "Resgate" (parcial que zerou) em vez de "Resgate Total" - `resgateTotalDeMovs` so
         // enxerga a segunda. Quatro CDBs apareciam como "Em custodia" com valor R$ 0,00.
         const encerrado = isEncerradoNaDataCalculo || (m.existiuNaJanela && m.patrimonio <= 0.005);
+        periodos.push({ fim: fimTitulo, comPosicao: !encerrado && m.existiuNaJanela });
         return {
           nome: product.nome || product.produto_nome,
           valorAtualizado: encerrado ? 0 : m.patrimonio,
           ganhoFinanceiro: m.ganho,
           rentabilidade: m.rentabilidade,
           existiuNaJanela: m.existiuNaJanela,
+          fim: fimTitulo,
+          lingueta: linguetaDoFim(fimTitulo, global, !encerrado),
           custodiante: product.instituicao_nome,
           ativo: !encerrado,
           estrategia: product.estrategia,
@@ -410,16 +420,29 @@ export function useCarteiraRF() {
       });
       setProductList(pList);
 
+      const per = periodoDaCarteira(periodos, global);
+      const fimCarteira = per.fim ?? global;
+      const info: CarteiraInfo = {
+        nome_carteira: cartData.nome_carteira,
+        status: cartData.status,
+        data_inicio: cartData.data_inicio,
+        data_calculo: fimCarteira,
+        data_limite: cartData.data_limite,
+        resgate_total: cartData.resgate_total,
+      };
+      setCarteiraInfo(info);
+      setPeriodo(per);
+
       const result = calcularCarteiraRendaFixa({
         productRows: allProdRows,
         calendario,
         dataInicio,
-        dataCalculo,
+        dataCalculo: fimCarteira,
       });
 
       setCarteiraRows(result);
       _cartRFCachedVersion = appliedVersion;
-      _cartRFCached = { carteiraInfo: info, carteiraRows: result, allProductRows: allProdRows, cdiRecords: mergedCdi, ibovespaData: ibovRaw, productList: pList, allCustodiaForCategoria: (custodiaData || []).filter((r: any) => !r.resgate_total).map((r: any) => ({ categoria_nome: r.categorias?.nome || "Outros", valor_investido: Number(r.valor_investido), custodia_no_dia: r.custodia_no_dia != null ? Number(r.custodia_no_dia) : null })), calendario };
+      _cartRFCached = { periodo: per, carteiraInfo: info, carteiraRows: result, allProductRows: allProdRows, cdiRecords: mergedCdi, ibovespaData: ibovRaw, productList: pList, allCustodiaForCategoria: (custodiaData || []).filter((r: any) => !r.resgate_total).map((r: any) => ({ categoria_nome: r.categorias?.nome || "Outros", valor_investido: Number(r.valor_investido), custodia_no_dia: r.custodia_no_dia != null ? Number(r.custodia_no_dia) : null })), calendario };
       setLoading(false);
     })();
   }, [user, appliedVersion]);
@@ -433,6 +456,7 @@ export function useCarteiraRF() {
     productList,
     allCustodiaForCategoria,
     calendario,
+    periodo,
     loading,
   };
 }

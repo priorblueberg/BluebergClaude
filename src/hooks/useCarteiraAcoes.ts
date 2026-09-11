@@ -20,6 +20,10 @@ import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { CarteiraInfo, ProductListItem } from "@/hooks/useCarteiraRF";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
+import {
+  dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, ultimaBarraReal, type BarraDeAcao,
+  type PeriodoDaCarteira,
+} from "@/lib/periodo";
 
 export interface PosicaoAcao {
   codigo_custodia: string;
@@ -36,6 +40,8 @@ export interface PosicaoAcao {
   proventos: number;
   ativo: boolean;
   existiuNaJanela?: boolean;
+  /** Data da lingueta cinza: a ultima barra negociada, quando ela vem antes da data global. */
+  lingueta?: string | null;
 }
 
 let _acoesCachedVersion: number | null = null;
@@ -46,6 +52,7 @@ let _acoesCached: {
   posicoes: PosicaoAcao[];
   productList: ProductListItem[];
   cdiRecords: CdiRecord[];
+  periodo: PeriodoDaCarteira | null;
 } | null = null;
 
 export function useCarteiraAcoes() {
@@ -57,6 +64,7 @@ export function useCarteiraAcoes() {
   const [posicoes, setPosicoes] = useState<PosicaoAcao[]>(_acoesCached?.posicoes ?? []);
   const [productList, setProductList] = useState<ProductListItem[]>(_acoesCached?.productList ?? []);
   const [cdiRecords, setCdiRecords] = useState<CdiRecord[]>(_acoesCached?.cdiRecords ?? []);
+  const [periodo, setPeriodo] = useState<PeriodoDaCarteira | null>(_acoesCached?.periodo ?? null);
   const [loading, setLoading] = useState(_acoesCachedVersion === null);
 
   useEffect(() => {
@@ -93,10 +101,10 @@ export function useCarteiraAcoes() {
 
       const vazio = () => {
         setCarteiraInfo((cartData as CarteiraInfo) ?? null);
-        setCarteiraRows([]); setAllProductRows([]); setPosicoes([]); setProductList([]); setCdiRecords([]);
+        setCarteiraRows([]); setAllProductRows([]); setPosicoes([]); setProductList([]); setCdiRecords([]); setPeriodo(null);
         setLoading(false);
         _acoesCachedVersion = appliedVersion;
-        _acoesCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], posicoes: [], productList: [], cdiRecords: [] };
+        _acoesCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], posicoes: [], productList: [], cdiRecords: [], periodo: null };
       };
 
       if (posicoesCustodia.length === 0 || !cartData?.data_inicio || !cartData?.data_calculo) {
@@ -104,10 +112,9 @@ export function useCarteiraAcoes() {
         return;
       }
 
-      const info = cartData as CarteiraInfo;
-      const dataInicio = info.data_inicio!;
-      const dataCalculo = info.data_calculo!;
-      setCarteiraInfo(info);
+      const dataInicio = cartData.data_inicio!;
+      // A data do cabecalho: as buscas vao ate ela, o calculo ate a data global efetiva.
+      const dataCalculo = cartData.data_calculo!;
       // As séries e o calendário vão desde o início REAL da carteira, não desde o começo da
       // janela: o motor por produto roda a vida inteira do papel (a quantidade vem das
       // movimentações acumuladas) e só o motor de carteira recorta pelo período.
@@ -124,7 +131,7 @@ export function useCarteiraAcoes() {
           .eq("user_id", user.id).in("codigo_custodia", codigos).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
           .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
-        fetchAllRows((de, ate) => supabase.from("cotacoes_acoes").select("ticker, data, fechamento")
+        fetchAllRows((de, ate) => supabase.from("cotacoes_acoes").select("ticker, data, fechamento, abertura, maxima, minima, volume, provisorio")
           .in("ticker", tickers).gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
         // Proventos e eventos NÃO são recortados pela janela: um desdobramento anterior ao
         // início ainda define a quantidade de hoje, e o motor precisa dele para converter.
@@ -155,7 +162,15 @@ export function useCarteiraAcoes() {
         return m;
       };
 
+      const global = dataGlobalEfetiva(calendario, dataCalculo);
+
       const precosPorTicker = porTicker(precoRaw as any[], (r) => ({ data: r.data, fechamento: Number(r.fechamento) }));
+      // A barra inteira, para separar o pregao em andamento (vale) da copia do dia anterior (nao vale).
+      const num = (v: unknown) => (v == null ? null : Number(v));
+      const barrasPorTicker = porTicker(precoRaw as any[], (r): BarraDeAcao => ({
+        data: r.data, fechamento: num(r.fechamento), abertura: num(r.abertura), maxima: num(r.maxima),
+        minima: num(r.minima), volume: num(r.volume), provisorio: !!r.provisorio,
+      }));
       const proventosPorTicker = porTicker(provRaw as any[], (r): Provento => ({
         tipo: r.tipo, valor: Number(r.valor), data_ex: r.data_ex, data_pagamento: r.data_pagamento,
       }));
@@ -173,9 +188,10 @@ export function useCarteiraAcoes() {
       const prodRows: DailyRow[][] = [];
       const lista: PosicaoAcao[] = [];
       const pList: ProductListItem[] = [];
+      const periodos: { fim: string | null; comPosicao: boolean }[] = [];
 
       for (const p of posicoesCustodia) {
-        const fim = p.resgate_total && p.resgate_total < dataCalculo ? p.resgate_total : dataCalculo;
+        const fim = p.resgate_total && p.resgate_total < global ? p.resgate_total : global;
         const rows = calcularAcoesDiario({
           dataInicio: p.data_inicio,
           dataCalculo: fim,
@@ -195,13 +211,22 @@ export function useCarteiraAcoes() {
         prodRows.push(acoesRowsToDailyRows(rows));
 
         const ult = rows.length ? rows[rows.length - 1] : null;
-        const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, dataCalculo);
+        // Periodo do papel: ate a ultima barra negociada, inclusive a do pregao em andamento.
+        const fimPapel = fimDoProduto({
+          dataGlobal: global,
+          ultimoDado: ultimaBarraReal(barrasPorTicker.get(p.ticker) || [], global),
+          encerramento: p.resgate_total,
+        });
+        const fimDaLinha = fimPapel ?? global;
+        const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, fimDaLinha);
         // "Encerrado" vem do SALDO calculado, não só do cadastro - mesma regra dos outros hooks.
-        const encerrado = (!!p.resgate_total && p.resgate_total <= dataCalculo)
+        const encerrado = (!!p.resgate_total && p.resgate_total <= global)
           || (m.existiuNaJanela && m.patrimonio <= 0.005);
+        const lingueta = linguetaDoFim(fimPapel, global, !encerrado);
+        periodos.push({ fim: fimPapel, comPosicao: !encerrado && m.existiuNaJanela });
 
-        // Provento da JANELA, não da vida toda: é o que a linha da tabela mostra.
-        const naJanela = rows.filter((r) => r.data >= dataInicio && r.data <= dataCalculo);
+        // Provento do PERIODO, não da vida toda: é o que a linha da tabela mostra.
+        const naJanela = rows.filter((r) => r.data >= dataInicio && r.data <= fimDaLinha);
         const proventosJanela = naJanela.reduce((s, r) => s + r.proventoLiquido, 0);
 
         const qtd = encerrado ? 0 : (ult?.quantidade ?? 0);
@@ -219,6 +244,7 @@ export function useCarteiraAcoes() {
           proventos: proventosJanela,
           ativo: !encerrado,
           existiuNaJanela: m.existiuNaJanela,
+          lingueta,
         });
 
         pList.push({
@@ -227,6 +253,8 @@ export function useCarteiraAcoes() {
           ganhoFinanceiro: m.ganho,
           rentabilidade: m.rentabilidade,
           existiuNaJanela: m.existiuNaJanela,
+          fim: fimPapel,
+          lingueta,
           custodiante: p.custodiante,
           ativo: !encerrado,
           estrategia: null,
@@ -253,18 +281,24 @@ export function useCarteiraAcoes() {
         });
       }
 
-      const result = calcularCarteiraRendaFixa({ productRows: prodRows, calendario, dataInicio, dataCalculo });
+      // A carteira vai ate o maior fim entre os papeis com posicao.
+      const per = periodoDaCarteira(periodos, global);
+      const fimCarteira = per.fim ?? global;
+      const info: CarteiraInfo = { ...(cartData as CarteiraInfo), data_calculo: fimCarteira };
+      const result = calcularCarteiraRendaFixa({ productRows: prodRows, calendario, dataInicio, dataCalculo: fimCarteira });
 
+      setCarteiraInfo(info);
       setAllProductRows(prodRows);
       setPosicoes(lista);
       setProductList(pList);
       setCarteiraRows(result);
       setCdiRecords(mergedCdi);
+      setPeriodo(per);
       _acoesCachedVersion = appliedVersion;
-      _acoesCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi };
+      _acoesCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi, periodo: per };
       setLoading(false);
     })();
   }, [user, appliedVersion]);
 
-  return { carteiraInfo, carteiraRows, allProductRows, posicoes, productList, cdiRecords, loading };
+  return { carteiraInfo, carteiraRows, allProductRows, posicoes, productList, cdiRecords, periodo, loading };
 }

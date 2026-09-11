@@ -128,7 +128,8 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
           cnpj: c.cadastro_de_fundos?.cnpj_classe ?? null,
           dataInicio: c.data_inicio,
           categoriaId: c.categoria_id,
-          fim: c.resgate_total && c.resgate_total < dataReferenciaISO ? c.resgate_total : dataReferenciaISO,
+          // Período do fundo: da aplicação à última cota divulgada (`src/lib/periodo.ts`).
+          fim: calculo.fim ?? (c.resgate_total && c.resgate_total < dataReferenciaISO ? c.resgate_total : dataReferenciaISO),
           calculo,
           cdiRecords,
         });
@@ -150,9 +151,8 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
       cdiRecords: base.cdiRecords,
       ibovespa,
       inicio: base.dataInicio,
-      fim: base.fim,
       // Respeitar a data do produto: CDI, grafico e tabela param na ultima cota divulgada.
-      ultimaDataDoProduto: base.calculo.dados.dataUltimoPreco,
+      fim: base.fim,
     });
     return {
       tipo: "fundo",

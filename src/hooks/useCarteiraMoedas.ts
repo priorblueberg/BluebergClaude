@@ -18,6 +18,9 @@ import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { CarteiraInfo, ProductListItem } from "@/hooks/useCarteiraRF";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
+import {
+  dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, ultimaDataAte, type PeriodoDaCarteira,
+} from "@/lib/periodo";
 
 export interface PosicaoMoeda {
   codigo_custodia: string;
@@ -33,6 +36,8 @@ export interface PosicaoMoeda {
   ativo: boolean;
   /** false quando a posicao nao teve nenhum dia dentro da janela. */
   existiuNaJanela?: boolean;
+  /** Data da lingueta cinza: a ultima PTAX oficial, quando ela vem antes da data global. */
+  lingueta?: string | null;
 }
 
 let _moedasCachedVersion: number | null = null;
@@ -43,6 +48,7 @@ let _moedasCached: {
   posicoes: PosicaoMoeda[];
   productList: ProductListItem[];
   cdiRecords: CdiRecord[];
+  periodo: PeriodoDaCarteira | null;
 } | null = null;
 
 const TABELA_POR_MOEDA: Record<string, string> = {
@@ -59,6 +65,7 @@ export function useCarteiraMoedas() {
   const [posicoes, setPosicoes] = useState<PosicaoMoeda[]>(_moedasCached?.posicoes ?? []);
   const [productList, setProductList] = useState<ProductListItem[]>(_moedasCached?.productList ?? []);
   const [cdiRecords, setCdiRecords] = useState<CdiRecord[]>(_moedasCached?.cdiRecords ?? []);
+  const [periodo, setPeriodo] = useState<PeriodoDaCarteira | null>(_moedasCached?.periodo ?? null);
   const [loading, setLoading] = useState(_moedasCachedVersion === null);
 
   useEffect(() => {
@@ -94,10 +101,10 @@ export function useCarteiraMoedas() {
 
       const vazio = () => {
         setCarteiraInfo((cartData as CarteiraInfo) ?? null);
-        setCarteiraRows([]); setAllProductRows([]); setPosicoes([]); setProductList([]); setCdiRecords([]);
+        setCarteiraRows([]); setAllProductRows([]); setPosicoes([]); setProductList([]); setCdiRecords([]); setPeriodo(null);
         setLoading(false);
         _moedasCachedVersion = appliedVersion;
-        _moedasCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], posicoes: [], productList: [], cdiRecords: [] };
+        _moedasCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], posicoes: [], productList: [], cdiRecords: [], periodo: null };
       };
 
       if (posicoesCustodia.length === 0 || !cartData?.data_inicio || !cartData?.data_calculo) {
@@ -105,10 +112,9 @@ export function useCarteiraMoedas() {
         return;
       }
 
-      const info = cartData as CarteiraInfo;
-      const dataInicio = info.data_inicio!;
-      const dataCalculo = info.data_calculo!;
-      setCarteiraInfo(info);
+      const dataInicio = cartData.data_inicio!;
+      // A data do cabecalho: as buscas vao ate ela, o calculo ate a data global efetiva.
+      const dataCalculo = cartData.data_calculo!;
       // As series de mercado e o calendario vao desde o inicio REAL da carteira, nao desde o
       // comeco da janela: os motores por produto rodam a vida inteira do ativo (a quantidade
       // vem das movimentacoes acumuladas) e so o motor de carteira recorta pelo periodo.
@@ -127,7 +133,7 @@ export function useCarteiraMoedas() {
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
           .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
         ...moedasUsadas.map((m) =>
-          fetchAllRows((de, ate) => supabase.from(TABELA_POR_MOEDA[m] as any).select("data, cotacao_venda")
+          fetchAllRows((de, ate) => supabase.from(TABELA_POR_MOEDA[m] as any).select("data, cotacao_venda, provisorio")
             .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate))),
       ]);
 
@@ -137,9 +143,15 @@ export function useCarteiraMoedas() {
         data: c.data, taxa_anual: Number(c.taxa_anual), dia_util: calMap.get(c.data) ?? false,
       }));
 
-      const cotacoesPorMoeda = new Map<string, { data: string; cotacao: number }[]>();
+      const global = dataGlobalEfetiva(calendario, dataCalculo);
+
+      // A linha provisoria (o carry-forward repete a PTAX anterior) entra no motor, porque repete o
+      // mesmo valor; so nao conta como ultimo dado da moeda.
+      const cotacoesPorMoeda = new Map<string, { data: string; cotacao: number; provisorio: boolean }[]>();
       moedasUsadas.forEach((m, i) => {
-        cotacoesPorMoeda.set(m, (seriesRaw[i] as any[]).map((r) => ({ data: r.data, cotacao: Number(r.cotacao_venda) })));
+        cotacoesPorMoeda.set(m, (seriesRaw[i] as any[]).map((r) => ({
+          data: r.data, cotacao: Number(r.cotacao_venda), provisorio: !!r.provisorio,
+        })));
       });
 
       const movsPorCodigo = new Map<string, any[]>();
@@ -152,9 +164,10 @@ export function useCarteiraMoedas() {
       const prodRows: DailyRow[][] = [];
       const lista: PosicaoMoeda[] = [];
       const pList: ProductListItem[] = [];
+      const periodos: { fim: string | null; comPosicao: boolean }[] = [];
 
       for (const p of posicoesCustodia) {
-        const fim = p.resgate_total && p.resgate_total < dataCalculo ? p.resgate_total : dataCalculo;
+        const fim = p.resgate_total && p.resgate_total < global ? p.resgate_total : global;
         const rows = calcularCambioDiario({
           dataInicio: p.data_inicio,
           dataCalculo: fim,
@@ -172,14 +185,22 @@ export function useCarteiraMoedas() {
 
         const ult = rows.length ? rows[rows.length - 1] : null;
         const infoMoeda = moedaPorCodigo(p.moeda);
-        // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
-        const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, dataCalculo);
+        // Periodo da moeda: ate a ultima PTAX oficial.
+        const fimMoeda = fimDoProduto({
+          dataGlobal: global,
+          ultimoDado: ultimaDataAte(cotacoesPorMoeda.get(p.moeda) || [], global, (c) => !c.provisorio),
+          encerramento: p.resgate_total,
+        });
+        // Ganho e rentabilidade DO PERIODO, pela mesma conta do card e dos grupos.
+        const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, fimMoeda ?? global);
         // "Encerrado" vem do SALDO calculado, nao so do cadastro. `custodia.resgate_total`
         // guarda o vencimento quando o papel foi zerado por uma movimentacao do tipo
         // "Resgate" (parcial que zerou) em vez de "Resgate Total" - `resgateTotalDeMovs` so
         // enxerga a segunda. Quatro CDBs apareciam como "Em custodia" com valor R$ 0,00.
-        const encerrado = (!!p.resgate_total && p.resgate_total <= dataCalculo)
+        const encerrado = (!!p.resgate_total && p.resgate_total <= global)
           || (m.existiuNaJanela && m.patrimonio <= 0.005);
+        const lingueta = linguetaDoFim(fimMoeda, global, !encerrado);
+        periodos.push({ fim: fimMoeda, comPosicao: !encerrado && m.existiuNaJanela });
         lista.push({
           codigo_custodia: p.codigo_custodia,
           nome: p.nome,
@@ -193,6 +214,7 @@ export function useCarteiraMoedas() {
           cotacao: ult?.cotacao ?? null,
           ativo: !encerrado,
           existiuNaJanela: m.existiuNaJanela,
+          lingueta,
         });
 
         pList.push({
@@ -201,6 +223,8 @@ export function useCarteiraMoedas() {
           ganhoFinanceiro: m.ganho,
           rentabilidade: m.rentabilidade,
           existiuNaJanela: m.existiuNaJanela,
+          fim: fimMoeda,
+          lingueta,
           custodiante: p.custodiante,
           ativo: !encerrado,
           estrategia: null,
@@ -227,18 +251,24 @@ export function useCarteiraMoedas() {
         });
       }
 
-      const result = calcularCarteiraRendaFixa({ productRows: prodRows, calendario, dataInicio, dataCalculo });
+      // A carteira vai ate o maior fim entre as moedas com posicao.
+      const per = periodoDaCarteira(periodos, global);
+      const fimCarteira = per.fim ?? global;
+      const info: CarteiraInfo = { ...(cartData as CarteiraInfo), data_calculo: fimCarteira };
+      const result = calcularCarteiraRendaFixa({ productRows: prodRows, calendario, dataInicio, dataCalculo: fimCarteira });
 
+      setCarteiraInfo(info);
       setAllProductRows(prodRows);
       setPosicoes(lista);
       setProductList(pList);
       setCarteiraRows(result);
       setCdiRecords(mergedCdi);
+      setPeriodo(per);
       _moedasCachedVersion = appliedVersion;
-      _moedasCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi };
+      _moedasCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi, periodo: per };
       setLoading(false);
     })();
   }, [user, appliedVersion]);
 
-  return { carteiraInfo, carteiraRows, allProductRows, posicoes, productList, cdiRecords, loading };
+  return { carteiraInfo, carteiraRows, allProductRows, posicoes, productList, cdiRecords, periodo, loading };
 }

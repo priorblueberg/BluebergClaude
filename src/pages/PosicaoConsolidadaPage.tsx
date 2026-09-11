@@ -22,6 +22,7 @@ import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs }
 
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
 import { situacaoDaPosicao } from "@/lib/situacaoDaPosicao";
+import { dataGlobalEfetiva, fimDoProduto } from "@/lib/periodo";
 import { PaginaCabecalho, BarraDeFiltros, Contagem, TabelaCartao, LinhaMensagem } from "@/components/PaginaPadrao";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -90,6 +91,7 @@ let _cachedRentabilidade = 0;
 let _cachedAlocacaoInst: GrupoMetricas[] = [];
 let _cachedCdiTotal: number | null = null;
 let _cachedCdiRecords: CdiRecord[] = [];
+let _cachedDataGlobal: string | null = null;
 
 export default function PosicaoConsolidadaPage() {
   const { user } = useAuth();
@@ -100,6 +102,8 @@ export default function PosicaoConsolidadaPage() {
   const [cdiAcumuladoTotal, setCdiAcumuladoTotal] = useState<number | null>(_cachedCdiTotal);
   /** CDI do periodo, guardado para o % do CDI e o grafico do detalhe da posicao. */
   const [cdiRecordsPosicao, setCdiRecordsPosicao] = useState<CdiRecord[]>(_cachedCdiRecords);
+  /** Data global efetiva (ultimo dia util ate a data do cabecalho), para o periodo do detalhe. */
+  const [dataGlobalPosicao, setDataGlobalPosicao] = useState<string | null>(_cachedDataGlobal);
   const ibovespa = useIbovespa();
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
@@ -194,6 +198,9 @@ export default function PosicaoConsolidadaPage() {
       ]);
 
       const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
+      const dataGlobal = dataGlobalEfetiva(calendario, dataReferenciaISO);
+      setDataGlobalPosicao(dataGlobal);
+      _cachedDataGlobal = dataGlobal;
       // `dia_util` vem junto porque buildCdiSeries e calcularAlocacaoPorGrupo pedem CdiRecord
       // completo; o motor de renda fixa ignora o campo a mais.
       const diaUtilPorData = new Map<string, boolean>(calendario.map((c) => [c.data, c.dia_util]));
@@ -266,15 +273,17 @@ export default function PosicaoConsolidadaPage() {
       };
 
       // Cotacao das moedas em posicao: o patrimonio e saldo x cotacao do dia.
-      const cotacoesPorMoeda = new Map<string, { data: string; cotacao: number }[]>();
+      const cotacoesPorMoeda = new Map<string, { data: string; cotacao: number; provisorio: boolean }[]>();
       const TABELA_MOEDA: Record<string, string> = { USD: "historico_dolar", EUR: "historico_euro" };
       for (const codigo of new Set(moedaProducts.map((p) => p.moeda!))) {
         const tabela = TABELA_MOEDA[codigo];
         if (!tabela) continue;
         const linhas = await fetchAllRows((de, ate) => supabase
-          .from(tabela as any).select("data, cotacao_venda")
+          .from(tabela as any).select("data, cotacao_venda, provisorio")
           .lte("data", dataReferenciaISO).order("data").range(de, ate));
-        cotacoesPorMoeda.set(codigo, (linhas as any[]).map((r) => ({ data: r.data, cotacao: Number(r.cotacao_venda) })));
+        cotacoesPorMoeda.set(codigo, (linhas as any[]).map((r) => ({
+          data: r.data, cotacao: Number(r.cotacao_venda), provisorio: !!r.provisorio,
+        })));
       }
 
       const posicaoRows: PosicaoRow[] = [];
@@ -436,7 +445,8 @@ export default function PosicaoConsolidadaPage() {
           dados: dadosDaPosicao(
             ult.valorInvestido,
             ult.saldoMoeda,
-            ultimoAte((cotacoesPorMoeda.get(product.moeda!) || []).map((c) => ({ data: c.data, valor: c.cotacao })), fim),
+            // A PTAX repetida pelo carry-forward nao e dado novo: o ultimo preco e a ultima oficial.
+            ultimoAte((cotacoesPorMoeda.get(product.moeda!) || []).filter((c) => !c.provisorio).map((c) => ({ data: c.data, valor: c.cotacao })), fim),
           ),
           serie: rowsMoeda.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaMWPct * 100 })),
         });
@@ -577,13 +587,18 @@ export default function PosicaoConsolidadaPage() {
     const tipo = p.fundo_id ? "fundo" : p.moeda ? "moeda" : p.categoria_nome === "Renda Fixa" ? "renda_fixa" : "outro";
     const dados = row.dados ?? SEM_DADOS;
 
-    // Janela da posicao: do inicio dela ate a data de referencia, ou ate o resgate total.
+    // Periodo da posicao (`src/lib/periodo.ts`): do inicio dela ate a menor data entre a data global,
+    // o ultimo dado do produto e o encerramento. Fundo para na ultima cota e moeda na ultima PTAX
+    // oficial; renda fixa vai ate a data global. CDI, grafico e tabela param nesse fim.
     const inicio = p.data_inicio;
-    const fim = p.resgate_total && p.resgate_total < dataReferenciaISO ? p.resgate_total : dataReferenciaISO;
-    // Respeitar a data do produto: CDI, grafico e tabela param na ultima cota divulgada.
+    const global = dataGlobalPosicao ?? dataReferenciaISO;
+    const fim = fimDoProduto({
+      dataGlobal: global,
+      ultimoDado: tipo === "fundo" || tipo === "moeda" ? dados.dataUltimoPreco : undefined,
+      encerramento: p.resgate_total || (tipo === "renda_fixa" ? p.vencimento : null),
+    }) ?? global;
     const { grafico, cdiAcumuladoPct, tabela } = montarGraficoETabela({
       serie: row.serie ?? [], cdiRecords: cdiRecordsPosicao, ibovespa, inicio, fim,
-      ultimaDataDoProduto: dados.dataUltimoPreco,
     });
 
     return {
@@ -613,7 +628,7 @@ export default function PosicaoConsolidadaPage() {
   const detalheData = useMemo(
     () => (detalheRow ? getDetalheData(detalheRow) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [detalheRow, cdiRecordsPosicao, dataReferenciaISO, ibovespa],
+    [detalheRow, cdiRecordsPosicao, dataReferenciaISO, dataGlobalPosicao, ibovespa],
   );
 
   // Depois de um recalculo (transacao nova pelo header, outra data de referencia) a gaveta aberta

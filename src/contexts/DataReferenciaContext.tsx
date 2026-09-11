@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
 import { format, startOfDay, parseISO } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -70,15 +70,15 @@ export function DataReferenciaProvider({ children }: { children: ReactNode }) {
   // ver a rentabilidade de hoje. A separacao veio da decisao do Daniel: consulta vai ate D0
   // com dado provisorio, cadastro continua exigindo dado fechado.
   //
-  // O DEFAULT continua no dia oficial, de proposito: abrir a ferramenta num numero que muda
-  // sozinho amanha confunde mais do que ajuda. D0 fica a um clique, para quem quer.
-  const [dataReferencia, setDataReferencia] = useState<Date>(() => penultimoDiaUtilAprox(new Date()));
+  // O DEFAULT e D0 (decisao do Daniel em 11/09/2026). Ate entao abria no penultimo dia util,
+  // porque a cota de fundo atrasada deixava o CDI andar sozinho no ultimo dia. Com o periodo por
+  // produto (`src/lib/periodo.ts`) cada produto para no proprio ultimo dado e o benchmark para
+  // junto, entao o atraso da fonte deixou de distorcer a tela e o motivo do default sumiu.
+  const [dataReferencia, setDataReferencia] = useState<Date>(() => startOfDay(new Date()));
   const [maxDataOficial, setMaxDataOficial] = useState<Date>(() => penultimoDiaUtilAprox(new Date()));
-  const [maxDate, setMaxDate] = useState<Date>(() => startOfDay(new Date()));
+  const [maxDate] = useState<Date>(() => startOfDay(new Date()));
   const [appliedVersion, setAppliedVersion] = useState(0);
   const [isRecalculating, setIsRecalculating] = useState(false);
-  // Se o usuario ja escolheu uma data, a chegada do calendario nao pode puxar a escolha dele.
-  const escolhidaPeloUsuario = useRef(false);
 
   useEffect(() => {
     let vivo = true;
@@ -94,9 +94,7 @@ export function DataReferenciaProvider({ children }: { children: ReactNode }) {
         // [0] e o ultimo dia util, [1] o penultimo - que e o teto do CADASTRO.
         const penultimo = data?.[1]?.data;
         if (!vivo || !penultimo) return; // sem calendario, fica a aproximacao
-        const exato = startOfDay(parseISO(penultimo));
-        setMaxDataOficial(exato);
-        if (!escolhidaPeloUsuario.current) setDataReferencia(exato);
+        setMaxDataOficial(startOfDay(parseISO(penultimo)));
       });
     return () => {
       vivo = false;
@@ -105,7 +103,6 @@ export function DataReferenciaProvider({ children }: { children: ReactNode }) {
 
   const definirDataReferencia = useCallback(
     (date: Date) => {
-      escolhidaPeloUsuario.current = true;
       const d = startOfDay(date);
       setDataReferencia(d > maxDate ? maxDate : d);
     },

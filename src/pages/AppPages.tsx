@@ -16,6 +16,8 @@ import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
 import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
 import { useBoleta } from "@/contexts/BoletaContext";
+import LinguetaDeData from "@/components/LinguetaDeData";
+import { dataGlobalEfetiva, periodoDaCarteira, type PeriodoDaCarteira } from "@/lib/periodo";
 
 
 
@@ -29,7 +31,7 @@ const fmtPctValue = (v: number | null) => (v != null ? `${v.toFixed(2)}%` : "—
 export const CarteiraVisaoGeral = () => {
   const { abrirBoleta } = useBoleta();
   const { user } = useAuth();
-  const [carteiraInfo, setCarteiraInfo] = useState<{
+  const [carteiraInfoBruta, setCarteiraInfo] = useState<{
     nome_carteira: string;
     status: string;
     data_inicio: string | null;
@@ -45,15 +47,15 @@ export const CarteiraVisaoGeral = () => {
   const {
     carteiraRows: rfCarteiraRows, allProductRows: rfProductRows, cdiRecords, ibovespaData,
     productList: rfProductList, allCustodiaForCategoria, calendario: rfCalendario,
-    loading: rfLoading,
+    periodo: rfPeriodo, loading: rfLoading,
   } = useCarteiraRF();
   const {
     allProductRows: fundoProductRows, productList: fundoProductList,
-    calendario: fundoCalendario, loading: fundosLoading,
+    calendario: fundoCalendario, periodo: fundoPeriodo, loading: fundosLoading,
   } = useCarteiraFundos();
   const {
     allProductRows: moedaProductRows, productList: moedaProductList,
-    loading: moedasLoading,
+    periodo: moedaPeriodo, loading: moedasLoading,
   } = useCarteiraMoedas();
   const dadosLoading = rfLoading || fundosLoading || moedasLoading;
 
@@ -71,6 +73,23 @@ export const CarteiraVisaoGeral = () => {
     for (const c of [...rfCalendario, ...fundoCalendario]) map.set(c.data, c);
     return Array.from(map.values()).sort((a, b) => a.data.localeCompare(b.data));
   }, [rfCalendario, fundoCalendario]);
+
+  /**
+   * Período da carteira de Investimentos: vai até o MAIOR fim entre as carteiras com posição
+   * (`src/lib/periodo.ts`). A carteira que termina antes entra com o valor repetido - os motores
+   * de cada produto rodam até a data global efetiva e repetem a última cota ou preço.
+   */
+  const periodo = useMemo(
+    () => periodoDaCarteira(
+      [rfPeriodo, fundoPeriodo, moedaPeriodo].filter((p): p is PeriodoDaCarteira => !!p),
+      dataGlobalEfetiva(calendario, dataReferenciaISO),
+    ),
+    [rfPeriodo, fundoPeriodo, moedaPeriodo, calendario, dataReferenciaISO],
+  );
+  const carteiraInfo = useMemo(
+    () => (carteiraInfoBruta && periodo.fim ? { ...carteiraInfoBruta, data_calculo: periodo.fim } : carteiraInfoBruta),
+    [carteiraInfoBruta, periodo],
+  );
 
   /** Consolidado: renda fixa e fundos passam pelo MESMO motor de carteira. */
   const carteiraRows = useMemo(() => {
@@ -191,6 +210,16 @@ export const CarteiraVisaoGeral = () => {
       extrasMap.set(c.categoria_nome, (extrasMap.get(c.categoria_nome) || 0) + valor);
     }
 
+    // Cada categoria é uma carteira e termina no fim dela, não no da carteira de Investimentos.
+    const periodoPorGrupo = new Map<string, PeriodoDaCarteira>();
+    const marcar = (lista: typeof productList, per: PeriodoDaCarteira | null) => {
+      if (!per) return;
+      for (const p of lista) periodoPorGrupo.set(p.analysisProduct?.categoria_nome || "Outros", per);
+    };
+    marcar(rfProductList, rfPeriodo);
+    marcar(fundoProductList, fundoPeriodo);
+    marcar(moedaProductList, moedaPeriodo);
+
     return calcularAlocacaoPorGrupo({
       gruposIdx,
       allProductRows,
@@ -200,8 +229,12 @@ export const CarteiraVisaoGeral = () => {
       dataCalculo: carteiraInfo.data_calculo,
       dataReferencia: dataReferenciaISO,
       extras: Array.from(extrasMap, ([nome, patrimonio]) => ({ nome, patrimonio })),
+      periodoPorGrupo,
     });
-  }, [productList, allProductRows, allCustodiaForCategoria, calendario, cdiRecords, carteiraInfo, dataReferenciaISO]);
+  }, [
+    productList, allProductRows, allCustodiaForCategoria, calendario, cdiRecords, carteiraInfo, dataReferenciaISO,
+    rfProductList, fundoProductList, moedaProductList, rfPeriodo, fundoPeriodo, moedaPeriodo,
+  ]);
 
   const fmtDate = (d: string | null) =>
     d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
@@ -212,6 +245,7 @@ export const CarteiraVisaoGeral = () => {
       return (
         <p className="text-sm text-muted-foreground mt-1">
           Período de Análise: De {fmtDate(carteiraInfo.data_inicio)} a {fmtDate(carteiraInfo.data_calculo)}
+          <LinguetaDeData data={periodo.lingueta} dataGlobal={periodo.dataGlobal} />
         </p>
       );
     }
@@ -319,6 +353,8 @@ export const CarteiraVisaoGeral = () => {
             totalCdi={resumo.cdiAcum}
             totalSobreCdi={resumo.sobreCdi}
             dataLabel={dataLabel}
+            linguetaTotal={periodo.lingueta}
+            dataGlobal={periodo.dataGlobal}
           />
         </>
       )}

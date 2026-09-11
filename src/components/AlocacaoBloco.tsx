@@ -3,6 +3,7 @@ import {
 } from "@/components/ui/table";
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import type { GrupoMetricas } from "@/lib/alocacaoPorGrupo";
+import LinguetaDeData from "@/components/LinguetaDeData";
 
 const DONUT_COLORS = [
   "hsl(210, 100%, 45%)",
@@ -47,6 +48,8 @@ export default function AlocacaoBloco({
   totalCdi,
   totalSobreCdi,
   dataLabel,
+  linguetaTotal,
+  dataGlobal,
 }: {
   titulo: string;
   colunaLabel: string;
@@ -57,6 +60,9 @@ export default function AlocacaoBloco({
   totalCdi: number | null;
   totalSobreCdi: number | null;
   dataLabel: string;
+  /** Fim do total quando ele termina antes da data global (lingueta cinza). */
+  linguetaTotal?: string | null;
+  dataGlobal?: string | null;
 }) {
   const donutData = linhas.map((l) => ({
     name: l.nome,
@@ -93,7 +99,10 @@ export default function AlocacaoBloco({
                   <TableCell className="text-xs text-right">{fmtPctValue(l.rentabilidade)}</TableCell>
                   <TableCell className="text-xs text-right">{fmtPctValue(l.cdiAcumulado)}</TableCell>
                   <TableCell className="text-xs text-right">{fmtPctValue(l.sobreCdi)}</TableCell>
-                  <TableCell className="text-xs text-right">{l.alocacao.toFixed(2)}%</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-right">
+                    {l.alocacao.toFixed(2)}%
+                    <LinguetaDeData data={l.lingueta} dataGlobal={dataGlobal} />
+                  </TableCell>
                 </TableRow>
               ))}
               {linhas.length === 0 && (
@@ -111,7 +120,10 @@ export default function AlocacaoBloco({
                   <TableCell className="text-xs text-right">{fmtPctValue(totalRent)}</TableCell>
                   <TableCell className="text-xs text-right">{fmtPctValue(totalCdi)}</TableCell>
                   <TableCell className="text-xs text-right">{fmtPctValue(totalSobreCdi)}</TableCell>
-                  <TableCell className="text-xs text-right">100,00%</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-right">
+                    100,00%
+                    <LinguetaDeData data={linguetaTotal} dataGlobal={dataGlobal} />
+                  </TableCell>
                 </TableRow>
               )}
             </TableBody>

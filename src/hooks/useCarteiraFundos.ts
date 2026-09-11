@@ -19,6 +19,9 @@ import type { ProductListItem, CarteiraInfo } from "@/hooks/useCarteiraRF";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 import { cotasCosturadas, trechosDaPosicao } from "@/lib/posicaoDeFundo";
+import {
+  dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, ultimaDataAte, type PeriodoDaCarteira,
+} from "@/lib/periodo";
 
 interface FundoCustodia {
   id: string;
@@ -49,6 +52,7 @@ let _fundosCached: {
   productList: ProductListItem[];
   cdiRecords: CdiRecord[];
   calendario: { data: string; dia_util: boolean }[];
+  periodo: PeriodoDaCarteira | null;
 } | null = null;
 
 export function useCarteiraFundos() {
@@ -60,6 +64,7 @@ export function useCarteiraFundos() {
   const [productList, setProductList] = useState<ProductListItem[]>(_fundosCached?.productList ?? []);
   const [cdiRecords, setCdiRecords] = useState<CdiRecord[]>(_fundosCached?.cdiRecords ?? []);
   const [calendario, setCalendario] = useState<{ data: string; dia_util: boolean }[]>(_fundosCached?.calendario ?? []);
+  const [periodo, setPeriodo] = useState<PeriodoDaCarteira | null>(_fundosCached?.periodo ?? null);
   const [loading, setLoading] = useState(_fundosCachedVersion === null);
 
   useEffect(() => {
@@ -106,16 +111,17 @@ export function useCarteiraFundos() {
         setProductList([]);
         setCdiRecords([]);
         setCalendario([]);
+        setPeriodo(null);
         setLoading(false);
         _fundosCachedVersion = appliedVersion;
-        _fundosCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], productList: [], cdiRecords: [], calendario: [] };
+        _fundosCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], productList: [], cdiRecords: [], calendario: [], periodo: null };
         return;
       }
 
-      const info = cartData as CarteiraInfo;
-      setCarteiraInfo(info);
-      const dataInicio = info.data_inicio!;
-      const dataCalculo = info.data_calculo!;
+      const dataInicio = cartData.data_inicio!;
+      // A data do cabecalho. As buscas vao ate ela; o calculo vai ate a data global efetiva e cada
+      // fundo para na propria ultima cota (`src/lib/periodo.ts`).
+      const dataGlobal = cartData.data_calculo!;
       // As series de mercado e o calendario vao desde o inicio REAL da carteira, nao desde o
       // comeco da janela: os motores por produto rodam a vida inteira do ativo (a quantidade
       // vem das movimentacoes acumuladas) e so o motor de carteira recorta pelo periodo.
@@ -138,11 +144,11 @@ export function useCarteiraFundos() {
       // por requisicao, e o corte e silencioso.
       const [calRaw, cotasRaw, cdiRaw] = await Promise.all([
         fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util")
-          .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
+          .gte("data", inicioReal).lte("data", dataGlobal).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("cotas_fundos").select("fundo_id, data, valor_cota")
-          .in("fundo_id", fundoIds).lte("data", dataCalculo).order("data").range(de, ate)),
+          .in("fundo_id", fundoIds).lte("data", dataGlobal).order("data").range(de, ate)),
         fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual")
-          .gte("data", inicioReal).lte("data", dataCalculo).order("data").range(de, ate)),
+          .gte("data", inicioReal).lte("data", dataGlobal).order("data").range(de, ate)),
       ]);
 
       const calendario = calRaw.map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
@@ -150,6 +156,8 @@ export function useCarteiraFundos() {
       const mergedCdi: CdiRecord[] = cdiRaw.map((c: any) => ({
         data: c.data, taxa_anual: Number(c.taxa_anual), dia_util: calMap.get(c.data) ?? false,
       }));
+      // Ultimo dia util ate a data do cabecalho: no fim de semana o periodo termina na sexta.
+      const global = dataGlobalEfetiva(calendario, dataGlobal);
 
       const cotasPorFundo = new Map<string, { data: string; valor_cota: number }[]>();
       for (const c of cotasRaw) {
@@ -167,16 +175,20 @@ export function useCarteiraFundos() {
 
       const prodRows: DailyRow[][] = [];
       const pList: ProductListItem[] = [];
+      const periodos: { fim: string | null; comPosicao: boolean }[] = [];
 
       for (const f of fundos) {
-        const fim = f.resgate_total && f.resgate_total < dataCalculo ? f.resgate_total : dataCalculo;
+        // O motor roda ate a data global efetiva: depois da ultima cota ele repete a cota com
+        // variacao zero, e esse e o valor provisorio que a carteira usa ate o fim dela.
+        const fim = f.resgate_total && f.resgate_total < global ? f.resgate_total : global;
         const movsDaPosicao = movsPorCodigo.get(f.codigo_custodia) || [];
         const trechos = trechosDaPosicao(movsDaPosicao);
+        const cotas = trechos.length > 1 ? cotasCosturadas(trechos, cotasPorFundo) : (cotasPorFundo.get(f.fundo_id) || []);
         const rows = calcularFundoDiario({
           dataInicio: f.data_inicio,
           dataCalculo: fim,
           calendario,
-          cotas: trechos.length > 1 ? cotasCosturadas(trechos, cotasPorFundo) : (cotasPorFundo.get(f.fundo_id) || []),
+          cotas,
           movimentacoes: movsDaPosicao.map((m) => ({
             data: m.data,
             tipo: m.tipo_movimentacao,
@@ -192,21 +204,28 @@ export function useCarteiraFundos() {
 
         prodRows.push(fundoRowsToDailyRows(rows));
 
+        // Periodo do fundo: da aplicacao a ultima cota divulgada.
+        const fimFundo = fimDoProduto({
+          dataGlobal: global, ultimoDado: ultimaDataAte(cotas, global), encerramento: f.resgate_total,
+        });
         const ult = rows.length ? rows[rows.length - 1] : null;
-        // Ganho e rentabilidade DA JANELA, pela mesma conta do card e dos grupos.
-        const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, dataCalculo);
+        // Ganho e rentabilidade DO PERIODO DO FUNDO, pela mesma conta do card e dos grupos.
+        const m = metricasDoProdutoNaJanela(prodRows[prodRows.length - 1], calendario, dataInicio, fimFundo ?? global);
         // "Encerrado" vem do SALDO calculado, nao so do cadastro. `custodia.resgate_total`
         // guarda o vencimento quando o papel foi zerado por uma movimentacao do tipo
         // "Resgate" (parcial que zerou) em vez de "Resgate Total" - `resgateTotalDeMovs` so
         // enxerga a segunda. Quatro CDBs apareciam como "Em custodia" com valor R$ 0,00.
-        const encerrado = (!!f.resgate_total && f.resgate_total <= dataCalculo)
+        const encerrado = (!!f.resgate_total && f.resgate_total <= global)
           || (m.existiuNaJanela && m.patrimonio <= 0.005);
+        periodos.push({ fim: fimFundo, comPosicao: !encerrado && m.existiuNaJanela });
         pList.push({
           nome: f.nome || f.fundo?.nome_curto || f.produto_nome,
           valorAtualizado: encerrado ? 0 : m.patrimonio,
           ganhoFinanceiro: m.ganho,
           rentabilidade: m.rentabilidade,
           existiuNaJanela: m.existiuNaJanela,
+          fim: fimFundo,
+          lingueta: linguetaDoFim(fimFundo, global, !encerrado),
           custodiante: f.instituicao_nome,
           ativo: !encerrado,
           estrategia: null,
@@ -233,18 +252,24 @@ export function useCarteiraFundos() {
         });
       }
 
+      // A carteira vai ate o maior fim entre os fundos com posicao; cards, grafico e CDI param nele.
+      const per = periodoDaCarteira(periodos, global);
+      const dataCalculo = per.fim ?? global;
+      const info: CarteiraInfo = { ...(cartData as CarteiraInfo), data_calculo: dataCalculo };
       const result = calcularCarteiraRendaFixa({ productRows: prodRows, calendario, dataInicio, dataCalculo });
 
+      setCarteiraInfo(info);
       setAllProductRows(prodRows);
       setProductList(pList);
       setCarteiraRows(result);
       setCdiRecords(mergedCdi);
       setCalendario(calendario);
+      setPeriodo(per);
       _fundosCachedVersion = appliedVersion;
-      _fundosCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, productList: pList, cdiRecords: mergedCdi, calendario };
+      _fundosCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, productList: pList, cdiRecords: mergedCdi, calendario, periodo: per };
       setLoading(false);
     })();
   }, [user, appliedVersion]);
 
-  return { carteiraInfo, carteiraRows, allProductRows, productList, cdiRecords, calendario, loading };
+  return { carteiraInfo, carteiraRows, allProductRows, productList, cdiRecords, calendario, periodo, loading };
 }
