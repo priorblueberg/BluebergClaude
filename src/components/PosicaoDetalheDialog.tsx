@@ -29,24 +29,19 @@ interface Movimentacao {
 }
 
 export interface PosicaoDetalheData {
-  /** Decide a linha de informacoes: preco da cota so existe em fundo e moeda. */
+  /** Decide a linha abaixo do nome: preco da cota so existe em fundo e moeda. */
   tipo: "fundo" | "moeda" | "renda_fixa" | "outro";
   nome: string;
   /** CNPJ da classe, nos fundos. Vai junto do nome, como no Gorila. */
   cnpj: string | null;
-  /** "Categoria / Produto". */
-  classificacao: string;
-  custodiante: string;
   valorAtualizado: number;
-  valorInvestido: number | null;
   pnl: number;
   /** Ja em %, a mesma da linha da Posição Consolidada. */
   rentabilidadePct: number;
-  /** CDI acumulado na janela da posicao, em %. Base do "% do CDI". */
+  /** CDI acumulado na janela da posicao, em %. */
   cdiAcumuladoPct: number | null;
   ultimoPreco: number | null;
   dataUltimoPreco: string | null;
-  precoMedio: number | null;
   /** Rentabilidade acumulada da posicao e do CDI, dia util a dia util. */
   grafico: PontoRentabilidade[];
   dataInicio: string;
@@ -81,13 +76,16 @@ const fmtPreco = (v: number | null) =>
 const fmtData = (d: string | null) => (d ? new Date(d + "T12:00:00").toLocaleDateString("pt-BR") : "—");
 const fmtPct = (v: number | null) =>
   v == null ? "—" : `${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
-const corDoSinal = (v: number) => (v > 0 ? "text-emerald-700" : v < 0 ? "text-destructive" : "text-foreground");
 
 /**
- * Detalhes da posição, na gaveta lateral, a partir do modelo do Gorila e com os ajustes do Daniel
- * (11/09/2026): sem cabeçalho proprio (o do site ja tem a data e o cadastro de transação), box com
- * patrimônio, valor investido, ganho, rentabilidade e % do CDI; último preço e preço médio numa
- * linha; gráfico de rentabilidade; histórico paginado.
+ * Detalhes da posição, na gaveta lateral (modelo do Gorila, com os ajustes do Daniel em
+ * 11/09/2026): começa pelo nome do ativo com o último preço logo abaixo; o resumo é o MESMO do
+ * dashboard (Patrimônio, Ganho Financeiro, Rentabilidade, CDI Acumulado, % do CDI); gráfico de
+ * rentabilidade; histórico paginado.
+ *
+ * A gaveta não fecha ao clicar fora dela: com ela aberta o cliente usa o header (cadastrar
+ * transação, trocar a data), e a boleta, o calendário e os menus do header abrem em camadas
+ * próprias, fora do header. Fecha no X.
  *
  * A TIR que o Gorila mostra fica para depois (decisão do Daniel).
  */
@@ -98,11 +96,15 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
   const [deleteId, setDeleteId] = useState<Movimentacao | null>(null);
   const [pagina, setPagina] = useState(0);
 
+  // Recarrega tambem depois de um recalculo (transacao nova, outra data de referencia).
   useEffect(() => {
     if (open) fetchMovs();
-    setPagina(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, data.codigoCustodia]);
+  }, [open, data.codigoCustodia, data.valorAtualizado, dataReferenciaISO]);
+
+  useEffect(() => {
+    setPagina(0);
+  }, [data.codigoCustodia]);
 
   async function fetchMovs() {
     setLoading(true);
@@ -163,6 +165,15 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
     ? (data.rentabilidadePct / data.cdiAcumuladoPct) * 100
     : null;
 
+  // O mesmo resumo do dashboard (Carteira de Investimentos), na mesma ordem.
+  const resumo = [
+    { rotulo: "Patrimônio", valor: fmtBrl(data.valorAtualizado) },
+    { rotulo: "Ganho Financeiro", valor: fmtBrl(data.pnl) },
+    { rotulo: "Rentabilidade", valor: fmtPct(data.rentabilidadePct) },
+    { rotulo: "CDI Acumulado", valor: fmtPct(data.cdiAcumuladoPct) },
+    { rotulo: "% do CDI", valor: fmtPct(sobreCdi) },
+  ];
+
   const totalPaginas = Math.max(1, Math.ceil(movs.length / LINHAS_POR_PAGINA));
   const paginaAtual = Math.min(pagina, totalPaginas - 1);
   const movsDaPagina = useMemo(
@@ -178,57 +189,47 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
           className="w-full sm:max-w-[960px] p-0 overflow-y-auto"
           style={{ top: ALTURA_DO_HEADER, height: `calc(100% - ${ALTURA_DO_HEADER}px)` }}
           onOpenAutoFocus={(e) => e.preventDefault()}
-          onInteractOutside={(e) => {
-            // O header fica utilizavel com a gaveta aberta, e a confirmacao de exclusao e dela.
-            const alvo = e.target as HTMLElement | null;
-            if (alvo?.closest("header") || alvo?.closest("[role=alertdialog]")) e.preventDefault();
-          }}
+          onInteractOutside={(e) => e.preventDefault()}
         >
           <SheetTitle className="sr-only">Detalhes da posição</SheetTitle>
           <SheetDescription className="sr-only">{data.nome}</SheetDescription>
 
           <div className="space-y-5 px-6 py-5">
-            {/* Identificacao */}
+            {/* Nome e ultimo preco */}
             <div className="space-y-1 pr-8">
-              <p className="text-xs text-muted-foreground">{data.classificacao}</p>
               <h4 className="text-base font-bold text-foreground break-words">
                 {data.nome}
                 {data.cnpj ? ` - ${formatarCnpj(data.cnpj)}` : ""}
               </h4>
-              <p className="text-xs text-muted-foreground">{data.custodiante}</p>
-            </div>
-
-            {/* Resultado */}
-            <div className="grid grid-cols-5 gap-4 rounded-lg border border-border p-4">
-              <Metrica rotulo="Patrimônio" valor={fmtBrl(data.valorAtualizado)} />
-              <Metrica rotulo="Valor Investido" valor={fmtBrl(data.valorInvestido)} />
-              <Metrica rotulo="Ganho Financeiro" valor={fmtBrl(data.pnl)} cor={corDoSinal(data.pnl)} />
-              <Metrica rotulo="Rentabilidade" valor={fmtPct(data.rentabilidadePct)} cor={corDoSinal(data.rentabilidadePct)} />
-              <Metrica rotulo="% do CDI" valor={fmtPct(sobreCdi)} />
-            </div>
-
-            {/* Linha de informacoes */}
-            <div className="flex flex-wrap gap-x-8 gap-y-1 px-1 text-sm">
-              {temPreco ? (
-                <>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                {temPreco ? (
                   <Info
                     rotulo={`Último preço do período${data.dataUltimoPreco ? ` (${fmtData(data.dataUltimoPreco)})` : ""}`}
                     valor={fmtPreco(data.ultimoPreco)}
                   />
-                  <Info rotulo="Preço Médio" valor={fmtPreco(data.precoMedio)} />
-                </>
-              ) : (
-                <>
-                  <Info rotulo="Emissor" valor={data.emissor ?? "—"} />
-                  <Info rotulo="Indexador" valor={data.indexador ?? "—"} />
-                  <Info
-                    rotulo="Taxa"
-                    valor={data.taxa != null ? `${data.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "—"}
-                  />
-                  <Info rotulo="Pagamento" valor={data.pagamento ?? "—"} />
-                  <Info rotulo="Vencimento" valor={fmtData(data.vencimento)} />
-                </>
-              )}
+                ) : (
+                  <>
+                    <Info rotulo="Emissor" valor={data.emissor ?? "—"} />
+                    <Info rotulo="Indexador" valor={data.indexador ?? "—"} />
+                    <Info
+                      rotulo="Taxa"
+                      valor={data.taxa != null ? `${data.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "—"}
+                    />
+                    <Info rotulo="Pagamento" valor={data.pagamento ?? "—"} />
+                    <Info rotulo="Vencimento" valor={fmtData(data.vencimento)} />
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Resumo: os cartoes do dashboard */}
+            <div className="grid grid-cols-5 gap-3">
+              {resumo.map((item) => (
+                <div key={item.rotulo} className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-sm">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.rotulo}</p>
+                  <p className="mt-2 text-lg font-bold text-foreground tabular-nums">{item.valor}</p>
+                </div>
+              ))}
             </div>
 
             {/* Grafico */}
@@ -237,7 +238,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                 dados={data.grafico}
                 chaveSerie="posicao_acumulado"
                 rotuloSerie="Posição"
-                temIbovespa={false}
+                seletor="legenda"
               />
             )}
 
@@ -275,7 +276,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                                   <div className="flex justify-end gap-1">
                                     <Button
                                       variant="ghost" size="icon" className="h-7 w-7" title="Editar"
-                                      onClick={() => { onClose(); abrirBoleta(m.id); }}
+                                      onClick={() => abrirBoleta(m.id)}
                                     >
                                       <Pencil className="h-3.5 w-3.5" />
                                     </Button>
@@ -350,19 +351,10 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
   );
 }
 
-function Metrica({ rotulo, valor, cor = "text-foreground" }: { rotulo: string; valor: string; cor?: string }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-xs text-muted-foreground">{rotulo}</p>
-      <p className={`mt-1 text-lg font-bold tabular-nums ${cor}`}>{valor}</p>
-    </div>
-  );
-}
-
 function Info({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
     <p>
-      <span className="text-muted-foreground">{rotulo}: </span>
+      <span>{rotulo}: </span>
       <span className="font-semibold text-foreground tabular-nums">{valor}</span>
     </p>
   );

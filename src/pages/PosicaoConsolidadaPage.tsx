@@ -8,7 +8,8 @@ import { calcularRendaFixaDiario, permiteVendaNoSecundario, type DailyRow } from
 import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
-import { buildCdiSeries, type CdiRecord } from "@/lib/cdiCalculations";
+import { buildCdiSeries, buildIbovespaSeries, type CdiRecord } from "@/lib/cdiCalculations";
+import { useIbovespa } from "@/hooks/useIbovespa";
 import type { PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
 import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
@@ -108,6 +109,7 @@ export default function PosicaoConsolidadaPage() {
   const [cdiAcumuladoTotal, setCdiAcumuladoTotal] = useState<number | null>(_cachedCdiTotal);
   /** CDI do periodo, guardado para o % do CDI e o grafico do detalhe da posicao. */
   const [cdiRecordsPosicao, setCdiRecordsPosicao] = useState<CdiRecord[]>(_cachedCdiRecords);
+  const ibovespa = useIbovespa();
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -594,10 +596,6 @@ export default function PosicaoConsolidadaPage() {
   function getDetalheData(row: PosicaoRow): PosicaoDetalheData {
     const p = row.product;
     const tipo = p.fundo_id ? "fundo" : p.moeda ? "moeda" : p.categoria_nome === "Renda Fixa" ? "renda_fixa" : "outro";
-    // "Categoria / Produto", sem repetir quando os dois tem o mesmo nome (Fundos de Investimentos).
-    const classificacao = [p.categoria_nome, p.produto_nome]
-      .filter((x, i, todos) => !!x && todos.indexOf(x) === i)
-      .join(" / ");
     const dados = row.dados ?? SEM_DADOS;
 
     // Janela da posicao: do inicio dela ate a data de referencia, ou ate o resgate total.
@@ -612,21 +610,23 @@ export default function PosicaoConsolidadaPage() {
       ponto.posicao_acumulado = Number(s.pct.toFixed(4));
       pontos.set(s.data, ponto);
     }
+    // Ibovespa rebaseado no primeiro pregao da janela da posicao.
+    for (const [dia, valor] of buildIbovespaSeries(ibovespa, inicio, fim)) {
+      const ponto = pontos.get(dia) ?? { data: dia };
+      ponto.ibovespa_acumulado = valor;
+      pontos.set(dia, ponto);
+    }
 
     return {
       tipo,
       nome: row.nome,
       cnpj: p.fundoCnpj ?? null,
-      classificacao,
-      custodiante: row.custodiante,
       valorAtualizado: row.valorAtualizado,
-      valorInvestido: dados.valorInvestido ?? p.valor_investido,
       pnl: row.ganhoFinanceiro,
       rentabilidadePct: row.rentabilidade,
       cdiAcumuladoPct: cdiSerie.length ? cdiSerie[cdiSerie.length - 1].cdi_acumulado : null,
       ultimoPreco: dados.ultimoPreco,
       dataUltimoPreco: dados.dataUltimoPreco,
-      precoMedio: dados.precoMedio,
       grafico: [...pontos.values()].sort((a, b) => a.data.localeCompare(b.data)),
       dataInicio: p.data_inicio,
       codigoCustodia: p.codigo_custodia,
@@ -643,8 +643,19 @@ export default function PosicaoConsolidadaPage() {
   const detalheData = useMemo(
     () => (detalheRow ? getDetalheData(detalheRow) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [detalheRow, cdiRecordsPosicao, dataReferenciaISO],
+    [detalheRow, cdiRecordsPosicao, dataReferenciaISO, ibovespa],
   );
+
+  // Depois de um recalculo (transacao nova pelo header, outra data de referencia) a gaveta aberta
+  // passa a mostrar a linha recalculada da mesma posicao. Sem isto ela ficaria com os numeros de
+  // antes, ja que nao fecha mais ao clicar fora.
+  useEffect(() => {
+    if (!detalheRow) return;
+    const atual = rows.find((r) => r.product.id === detalheRow.product.id);
+    if (!atual) setDetalheRow(null);
+    else if (atual !== detalheRow) setDetalheRow(atual);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
 
   return (
     <div className="space-y-6">

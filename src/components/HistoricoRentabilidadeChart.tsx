@@ -32,6 +32,12 @@ interface Props {
   rotuloSerie: string;
   /** Some com o Ibovespa do seletor quando a tela não tem a série. */
   temIbovespa?: boolean;
+  /**
+   * Onde o usuário liga e desliga os benchmarks. "etiquetas": botões acima do gráfico (as telas
+   * de carteira). "legenda": a própria legenda é o seletor e a série principal fica sempre
+   * visível, sem alternância (detalhe da posição, pedido do Daniel em 11/09/2026).
+   */
+  seletor?: "etiquetas" | "legenda";
 }
 
 const COR_PRINCIPAL = "hsl(210, 100%, 45%)";
@@ -65,7 +71,7 @@ const Tooltipzinho = ({ active, payload, label }: {
 };
 
 export function HistoricoRentabilidadeChart({
-  dados, chaveSerie, rotuloSerie, temIbovespa = true,
+  dados, chaveSerie, rotuloSerie, temIbovespa = true, seletor = "etiquetas",
 }: Props) {
   const series = useMemo(() => [
     { key: chaveSerie, label: rotuloSerie, color: COR_PRINCIPAL, tracejado: undefined as string | undefined },
@@ -80,6 +86,8 @@ export function HistoricoRentabilidadeChart({
   const [ativas, setAtivas] = useState<Set<string>>(() => new Set([chaveSerie, "cdi_acumulado"]));
 
   const alternar = (key: string) => setAtivas((prev) => {
+    // Na legenda a série principal não se desliga.
+    if (seletor === "legenda" && key === chaveSerie) return prev;
     const proximo = new Set(prev);
     if (proximo.has(key)) proximo.delete(key);
     else proximo.add(key);
@@ -117,6 +125,7 @@ export function HistoricoRentabilidadeChart({
       </div>
 
       {/* Numa linha própria: no card estreito os botões brigavam com o título. */}
+      {seletor === "etiquetas" && (
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {series.map((s) => (
           <button
@@ -137,6 +146,7 @@ export function HistoricoRentabilidadeChart({
           </button>
         ))}
       </div>
+      )}
 
       <div className="mt-4 h-72">
         <ResponsiveContainer width="100%" height="100%">
@@ -157,11 +167,19 @@ export function HistoricoRentabilidadeChart({
               tickFormatter={(v) => `${v}%`}
             />
             <Tooltip content={<Tooltipzinho />} />
-            <Legend
-              iconType="plainline"
-              wrapperStyle={{ fontSize: 11 }}
-              formatter={(value: string) => <span className="text-muted-foreground">{value}</span>}
-            />
+            {seletor === "legenda" ? (
+              <Legend
+                content={() => (
+                  <LegendaAlternavel series={series} ativas={ativas} fixa={chaveSerie} onAlternar={alternar} />
+                )}
+              />
+            ) : (
+              <Legend
+                iconType="plainline"
+                wrapperStyle={{ fontSize: 11 }}
+                formatter={(value: string) => <span className="text-muted-foreground">{value}</span>}
+              />
+            )}
             {series.filter((s) => ativas.has(s.key)).map((s) => (
               <Line
                 key={s.key}
@@ -179,6 +197,53 @@ export function HistoricoRentabilidadeChart({
           </LineChart>
         </ResponsiveContainer>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Legenda que liga e desliga as séries. A principal aparece sempre e não é clicável; os
+ * benchmarks são botões, apagados e riscados quando desligados.
+ */
+function LegendaAlternavel({ series, ativas, fixa, onAlternar }: {
+  series: { key: string; label: string; color: string; tracejado?: string }[];
+  ativas: Set<string>;
+  fixa: string;
+  onAlternar: (key: string) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1 pt-3 text-xs">
+      {series.map((s) => {
+        const amostra = (
+          <svg width="18" height="6" aria-hidden="true">
+            <line x1="0" y1="3" x2="18" y2="3" stroke={s.color} strokeWidth={2} strokeDasharray={s.tracejado} />
+          </svg>
+        );
+        if (s.key === fixa) {
+          return (
+            <span key={s.key} className="inline-flex items-center gap-1.5 text-foreground">
+              {amostra}
+              {s.label}
+            </span>
+          );
+        }
+        const ligada = ativas.has(s.key);
+        return (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => onAlternar(s.key)}
+            aria-pressed={ligada}
+            title={ligada ? `Ocultar ${s.label}` : `Mostrar ${s.label}`}
+            className={`inline-flex items-center gap-1.5 transition-opacity hover:opacity-100 ${
+              ligada ? "text-foreground" : "text-muted-foreground line-through opacity-50"
+            }`}
+          >
+            {amostra}
+            {s.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
