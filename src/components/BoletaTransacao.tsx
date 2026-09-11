@@ -869,7 +869,11 @@ export default function BoletaTransacao({
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
   const showFundoFields = isFundo && !!tipoMovimentacao;
 
-  /** Come-cotas e a unica movimentacao de fundo com quantidade digitada (vem do extrato). */
+  /**
+   * Come-cotas: saida de cotas sem dinheiro saindo da carteira. Desde 11/09/2026 (pedido do Daniel) o
+   * cliente digita so o valor do extrato e a quantidade e valor / cota do dia, como nos outros tipos.
+   * No extrato da XP os dois batem: R$ 657,03 / 11,52691600 = 56,99963459 cotas.
+   */
   const ehComeCotas = tipoMovimentacao === "Come-Cotas";
 
   /** Saida (resgate, come-cotas, venda) so pode incidir sobre o que existia na data. */
@@ -1321,8 +1325,6 @@ Confirma que o preço está certo?`,
       if (!data) faltando.add("data");
       if (!valor || parseCurrencyToNumber(valor) <= 0) faltando.add("valor");
       if (!instituicaoId) faltando.add("instituicaoId");
-      // So o come-cotas tem quantidade digitada; nos outros ela e derivada da cota.
-      if (ehComeCotas && parseQuantidade(qtdCotas) == null) faltando.add("qtdCotas");
       if (faltando.size > 0) {
         setValidationErrors(faltando);
         toast.error("Preencha todos os campos obrigatórios.");
@@ -1350,32 +1352,24 @@ Confirma que o preço está certo?`,
         const { naData: cotaDoDia, ultima: ultimaCota, primeira: primeiraCota,
                 inicioDoFundo: inicioFundo } = await cotaFundo(fundoId, dataCotizacao);
 
-        // Em aplicacao e resgate a quantidade e exatamente valor / cota, sem spread nem taxa
-        // que justifiquem outro numero (ao contrario do cambio) - por isso ela nao e digitada,
-        // e sem a cota divulgada a operacao nao pode ser lancada.
-        //
-        // Come-cotas e o oposto: quem calcula quantas cotas cancelar e o administrador, a
-        // partir do ganho de cada cotista. Nos nao temos como derivar isso, entao a quantidade
-        // vem do extrato, digitada.
-        let qtd: number;
-        if (ehComeCotas) {
-          qtd = parseQuantidade(qtdCotas)!;
-        } else {
-          if (cotaDoDia == null) {
-            setSubmitting(false);
-            toast.error(
-              ultimaCota
-                ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)}. A última é de ${fmtData(ultimaCota.data)}: lance a operação quando a cota sair.`
-                : primeiraCota
-                  ? (inicioFundo && primeiraCota <= inicioFundo
-                      ? `Este fundo começou em ${fmtData(inicioFundo)}, depois de ${fmtData(dataCotizacao)}. Não há cota nessa data porque o fundo ainda não existia.`
-                      : `A série deste fundo na ferramenta começa em ${fmtData(primeiraCota)}, depois de ${fmtData(dataCotizacao)}.`)
-                  : "A série de cotas deste fundo ainda não foi carregada.",
-            );
-            return;
-          }
-          qtd = valorNum / cotaDoDia;
+        // A quantidade e exatamente valor / cota, sem spread nem taxa que justifiquem outro numero
+        // (ao contrario do cambio) - por isso ela nao e digitada, e sem a cota divulgada a operacao
+        // nao pode ser lancada. Vale tambem para o come-cotas: o administrador cancela as cotas pela
+        // cota do dia, e o valor do extrato dividido por ela devolve a quantidade do extrato.
+        if (cotaDoDia == null) {
+          setSubmitting(false);
+          toast.error(
+            ultimaCota
+              ? `O fundo ainda não divulgou a cota de ${fmtData(dataCotizacao)}. A última é de ${fmtData(ultimaCota.data)}: lance a operação quando a cota sair.`
+              : primeiraCota
+                ? (inicioFundo && primeiraCota <= inicioFundo
+                    ? `Este fundo começou em ${fmtData(inicioFundo)}, depois de ${fmtData(dataCotizacao)}. Não há cota nessa data porque o fundo ainda não existia.`
+                    : `A série deste fundo na ferramenta começa em ${fmtData(primeiraCota)}, depois de ${fmtData(dataCotizacao)}.`)
+                : "A série de cotas deste fundo ainda não foi carregada.",
+          );
+          return;
         }
+        const qtd = valorNum / cotaDoDia;
 
         // Fundo que ja esta na carteira reaproveita o codigo de custodia.
         const { data: existentes } = await supabase
@@ -1853,7 +1847,8 @@ Confirma que o preço está certo?`,
           hasError={validationErrors.has("fundoId")}
           permitirCatalogo={!ehSaida}
           onFecharBoleta={() => onFechar?.()}
-          abrirAoMontar={!isEditing}
+          // No come-cotas a lista de fundos da custodia so aparece depois do clique no campo.
+          abrirAoMontar={!isEditing && !ehComeCotas}
         />
       )}
     </Field>
@@ -2121,8 +2116,9 @@ Confirma que o preço está certo?`,
                   placeholder="0,00"
                   inputMode="numeric"
                 />
-                {/* Numa saida, o saldo na data compoe o campo: so o valor em reais. */}
-                {ehSaida && data && (
+                {/* Num resgate, o saldo na data compoe o campo: so o valor em reais. No come-cotas o
+                    valor vem do extrato e o saldo nao ajuda em nada. */}
+                {ehSaida && !ehComeCotas && data && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     {comSaldo == null
                       ? "Calculando o saldo..."
@@ -2149,26 +2145,17 @@ Confirma que o preço está certo?`,
                   placeholder={fundoId && data ? "Cota não divulgada" : "Selecione o fundo e a data"}
                 />
               </Field>
-              <Field label="Quantidade de Cotas" required={ehComeCotas}>
-                {ehComeCotas ? (
-                  <Input
-                    value={qtdCotas}
-                    onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
-                    placeholder="Cotas canceladas, do extrato"
-                    className={validationErrors.has("qtdCotas") ? "border-destructive ring-1 ring-destructive" : ""}
-                  />
-                ) : (
-                  <Input
-                    readOnly
-                    className="bg-muted/50"
-                    value={
-                      qtdCotasDerivada != null
-                        ? qtdCotasDerivada.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
-                        : ""
-                    }
-                    placeholder="Valor ÷ cota"
-                  />
-                )}
+              <Field label="Quantidade de Cotas">
+                <Input
+                  readOnly
+                  className="bg-muted/50"
+                  value={
+                    qtdCotasDerivada != null
+                      ? qtdCotasDerivada.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
+                      : ""
+                  }
+                  placeholder="Valor ÷ cota"
+                />
               </Field>
             </div>
 
@@ -2192,7 +2179,7 @@ Confirma que o preço está certo?`,
               beco sem saida: o fundo aparecia na lista e nao aceitava lancamento, sem dizer o
               que fazer a respeito.
             */}
-            {cotaOp && cotaOp.cota == null && !ehComeCotas && (
+            {cotaOp && cotaOp.cota == null && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertDescription className="text-xs space-y-2">
@@ -2207,12 +2194,6 @@ Confirma que o preço está certo?`,
                   </p>
                 </AlertDescription>
               </Alert>
-            )}
-
-            {ehComeCotas && (
-              <p className="text-xs text-muted-foreground">
-                No come-cotas quem calcula as cotas canceladas é o administrador, a partir do ganho de cada cotista, então a quantidade vem do extrato. Entra como saída de cotas: reduz a posição sem dinheiro saindo da carteira.
-              </p>
             )}
 
             <div className="flex gap-3">
