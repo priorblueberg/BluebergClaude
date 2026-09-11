@@ -19,7 +19,9 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
-import { dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, type PeriodoDaCarteira } from "@/lib/periodo";
+import {
+  dataGlobalEfetiva, encerramentoPeloSaldo, fimDoProduto, linguetaDoFim, periodoDaCarteira, type PeriodoDaCarteira,
+} from "@/lib/periodo";
 import { SEM_DADOS, type DadosDaPosicao } from "@/lib/detalheDaPosicao";
 
 export interface CarteiraInfo {
@@ -371,15 +373,13 @@ export function useCarteiraRF() {
       const periodos: { fim: string | null; comPosicao: boolean }[] = [];
       const pList = prodRowProducts.map((product, idx) => {
         const rows = allProdRows[idx];
-        const isEncerradoNaDataCalculo = product.resgate_total
-          ? product.resgate_total <= global
-          : product.vencimento
-            ? product.vencimento <= global
-            : false;
+        const ultimaLinha = rows.length ? rows[rows.length - 1] : null;
+        // O encerramento do cadastro so vale se o motor nao ve mais saldo: o aporte retroativo depois
+        // de um "Resgate Total" reabre a posicao e o `resgate_total` gravado nao percebe.
+        const encerramento = encerramentoPeloSaldo(product.resgate_total || product.vencimento, ultimaLinha);
+        const isEncerradoNaDataCalculo = !!encerramento && encerramento <= global;
         // Periodo do titulo: sem serie propria, vai ate a data global ou ate o encerramento.
-        const fimTitulo = fimDoProduto({
-          dataGlobal: global, encerramento: product.resgate_total || product.vencimento,
-        }) ?? global;
+        const fimTitulo = fimDoProduto({ dataGlobal: global, encerramento }) ?? global;
         // Ganho e rentabilidade DO PERIODO, pela mesma conta do card e dos grupos.
         const m = metricasDoProdutoNaJanela(rows, calendario, dataInicio, fimTitulo);
         // "Encerrado" vem do SALDO calculado, nao so do cadastro. `custodia.resgate_total`

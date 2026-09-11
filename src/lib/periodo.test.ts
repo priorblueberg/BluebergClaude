@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  dataGlobalEfetiva, fimDaCarteira, fimDoProduto, linguetaDoFim, ultimaBarraReal, ultimaDataAte,
+  dataGlobalEfetiva, encerramentoPeloSaldo, fimDaCarteira, fimDoProduto, linguetaDoFim, ultimaBarraReal, ultimaDataAte,
 } from "./periodo";
 
 /** Calendário corrido com fim de semana fora dos dias úteis. */
@@ -106,6 +106,28 @@ describe("período da carteira", () => {
 
   it("sem período nenhum", () => {
     expect(fimDaCarteira([{ fim: null, comPosicao: false }])).toBeNull();
+  });
+});
+
+describe("encerramento pelo saldo", () => {
+  it("resgate total do cadastro não encerra posição que ainda tem saldo (aporte retroativo)", () => {
+    // Poupança Santander: "Vender tudo" em 20/08/2026 e R$ 5.000,00 retroativo em 10/06/2026.
+    const encerramento = encerramentoPeloSaldo("2026-08-20", { data: "2026-09-11", liquido: 5101.37 });
+    expect(encerramento).toBeNull();
+    expect(fimDoProduto({ dataGlobal: "2026-09-11", encerramento })).toBe("2026-09-11");
+  });
+
+  it("sem saldo depois do encerramento, vale o cadastro", () => {
+    expect(encerramentoPeloSaldo("2026-08-20", { data: "2026-08-20", liquido: 0 })).toBe("2026-08-20");
+    expect(encerramentoPeloSaldo(null, { data: "2026-09-11", liquido: 100 })).toBeNull();
+  });
+
+  it("papel vencido não reabre: o motor para no dia final com o valor antes do pagamento", () => {
+    expect(encerramentoPeloSaldo("2026-08-10", { data: "2026-08-10", liquido: 10013.04 })).toBe("2026-08-10");
+  });
+
+  it("resgate total gravado com a data do vencimento futuro (parcial que zerou) segue valendo", () => {
+    expect(encerramentoPeloSaldo("2030-12-31", { data: "2026-09-11", liquido: 0 })).toBe("2030-12-31");
   });
 });
 

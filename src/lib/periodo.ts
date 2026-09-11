@@ -106,6 +106,28 @@ export function fimDoProduto(e: {
 }
 
 /**
+ * Encerramento que vale para o período: o do cadastro (resgate total ou vencimento) SÓ quando o motor
+ * não vê mais saldo no fim.
+ *
+ * O cadastro (`resgateTotalDeMovs`) marca `resgate_total` no último "Resgate Total" sempre que não há
+ * aplicação com data POSTERIOR a ele. Um aporte retroativo, lançado depois com data anterior ao resgate,
+ * deixa saldo vivo sem disparar essa condição. É o caso da poupança Santander de teste: "Vender tudo"
+ * em 20/08/2026, aporte de R$ 5.000,00 datado de 10/06/2026, e o Gorila (e o nosso motor desde 07/09)
+ * reabre a posição com R$ 5.101,37. Usar a data do cadastro zerava a linha e cortava o ganho em 20/08.
+ */
+export function encerramentoPeloSaldo(
+  encerramentoDoCadastro: string | null | undefined,
+  ultimaLinha: { data: string; liquido: number } | null | undefined,
+): string | null {
+  const encerramento = encerramentoDoCadastro || null;
+  // So a linha DEPOIS do encerramento prova saldo vivo. No proprio dia final o motor de renda fixa
+  // ainda carrega o valor antes do pagamento, e o motor para ali; so a poupanca segue adiante, e so
+  // quando sobra saldo (`poupancaEngine`).
+  const seguiuComSaldo = !!encerramento && !!ultimaLinha && ultimaLinha.data > encerramento && ultimaLinha.liquido > 0.005;
+  return seguiuComSaldo ? null : encerramento;
+}
+
+/**
  * Fim do período da carteira: o maior fim entre os produtos COM POSIÇÃO. Produto encerrado não
  * recebe mais nada e não estica a carteira. Se nenhum tem posição (carteira encerrada), vale o maior
  * fim entre todos. `null` quando não há período nenhum.
