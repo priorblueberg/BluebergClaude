@@ -20,6 +20,7 @@ import { ateAData } from "@/lib/janelaDaCarteira";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 import { dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, type PeriodoDaCarteira } from "@/lib/periodo";
+import { SEM_DADOS, type DadosDaPosicao } from "@/lib/detalheDaPosicao";
 
 export interface CarteiraInfo {
   nome_carteira: string;
@@ -65,6 +66,8 @@ export interface ProductListItem {
   fim?: string | null;
   /** Data da lingueta cinza quando o periodo termina antes da data global. */
   lingueta?: string | null;
+  /** Valor investido, quantidade e ultimo preco no fim do periodo: o que a gaveta de detalhes mostra. */
+  dados?: DadosDaPosicao;
   custodiante: string;
   ativo: boolean;
   estrategia: string | null;
@@ -393,6 +396,7 @@ export function useCarteiraRF() {
           existiuNaJanela: m.existiuNaJanela,
           fim: fimTitulo,
           lingueta: linguetaDoFim(fimTitulo, global, !encerrado),
+          dados: { ...SEM_DADOS, valorInvestido: rows.length ? rows[rows.length - 1].valorInvestido : product.valor_investido },
           custodiante: product.instituicao_nome,
           ativo: !encerrado,
           estrategia: product.estrategia,

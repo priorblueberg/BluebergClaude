@@ -18,6 +18,8 @@ import { buildCdiSeries, buildIbovespaSeries, type CdiRecord, type PontoIbovespa
 import type { DetailRow } from "@/components/RentabilidadeDetailTable";
 import type { PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
 import { dataGlobalEfetiva, fimDoProduto, ultimaDataAte } from "@/lib/periodo";
+import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
+import type { DailyRow } from "@/lib/rendaFixaEngine";
 
 /** Dados da posição na data de referência. */
 export interface DadosDaPosicao {
@@ -123,6 +125,23 @@ export function calcularPosicaoDeFundo(e: {
     serie: linhas.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaMWPct * 100 })),
     fim: fimDoProduto({ dataGlobal: global, ultimoDado: ultimaDataAte(cotas, global), encerramento: e.resgateTotal }),
   };
+}
+
+/**
+ * Rentabilidade acumulada (%) da posição por dia útil, na MESMA conta da linha da lâmina: a posição
+ * passa pelo motor de carteira como uma carteira de um produto só (`metricasDoProdutoNaJanela`). Assim
+ * o fim do gráfico da gaveta fecha com a rentabilidade da linha.
+ */
+export function serieDoProduto(
+  linhas: DailyRow[],
+  calendario: { data: string; dia_util: boolean }[],
+  inicio: string,
+  fim: string,
+): { data: string; pct: number }[] {
+  if (linhas.length === 0) return [];
+  return calcularCarteiraRendaFixa({ productRows: [linhas], calendario, dataInicio: inicio, dataCalculo: fim })
+    .filter((r) => r.diaUtil)
+    .map((r) => ({ data: r.data, pct: r.rentAcumuladaPct * 100 }));
 }
 
 const MESES = 12;

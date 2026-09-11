@@ -19,6 +19,7 @@ import type { ProductListItem, CarteiraInfo } from "@/hooks/useCarteiraRF";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 import { cotasCosturadas, trechosDaPosicao } from "@/lib/posicaoDeFundo";
+import { dadosDaPosicao, ultimoAte } from "@/lib/detalheDaPosicao";
 import {
   dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, ultimaDataAte, type PeriodoDaCarteira,
 } from "@/lib/periodo";
@@ -226,6 +227,11 @@ export function useCarteiraFundos() {
           existiuNaJanela: m.existiuNaJanela,
           fim: fimFundo,
           lingueta: linguetaDoFim(fimFundo, global, !encerrado),
+          dados: dadosDaPosicao(
+            ult?.valorInvestido ?? 0,
+            encerrado ? 0 : (ult?.saldoCotas ?? 0),
+            ultimoAte(cotas.map((c) => ({ data: c.data, valor: c.valor_cota })), fim),
+          ),
           custodiante: f.instituicao_nome,
           ativo: !encerrado,
           estrategia: null,

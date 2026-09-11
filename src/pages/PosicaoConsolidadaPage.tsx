@@ -1,28 +1,16 @@
-import { cotasCosturadas, trechosDaPosicao, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
 import { useEffect, useState, useMemo } from "react";
 import { Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { calcularRendaFixaDiario, permiteVendaNoSecundario, type DailyRow } from "@/lib/rendaFixaEngine";
-import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
-import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
-import { calcularAlocacaoPorGrupo, type GrupoMetricas } from "@/lib/alocacaoPorGrupo";
-import { buildCdiSeries, buildIbovespaSeries, type CdiRecord } from "@/lib/cdiCalculations";
+import type { DailyRow } from "@/lib/rendaFixaEngine";
+import { calcularAlocacaoPorGrupo } from "@/lib/alocacaoPorGrupo";
 import { useIbovespa } from "@/hooks/useIbovespa";
-import type { PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
+import { useCarteiraInvestimentos } from "@/hooks/useCarteiraInvestimentos";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
-import {
-  SEM_DADOS, calcularPosicaoDeFundo, dadosDaPosicao, montarGraficoETabela, ultimoAte, type DadosDaPosicao,
-} from "@/lib/detalheDaPosicao";
-import { calcularFundoDiario, fundoRowsToDailyRows } from "@/lib/fundoEngine";
-import { calcularCambioDiario, cambioRowsToDailyRows } from "@/lib/cambioEngine";
-import { fetchAllRows } from "@/lib/fetchAllRows";
-import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
-
+import LinguetaDeData from "@/components/LinguetaDeData";
+import { SEM_DADOS, montarGraficoETabela, serieDoProduto, type DadosDaPosicao } from "@/lib/detalheDaPosicao";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
-import { situacaoDaPosicao } from "@/lib/situacaoDaPosicao";
-import { dataGlobalEfetiva, fimDoProduto } from "@/lib/periodo";
 import { PaginaCabecalho, BarraDeFiltros, Contagem, TabelaCartao, LinhaMensagem } from "@/components/PaginaPadrao";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -39,15 +27,14 @@ import {
 import BoletaCustodiaDialog, { type CustodiaRowForBoleta } from "@/components/BoletaCustodiaDialog";
 import PosicaoDetalheDialog, { type PosicaoDetalheData } from "@/components/PosicaoDetalheDialog";
 
+/** O cadastro da posição: o que a boleta, a exclusão e a gaveta precisam. Os números vêm dos hooks. */
 interface CustodiaProduct {
   id: string;
   codigo_custodia: string;
   nome: string | null;
   data_inicio: string;
-  data_calculo: string | null;
   taxa: number | null;
   modalidade: string | null;
-  multiplicador: string | null;
   preco_unitario: number | null;
   categoria_nome: string;
   categoria_id: string;
@@ -57,19 +44,16 @@ interface CustodiaProduct {
   pagamento: string | null;
   vencimento: string | null;
   indexador: string | null;
-  data_limite: string | null;
   valor_investido: number;
   instituicao_nome: string;
   instituicao_id: string | null;
   emissor_nome: string | null;
   emissor_id: string | null;
-  quantidade: number | null;
-  fundo_id?: string | null;
-  moeda?: string | null;
-  fundoCfg?: { dias_cotizacao_aplicacao: number | null; dias_cotizacao_resgate: number | null } | null;
-  fundoCnpj?: string | null;
+  fundo_id: string | null;
+  moeda: string | null;
+  acao_id: string | null;
+  fundoCnpj: string | null;
 }
-
 
 interface PosicaoRow {
   nome: string;
@@ -79,33 +63,33 @@ interface PosicaoRow {
   custodiante: string;
   ativo: boolean;
   product: CustodiaProduct;
-  dados?: DadosDaPosicao;
-  /** Rentabilidade acumulada (%) por dia util, na mesma medida de `rentabilidade`. Vai para o grafico. */
-  serie?: { data: string; pct: number }[];
+  dados: DadosDaPosicao;
+  /** Fim do período do produto (`src/lib/periodo.ts`). */
+  fim: string | null;
+  lingueta: string | null;
+  /** Linhas diárias do motor da posição: a série do gráfico da gaveta sai delas. */
+  linhas: DailyRow[];
 }
 
-// Module-level cache to persist across navigation
-let _cachedVersion: number | null = null;
-let _cachedRows: PosicaoRow[] = [];
-let _cachedRentabilidade = 0;
-let _cachedAlocacaoInst: GrupoMetricas[] = [];
-let _cachedCdiTotal: number | null = null;
-let _cachedCdiRecords: CdiRecord[] = [];
-let _cachedDataGlobal: string | null = null;
+// Cadastro das posições entre navegações: evita a tabela piscar vazia enquanto a busca volta.
+let _cachedCustodias: Map<string, CustodiaProduct> = new Map();
 
+/**
+ * Posição Consolidada.
+ *
+ * Desde 11/09/2026 (etapa 6 do período) a tela não calcula nada por conta própria: as linhas vêm de
+ * `useCarteiraInvestimentos`, os mesmos hooks das lâminas. Antes ela tinha uma cópia inteira da conta,
+ * e a cópia já divergia: ações apareciam com ganho e rentabilidade zero, moeda com rentabilidade
+ * money-weighted e o total não fechava com a carteira de Investimentos.
+ */
 export default function PosicaoConsolidadaPage() {
   const { user } = useAuth();
   const { appliedVersion, dataReferenciaISO, applyDataReferencia } = useDataReferencia();
-  const [rows, setRows] = useState<PosicaoRow[]>(_cachedRows);
-  const [carteiraRentabilidade, setCarteiraRentabilidade] = useState(_cachedRentabilidade);
-  const [alocacaoInstituicao, setAlocacaoInstituicao] = useState<GrupoMetricas[]>(_cachedAlocacaoInst);
-  const [cdiAcumuladoTotal, setCdiAcumuladoTotal] = useState<number | null>(_cachedCdiTotal);
-  /** CDI do periodo, guardado para o % do CDI e o grafico do detalhe da posicao. */
-  const [cdiRecordsPosicao, setCdiRecordsPosicao] = useState<CdiRecord[]>(_cachedCdiRecords);
-  /** Data global efetiva (ultimo dia util ate a data do cabecalho), para o periodo do detalhe. */
-  const [dataGlobalPosicao, setDataGlobalPosicao] = useState<string | null>(_cachedDataGlobal);
+  const {
+    carteiraInfo, loading, produtos, calendario, periodo, resumo, cdiRecords,
+  } = useCarteiraInvestimentos();
   const ibovespa = useIbovespa();
-  const [loading, setLoading] = useState(false);
+  const [custodias, setCustodias] = useState<Map<string, CustodiaProduct>>(_cachedCustodias);
   const [search, setSearch] = useState("");
 
   // Dialog states
@@ -117,416 +101,115 @@ export default function PosicaoConsolidadaPage() {
 
   useEffect(() => {
     if (!user) return;
-    if (_cachedVersion === appliedVersion) return;
-    calculate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let vivo = true;
+    (async () => {
+      const { data } = await supabase
+        .from("custodia")
+        .select("id, codigo_custodia, nome, data_inicio, taxa, modalidade, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, moeda, acao_id, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(cnpj_classe)")
+        .eq("user_id", user.id);
+      if (!vivo) return;
+      const mapa = new Map<string, CustodiaProduct>();
+      for (const r of (data || []) as any[]) {
+        mapa.set(String(r.codigo_custodia), {
+          id: r.id,
+          codigo_custodia: String(r.codigo_custodia),
+          nome: r.nome,
+          data_inicio: r.data_inicio,
+          taxa: r.taxa,
+          modalidade: r.modalidade,
+          preco_unitario: r.preco_unitario,
+          categoria_nome: r.categorias?.nome || "",
+          categoria_id: r.categoria_id,
+          produto_nome: r.produtos?.nome || "",
+          produto_id: r.produto_id,
+          resgate_total: r.resgate_total,
+          pagamento: r.pagamento,
+          vencimento: r.vencimento,
+          indexador: r.indexador,
+          valor_investido: Number(r.valor_investido),
+          instituicao_nome: r.instituicoes?.nome || "—",
+          instituicao_id: r.instituicao_id,
+          emissor_nome: r.emissores?.nome || null,
+          emissor_id: r.emissor_id,
+          fundo_id: r.fundo_id ?? null,
+          moeda: r.moeda ?? null,
+          acao_id: r.acao_id ?? null,
+          fundoCnpj: r.cadastro_de_fundos?.cnpj_classe ?? null,
+        });
+      }
+      _cachedCustodias = mapa;
+      setCustodias(mapa);
+    })();
+    return () => {
+      vivo = false;
+    };
   }, [user, appliedVersion]);
 
-  async function calculate() {
-    setLoading(true);
-    try {
-      const { data: products } = await supabase
-        .from("custodia")
-        .select("id, codigo_custodia, nome, data_inicio, data_calculo, taxa, modalidade, multiplicador, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, data_limite, quantidade, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, moeda, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(cnpj_classe, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
-        .eq("user_id", user!.id);
-
-      if (!products || products.length === 0) { setRows([]); _cachedRows = []; _cachedVersion = appliedVersion; setLoading(false); return; }
-
-      const mapped: CustodiaProduct[] = products.map((r: any) => ({
-        id: r.id,
-        codigo_custodia: r.codigo_custodia,
-        nome: r.nome,
-        data_inicio: r.data_inicio,
-        data_calculo: r.data_calculo,
-        taxa: r.taxa,
-        modalidade: r.modalidade,
-        multiplicador: r.multiplicador,
-        preco_unitario: r.preco_unitario,
-        categoria_nome: r.categorias?.nome || "",
-        categoria_id: r.categoria_id,
-        produto_nome: r.produtos?.nome || "",
-        produto_id: r.produto_id,
-        resgate_total: r.resgate_total,
-        pagamento: r.pagamento,
-        vencimento: r.vencimento,
-        indexador: r.indexador,
-        data_limite: r.data_limite,
-        valor_investido: Number(r.valor_investido),
-        instituicao_nome: r.instituicoes?.nome || "—",
-        instituicao_id: r.instituicao_id,
-        emissor_nome: r.emissores?.nome || null,
-        emissor_id: r.emissor_id,
-        quantidade: r.quantidade != null ? Number(r.quantidade) : null,
-        fundo_id: r.fundo_id ?? null,
-        moeda: r.moeda ?? null,
-        fundoCfg: r.cadastro_de_fundos ?? null,
-        fundoCnpj: r.cadastro_de_fundos?.cnpj_classe ?? null,
-      }));
-
-      const rfProducts = mapped.filter((p) => p.categoria_nome === "Renda Fixa" && p.modalidade !== "Poupança");
-      const poupancaProducts = mapped.filter((p) => p.modalidade === "Poupança");
-      const fundoProducts = mapped.filter((p) => !!p.fundo_id);
-      const moedaProducts = mapped.filter((p) => !!p.moeda);
-      const otherProducts = mapped.filter((p) => p.categoria_nome !== "Renda Fixa" && p.modalidade !== "Poupança" && !p.fundo_id && !p.moeda);
-
-      const allCalcProducts = [...rfProducts, ...poupancaProducts, ...fundoProducts, ...moedaProducts];
-      const minDate = allCalcProducts.reduce((min, p) => (p.data_inicio < min ? p.data_inicio : min), allCalcProducts[0]?.data_inicio || dataReferenciaISO);
-      const maxDate = allCalcProducts.reduce((max, p) => {
-        const end = p.resgate_total || p.vencimento || dataReferenciaISO;
-        return end > max ? end : max;
-      }, dataReferenciaISO);
-
-      const allCodigos = allCalcProducts.map((p) => p.codigo_custodia);
-      const poupancaCodigos = poupancaProducts.map((p) => p.codigo_custodia);
-
-      const [calRes, cdiRes, movRes, selicRes, lotesRes, trRes, poupRendRes] = await Promise.all([
-        fetchAllRows((de, ate) => supabase.from("calendario_dias_uteis").select("data, dia_util").gte("data", pisoDoCalendario(minDate)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
-        fetchAllRows((de, ate) => supabase.from("historico_cdi").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data })),
-        allCodigos.length > 0
-          ? fetchAllRows((de, ate) => supabase.from("movimentacoes").select("data, data_cotizacao, tipo_movimentacao, valor, quantidade, codigo_custodia, fundo_id, created_at").in("codigo_custodia", allCodigos).eq("user_id", user!.id).order("data").range(de, ate)).then((data) => ({ data }))
-          : Promise.resolve({ data: [] }),
-        poupancaCodigos.length > 0
-          ? fetchAllRows((de, ate) => supabase.from("historico_selic").select("data, taxa_anual").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data }))
-          : Promise.resolve({ data: [] }),
-        Promise.resolve({ data: [] }), // lotes now built from movimentações
-        poupancaCodigos.length > 0
-          ? fetchAllRows((de, ate) => supabase.from("historico_tr").select("data, taxa_mensal").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data }))
-          : Promise.resolve({ data: [] }),
-        poupancaCodigos.length > 0
-          ? fetchAllRows((de, ate) => supabase.from("historico_poupanca_rendimento").select("data, rendimento_mensal").gte("data", getDateMinus(minDate, 5)).lte("data", maxDate).order("data").range(de, ate)).then((data) => ({ data }))
-          : Promise.resolve({ data: [] }),
-      ]);
-
-      const calendario = (calRes.data || []).map((c: any) => ({ data: c.data, dia_util: c.dia_util }));
-      const dataGlobal = dataGlobalEfetiva(calendario, dataReferenciaISO);
-      setDataGlobalPosicao(dataGlobal);
-      _cachedDataGlobal = dataGlobal;
-      // `dia_util` vem junto porque buildCdiSeries e calcularAlocacaoPorGrupo pedem CdiRecord
-      // completo; o motor de renda fixa ignora o campo a mais.
-      const diaUtilPorData = new Map<string, boolean>(calendario.map((c) => [c.data, c.dia_util]));
-      const cdiRecords = (cdiRes.data || []).map((c: any) => ({
-        data: c.data as string,
-        taxa_anual: Number(c.taxa_anual),
-        dia_util: diaUtilPorData.get(c.data) ?? true,
-      }));
-      const cdiMap = new Map<string, number>();
-      for (const c of cdiRecords) cdiMap.set(c.data, c.taxa_anual);
-      setCdiRecordsPosicao(cdiRecords);
-      _cachedCdiRecords = cdiRecords;
-      const selicRecords = ((selicRes as any).data || []).map((s: any) => ({ data: s.data, taxa_anual: Number(s.taxa_anual) }));
-      const trRecords = ((trRes as any).data || []).map((t: any) => ({ data: t.data, taxa_mensal: Number(t.taxa_mensal) }));
-      const poupancaRendimentoRecords = ((poupRendRes as any).data || []).map((r: any) => ({ data: r.data, rendimento_mensal: Number(r.rendimento_mensal) }));
-
-      // Series de IPCA so quando ha papel indexado a ele: sao duas leituras a mais.
-      const seriesIpca: SeriesIpca | null = algumIndexadoAoIpca(rfProducts as any[])
-        ? await carregarSeriesIpca()
-        : null;
-
-      const movByCodigo = new Map<string, { data: string; tipo_movimentacao: string; valor: number }[]>();
-      const movFundoByCodigo = new Map<string, { data: string; tipo: string; valor: number; data_cotizacao: string | null; qtd_cotas: number | null }[]>();
-      // Para costurar a serie de cotas da posicao que mudou de fundo ("Mudança de Fundo").
-      const trechoMovByCodigo = new Map<string, MovimentoDeFundo[]>();
-      for (const m of ((movRes as any).data || [])) {
-        const code = m.codigo_custodia as string;
-        if (m.fundo_id) {
-          trechoMovByCodigo.set(code, [...(trechoMovByCodigo.get(code) ?? []), {
-            fundo_id: m.fundo_id, data: m.data, data_cotizacao: m.data_cotizacao ?? null,
-            tipo_movimentacao: m.tipo_movimentacao, created_at: m.created_at ?? null,
-          }]);
-        }
-        if (!movByCodigo.has(code)) movByCodigo.set(code, []);
-        movByCodigo.get(code)!.push({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) });
-        if (!movFundoByCodigo.has(code)) movFundoByCodigo.set(code, []);
-        movFundoByCodigo.get(code)!.push({
-          data: m.data, tipo: m.tipo_movimentacao, valor: Number(m.valor),
-          data_cotizacao: m.data_cotizacao ?? null,
-          qtd_cotas: m.quantidade != null ? Number(m.quantidade) : null,
-        });
-      }
-
-      // Cotas dos fundos do usuario: a posicao do fundo e saldo de cotas x cota do dia.
-      const cotasPorFundo = new Map<string, { data: string; valor_cota: number }[]>();
-      if (fundoProducts.length > 0) {
-        const cotasData = await fetchAllRows((de, ate) => supabase
-          .from("cotas_fundos")
-          .select("fundo_id, data, valor_cota")
-          .in("fundo_id", [...new Set([
-            ...fundoProducts.map((p) => p.fundo_id!),
-            ...((movRes as any).data || []).map((m: any) => m.fundo_id as string | null).filter(Boolean),
-          ])])
-          .lte("data", dataReferenciaISO)
-          .order("data")
-          .range(de, ate));
-        for (const c of cotasData) {
-          const arr = cotasPorFundo.get((c as any).fundo_id) || [];
-          arr.push({ data: (c as any).data, valor_cota: Number((c as any).valor_cota) });
-          cotasPorFundo.set((c as any).fundo_id, arr);
-        }
-      }
-
-      // lotes are now derived from movimentações to avoid double-counting resgates
-
-      // Serie de cotas da posicao de fundo, costurada quando o fundo mudou no caminho.
-      const cotasDoProduto = (product: { codigo_custodia: string; fundo_id?: string | null }) => {
-        const trechos = trechosDaPosicao(trechoMovByCodigo.get(product.codigo_custodia) || []);
-        return trechos.length > 1 ? cotasCosturadas(trechos, cotasPorFundo) : (cotasPorFundo.get(product.fundo_id!) || []);
-      };
-
-      // Cotacao das moedas em posicao: o patrimonio e saldo x cotacao do dia.
-      const cotacoesPorMoeda = new Map<string, { data: string; cotacao: number; provisorio: boolean }[]>();
-      const TABELA_MOEDA: Record<string, string> = { USD: "historico_dolar", EUR: "historico_euro" };
-      for (const codigo of new Set(moedaProducts.map((p) => p.moeda!))) {
-        const tabela = TABELA_MOEDA[codigo];
-        if (!tabela) continue;
-        const linhas = await fetchAllRows((de, ate) => supabase
-          .from(tabela as any).select("data, cotacao_venda, provisorio")
-          .lte("data", dataReferenciaISO).order("data").range(de, ate));
-        cotacoesPorMoeda.set(codigo, (linhas as any[]).map((r) => ({
-          data: r.data, cotacao: Number(r.cotacao_venda), provisorio: !!r.provisorio,
-        })));
-      }
-
-      const posicaoRows: PosicaoRow[] = [];
-      const allProductRows: DailyRow[][] = [];
-
-      for (const product of rfProducts) {
-        const dataFim = product.resgate_total || product.vencimento || product.data_calculo || "2099-12-31";
-        const isEncerrado = product.resgate_total ? product.resgate_total <= dataReferenciaISO : product.vencimento ? product.vencimento <= dataReferenciaISO : false;
-        const calcEnd = dataFim > dataReferenciaISO ? dataReferenciaISO : dataFim;
-
-        const engineRows = calcularRendaFixaDiario({
-          dataInicio: product.data_inicio,
-          dataCalculo: calcEnd,
-          taxa: product.taxa || 0,
-          modalidade: product.modalidade || "",
-          // Debenture, CRI e CRA rendem no proprio dia da compra.
-          rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
-          puInicial: product.preco_unitario || 1000,
-          calendario,
-          movimentacoes: movByCodigo.get(product.codigo_custodia) || [],
-          dataResgateTotal: product.resgate_total,
-          pagamento: product.pagamento,
-          vencimento: product.vencimento,
-          indexador: product.indexador,
-          cdiRecords,
-          ipcaFatores: fatoresIpcaDoTitulo(seriesIpca, product.indexador, product.vencimento, calendario, product.data_inicio),
-          dataLimite: product.data_limite,
-          precomputedCdiMap: cdiMap,
-          calendarioSorted: true,
-        });
-
-        allProductRows.push(engineRows);
-
-        const lastRow = engineRows.length > 0 ? engineRows[engineRows.length - 1] : null;
-        if (lastRow) {
-          const usePeriodic = product.pagamento && product.pagamento !== "No Vencimento";
-          const rentPct = usePeriodic ? lastRow.rentAcumulada2 : lastRow.rentabilidadeAcumuladaPct;
-          // "Encerrado" vem do SALDO, nao so do cadastro: `custodia.resgate_total` guarda o
-          // vencimento quando o papel foi zerado por um "Resgate" parcial em vez de um
-          // "Resgate Total" (`resgateTotalDeMovs` so enxerga o segundo). O bloco de
-          // poupanca logo abaixo ja fazia assim.
-          const { encerrada: encerrado, valorExibido } = situacaoDaPosicao(lastRow.liquido, isEncerrado);
-          posicaoRows.push({
-            nome: product.nome || product.produto_nome,
-            valorAtualizado: valorExibido,
-            ganhoFinanceiro: lastRow.ganhoAcumulado,
-            rentabilidade: (rentPct ?? 0) * 100,
-            custodiante: product.instituicao_nome,
-            ativo: !encerrado,
-            product,
-            dados: { ...SEM_DADOS, valorInvestido: lastRow.valorInvestido },
-            serie: engineRows.filter((r) => r.diaUtil).map((r) => ({
-              data: r.data,
-              pct: ((usePeriodic ? r.rentAcumulada2 : r.rentabilidadeAcumuladaPct) ?? 0) * 100,
-            })),
-          });
-        }
-      }
-
-      // Poupança products — FIFO (single row) or per-certificate
-      for (const product of poupancaProducts) {
-        const allMovsForProduct = movByCodigo.get(product.codigo_custodia) || [];
-        const lotesForEngine = buildPoupancaLotesFromMovs(allMovsForProduct);
-
-        if (lotesForEngine.length === 0) continue;
-
-        const engineRows = calcularPoupancaDiario({
-          dataInicio: lotesForEngine[0].data_aplicacao,
-          dataCalculo: dataReferenciaISO,
-          calendario,
-          movimentacoes: allMovsForProduct,
-          lotes: lotesForEngine,
-          selicRecords,
-          trRecords,
-          poupancaRendimentoRecords,
-          dataResgateTotal: product.resgate_total,
-        });
-
-        {
-
-          allProductRows.push(engineRows);
-
-          const lastRow = engineRows.length > 0 ? engineRows[engineRows.length - 1] : null;
-          if (lastRow) {
-            const isEncerrado = lastRow.liquido < 0.01;
-            posicaoRows.push({
-              nome: product.nome || "Poupança",
-              valorAtualizado: lastRow.liquido,
-              ganhoFinanceiro: lastRow.ganhoAcumulado,
-              rentabilidade: lastRow.rentabilidadeAcumuladaPct * 100,
-              custodiante: product.instituicao_nome,
-              ativo: !isEncerrado,
-              product,
-              dados: { ...SEM_DADOS, valorInvestido: product.valor_investido },
-              serie: engineRows.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaPct * 100 })),
-            });
-          }
-        }
-      }
-
-      for (const product of fundoProducts) {
-        // A mesma conta da gaveta aberta na lâmina de Fundos: `calcularPosicaoDeFundo`.
-        const calculo = calcularPosicaoDeFundo({
-          dataInicio: product.data_inicio,
-          resgateTotal: product.resgate_total,
-          fundoId: product.fundo_id!,
-          diasCotizacaoAplicacao: product.fundoCfg?.dias_cotizacao_aplicacao,
-          diasCotizacaoResgate: product.fundoCfg?.dias_cotizacao_resgate,
-          movimentacoes: movFundoByCodigo.get(product.codigo_custodia) || [],
-          movimentosDaPosicao: trechoMovByCodigo.get(product.codigo_custodia) || [],
-          cotasPorFundo,
-          calendario,
-          dataReferenciaISO,
-        });
-        if (!calculo) continue;
-        allProductRows.push(fundoRowsToDailyRows(calculo.linhas));
-        posicaoRows.push({
-          nome: product.nome || product.produto_nome,
-          valorAtualizado: calculo.valorAtualizado,
-          ganhoFinanceiro: calculo.ganho,
-          rentabilidade: calculo.rentabilidadePct,
-          custodiante: product.instituicao_nome,
-          ativo: !calculo.encerrada,
-          product,
-          dados: calculo.dados,
-          serie: calculo.serie,
-        });
-      }
-
-      for (const product of moedaProducts) {
-        const fim = product.resgate_total && product.resgate_total < dataReferenciaISO
-          ? product.resgate_total
-          : dataReferenciaISO;
-        const rowsMoeda = calcularCambioDiario({
-          dataInicio: product.data_inicio,
-          dataCalculo: fim,
-          calendario,
-          cotacoes: cotacoesPorMoeda.get(product.moeda!) || [],
-          movimentacoes: (movFundoByCodigo.get(product.codigo_custodia) || []).map((m) => ({
-            data: m.data, tipo: m.tipo, valor: m.valor, quantidade: m.qtd_cotas,
-          })),
-        });
-        if (rowsMoeda.length === 0) continue;
-        allProductRows.push(cambioRowsToDailyRows(rowsMoeda));
-
-        const ult = rowsMoeda[rowsMoeda.length - 1];
-        const { encerrada: encerrado, valorExibido } = situacaoDaPosicao(
-          ult.saldoReais,
-          !!product.resgate_total && product.resgate_total <= dataReferenciaISO,
-        );
-        posicaoRows.push({
-          nome: product.nome || product.produto_nome,
-          valorAtualizado: valorExibido,
-          ganhoFinanceiro: ult.ganhoAcumulado,
-          rentabilidade: ult.rentabilidadeAcumuladaMWPct * 100,
-          custodiante: product.instituicao_nome,
-          ativo: !encerrado,
-          product,
-          dados: dadosDaPosicao(
-            ult.valorInvestido,
-            ult.saldoMoeda,
-            // A PTAX repetida pelo carry-forward nao e dado novo: o ultimo preco e a ultima oficial.
-            ultimoAte((cotacoesPorMoeda.get(product.moeda!) || []).filter((c) => !c.provisorio).map((c) => ({ data: c.data, valor: c.cotacao })), fim),
-          ),
-          serie: rowsMoeda.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaMWPct * 100 })),
-        });
-      }
-
-      for (const product of otherProducts) {
-        posicaoRows.push({
-          nome: product.nome || product.produto_nome,
-          valorAtualizado: product.valor_investido,
-          ganhoFinanceiro: 0,
-          rentabilidade: 0,
-          custodiante: product.instituicao_nome,
-          ativo: true,
-          product,
-          dados: { ...SEM_DADOS, valorInvestido: product.valor_investido },
-        });
-      }
-
-      // Compute TWR for total rentabilidade using carteira engine
-      if (allProductRows.length > 0) {
-        const carteiraRows = calcularCarteiraRendaFixa({
-          productRows: allProductRows,
-          calendario,
-          dataInicio: minDate,
-          dataCalculo: dataReferenciaISO,
-        });
-        const lastCarteira = carteiraRows.length > 0 ? carteiraRows[carteiraRows.length - 1] : null;
-        const rentVal = lastCarteira ? lastCarteira.rentAcumuladaPct * 100 : 0;
-        setCarteiraRentabilidade(rentVal);
-        _cachedRentabilidade = rentVal;
-      } else {
-        setCarteiraRentabilidade(0);
-        _cachedRentabilidade = 0;
-      }
-
-      // Alocacao por instituicao. Veio do dashboard em 07/09/2026, a pedido do Daniel, e e
-      // calculada aqui em vez de importada de la porque o motor ja rodou por produto logo
-      // acima: `allProductRows` esta na mesma ordem de `posicaoRows`, entao os indices casam.
-      if (allProductRows.length > 0) {
-        const gruposIdx = new Map<string, number[]>();
-        posicaoRows.forEach((r, i) => {
-          const inst = r.custodiante || "—";
-          if (!gruposIdx.has(inst)) gruposIdx.set(inst, []);
-          gruposIdx.get(inst)!.push(i);
-        });
-
-        const linhas = calcularAlocacaoPorGrupo({
-          gruposIdx,
-          allProductRows,
-          calendario,
-          cdiRecords,
-          dataInicio: minDate,
-          dataCalculo: dataReferenciaISO,
-          dataReferencia: dataReferenciaISO,
-        });
-        setAlocacaoInstituicao(linhas);
-        _cachedAlocacaoInst = linhas;
-
-        // CDI do periodo inteiro, para a linha de total: o mesmo criterio que
-        // calcularAlocacaoPorGrupo aplica a cada grupo.
-        const serie = buildCdiSeries(cdiRecords, minDate, dataReferenciaISO);
-        const cdiTotal = serie.length > 0 ? serie[serie.length - 1].cdi_acumulado : null;
-        setCdiAcumuladoTotal(cdiTotal);
-        _cachedCdiTotal = cdiTotal;
-      } else {
-        setAlocacaoInstituicao([]);
-        _cachedAlocacaoInst = [];
-        setCdiAcumuladoTotal(null);
-        _cachedCdiTotal = null;
-      }
-
-      setRows(posicaoRows);
-      _cachedRows = posicaoRows;
-      _cachedVersion = appliedVersion;
-    } catch (err) {
-      console.error("Erro ao calcular posição consolidada:", err);
-    } finally {
-      setLoading(false);
+  /** Uma linha por posição, com os números da lâmina dela. */
+  const rows = useMemo<PosicaoRow[]>(() => {
+    const lista: PosicaoRow[] = [];
+    const comMotor = new Set<string>();
+    for (const { item, rows: linhas } of produtos) {
+      const codigo = String(item.analysisProduct.codigo_custodia);
+      comMotor.add(codigo);
+      // A lâmina não lista posição que não existiu no período; aqui também não.
+      if (item.existiuNaJanela === false) continue;
+      const product = custodias.get(codigo);
+      if (!product) continue;
+      lista.push({
+        nome: item.nome,
+        valorAtualizado: item.valorAtualizado,
+        ganhoFinanceiro: item.ganhoFinanceiro,
+        rentabilidade: item.rentabilidade,
+        custodiante: item.custodiante,
+        ativo: item.ativo,
+        product,
+        dados: item.dados ?? SEM_DADOS,
+        fim: item.fim ?? null,
+        lingueta: item.lingueta ?? null,
+        linhas,
+      });
     }
-  }
+    // Categoria ainda sem motor (ex.: Tesouro Direto): entra só com o valor investido.
+    for (const product of custodias.values()) {
+      if (comMotor.has(product.codigo_custodia)) continue;
+      lista.push({
+        nome: product.nome || product.produto_nome,
+        valorAtualizado: product.valor_investido,
+        ganhoFinanceiro: 0,
+        rentabilidade: 0,
+        custodiante: product.instituicao_nome,
+        ativo: true,
+        product,
+        dados: { ...SEM_DADOS, valorInvestido: product.valor_investido },
+        fim: null,
+        lingueta: null,
+        linhas: [],
+      });
+    }
+    return lista;
+  }, [produtos, custodias]);
+
+  // Alocacao por instituicao. Cada grupo passa pelo motor de carteira com as linhas das posicoes dele.
+  const alocacaoInstituicao = useMemo(() => {
+    if (!carteiraInfo?.data_inicio || !carteiraInfo?.data_calculo || calendario.length === 0) return [];
+    const gruposIdx = new Map<string, number[]>();
+    rows.forEach((r, i) => {
+      if (r.linhas.length === 0) return;
+      const inst = r.custodiante || "—";
+      if (!gruposIdx.has(inst)) gruposIdx.set(inst, []);
+      gruposIdx.get(inst)!.push(i);
+    });
+    return calcularAlocacaoPorGrupo({
+      gruposIdx,
+      allProductRows: rows.map((r) => r.linhas),
+      calendario,
+      cdiRecords,
+      dataInicio: carteiraInfo.data_inicio,
+      dataCalculo: carteiraInfo.data_calculo,
+      dataReferencia: dataReferenciaISO,
+    });
+  }, [rows, calendario, cdiRecords, carteiraInfo, dataReferenciaISO]);
 
   const filteredRows = useMemo(() => {
     if (!search.trim()) return rows;
@@ -536,7 +219,6 @@ export default function PosicaoConsolidadaPage() {
 
   const totalValor = useMemo(() => filteredRows.reduce((s, r) => s + r.valorAtualizado, 0), [filteredRows]);
   const totalGanho = useMemo(() => filteredRows.reduce((s, r) => s + r.ganhoFinanceiro, 0), [filteredRows]);
-
 
   // Boleta helpers
   function openBoleta(row: PosicaoRow, tipo: "Aplicação" | "Resgate", e?: React.MouseEvent) {
@@ -575,7 +257,6 @@ export default function PosicaoConsolidadaPage() {
     const { error } = await supabase.from("custodia").delete().eq("id", p.id);
     if (error) { toast.error("Erro ao excluir."); } else {
       toast.success("Ativo e movimentações excluídos.");
-      setRows((prev) => prev.filter((r) => r.product.id !== p.id));
       await fullSyncAfterDelete(p.codigo_custodia, p.categoria_id, user.id, dataReferenciaISO);
       applyDataReferencia();
     }
@@ -584,21 +265,16 @@ export default function PosicaoConsolidadaPage() {
 
   function getDetalheData(row: PosicaoRow): PosicaoDetalheData {
     const p = row.product;
-    const tipo = p.fundo_id ? "fundo" : p.moeda ? "moeda" : p.categoria_nome === "Renda Fixa" ? "renda_fixa" : "outro";
-    const dados = row.dados ?? SEM_DADOS;
+    const tipo = p.fundo_id ? "fundo" : p.moeda ? "moeda" : p.acao_id ? "acao" : p.categoria_nome === "Renda Fixa" ? "renda_fixa" : "outro";
+    const dados = row.dados;
 
-    // Periodo da posicao (`src/lib/periodo.ts`): do inicio dela ate a menor data entre a data global,
-    // o ultimo dado do produto e o encerramento. Fundo para na ultima cota e moeda na ultima PTAX
-    // oficial; renda fixa vai ate a data global. CDI, grafico e tabela param nesse fim.
+    // Periodo da posicao, o mesmo da linha da lamina (`src/lib/periodo.ts`): CDI, grafico e tabela
+    // param no fim dele.
     const inicio = p.data_inicio;
-    const global = dataGlobalPosicao ?? dataReferenciaISO;
-    const fim = fimDoProduto({
-      dataGlobal: global,
-      ultimoDado: tipo === "fundo" || tipo === "moeda" ? dados.dataUltimoPreco : undefined,
-      encerramento: p.resgate_total || (tipo === "renda_fixa" ? p.vencimento : null),
-    }) ?? global;
+    const fim = row.fim ?? periodo.dataGlobal;
     const { grafico, cdiAcumuladoPct, tabela } = montarGraficoETabela({
-      serie: row.serie ?? [], cdiRecords: cdiRecordsPosicao, ibovespa, inicio, fim,
+      serie: serieDoProduto(row.linhas, calendario, inicio, fim),
+      cdiRecords, ibovespa, inicio, fim,
     });
 
     return {
@@ -628,7 +304,7 @@ export default function PosicaoConsolidadaPage() {
   const detalheData = useMemo(
     () => (detalheRow ? getDetalheData(detalheRow) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [detalheRow, cdiRecordsPosicao, dataReferenciaISO, dataGlobalPosicao, ibovespa],
+    [detalheRow, cdiRecords, calendario, periodo, ibovespa],
   );
 
   // Depois de um recalculo (transacao nova pelo header, outra data de referencia) a gaveta aberta
@@ -695,7 +371,10 @@ export default function PosicaoConsolidadaPage() {
                     <TableCell className="text-sm">{fmtBrl(row.ganhoFinanceiro)}</TableCell>
                     <TableCell className="text-sm">{row.rentabilidade.toFixed(2)}%</TableCell>
                     <TableCell className="text-sm">{row.custodiante}</TableCell>
-                    <TableCell className="text-sm text-right font-medium">{pctPortfolio.toFixed(2)}%</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-right font-medium">
+                      {pctPortfolio.toFixed(2)}%
+                      <LinguetaDeData data={row.lingueta} dataGlobal={periodo.dataGlobal} />
+                    </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">
                         <Button variant="outline" size="sm" className="text-xs h-7 px-2" onClick={(e) => openBoleta(row, "Aplicação", e)}>Aplicação</Button>
@@ -713,9 +392,12 @@ export default function PosicaoConsolidadaPage() {
                 <TableCell className="text-sm">Total</TableCell>
                 <TableCell className="text-sm">{fmtBrl(totalValor)}</TableCell>
                 <TableCell className="text-sm">{fmtBrl(totalGanho)}</TableCell>
-                <TableCell className="text-sm">{carteiraRentabilidade.toFixed(2)}%</TableCell>
+                <TableCell className="text-sm">{resumo.rent != null ? `${resumo.rent.toFixed(2)}%` : "—"}</TableCell>
                 <TableCell />
-                <TableCell className="text-sm text-right">100,00%</TableCell>
+                <TableCell className="whitespace-nowrap text-sm text-right">
+                  100,00%
+                  <LinguetaDeData data={periodo.lingueta} dataGlobal={periodo.dataGlobal} />
+                </TableCell>
                 <TableCell />
               </TableRow>
               </>
@@ -732,14 +414,12 @@ export default function PosicaoConsolidadaPage() {
           linhas={alocacaoInstituicao}
           totalPatrimonio={alocacaoInstituicao.reduce((s, l) => s + l.patrimonio, 0)}
           totalGanho={totalGanho}
-          totalRent={carteiraRentabilidade}
-          totalCdi={cdiAcumuladoTotal}
-          totalSobreCdi={
-            cdiAcumuladoTotal != null && cdiAcumuladoTotal !== 0
-              ? (carteiraRentabilidade / cdiAcumuladoTotal) * 100
-              : null
-          }
-          dataLabel={new Date(dataReferenciaISO + "T00:00:00").toLocaleDateString("pt-BR")}
+          totalRent={resumo.rent}
+          totalCdi={resumo.cdiAcum}
+          totalSobreCdi={resumo.sobreCdi}
+          dataLabel={new Date((carteiraInfo?.data_calculo ?? dataReferenciaISO) + "T00:00:00").toLocaleDateString("pt-BR")}
+          linguetaTotal={periodo.lingueta}
+          dataGlobal={periodo.dataGlobal}
         />
       </div>
 
@@ -752,7 +432,7 @@ export default function PosicaoConsolidadaPage() {
           row={dialogRow}
           userId={user.id}
           dataReferenciaISO={dataReferenciaISO}
-          onSuccess={() => { calculate(); applyDataReferencia(); }}
+          onSuccess={() => applyDataReferencia()}
         />
       )}
 
@@ -764,7 +444,7 @@ export default function PosicaoConsolidadaPage() {
           data={detalheData}
           userId={user.id}
           dataReferenciaISO={dataReferenciaISO}
-          onDataChanged={() => { calculate(); applyDataReferencia(); }}
+          onDataChanged={() => applyDataReferencia()}
         />
       )}
 

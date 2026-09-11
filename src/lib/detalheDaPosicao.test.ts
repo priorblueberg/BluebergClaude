@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildCdiSeries } from "./cdiCalculations";
-import { dadosDaPosicao, montarGraficoETabela, tabelaDeRentabilidade, ultimoAte } from "./detalheDaPosicao";
+import { dadosDaPosicao, montarGraficoETabela, serieDoProduto, tabelaDeRentabilidade, ultimoAte } from "./detalheDaPosicao";
+import { metricasDoProdutoNaJanela } from "./janelaDoProduto";
+import type { DailyRow } from "./rendaFixaEngine";
 
 describe("tabela de rentabilidade da posição", () => {
   // Dezembro rende 1% (acumulado 1,00%) e janeiro mais 1% sobre isso (acumulado 2,01%).
@@ -81,5 +83,33 @@ describe("dados da posição", () => {
   it("preço médio é valor investido dividido pela quantidade", () => {
     expect(dadosDaPosicao(379136.16, 26856.80127955, null).precoMedio).toBeCloseTo(14.11695143, 7);
     expect(dadosDaPosicao(0, 0, null).precoMedio).toBeNull();
+  });
+});
+
+describe("série da gaveta", () => {
+  // Aplica 1.000 na segunda, rende 10 na terça e 10,10 na quarta; sábado e domingo ficam fora.
+  const linha = (data: string, liquido: number, aplicacoes: number, ganhoDiario: number) =>
+    ({ data, diaUtil: true, liquido, liquido2: liquido, aplicacoes, ganhoDiario }) as unknown as DailyRow;
+  const linhas = [
+    linha("2026-09-07", 1000, 1000, 0),
+    linha("2026-09-08", 1010, 0, 10),
+    linha("2026-09-09", 1020.1, 0, 10.1),
+  ];
+  const calendario = [
+    { data: "2026-09-07", dia_util: true },
+    { data: "2026-09-08", dia_util: true },
+    { data: "2026-09-09", dia_util: true },
+    { data: "2026-09-12", dia_util: false },
+  ];
+
+  it("fecha com a rentabilidade da linha da lâmina", () => {
+    const serie = serieDoProduto(linhas, calendario, "2026-09-07", "2026-09-09");
+    const linhaDaLamina = metricasDoProdutoNaJanela(linhas, calendario, "2026-09-07", "2026-09-09");
+    expect(serie.at(-1)!.pct).toBeCloseTo(linhaDaLamina.rentabilidade, 10);
+    expect(serie.at(-1)!.pct).toBeCloseTo(2.01, 10);
+  });
+
+  it("para no fim do período do produto", () => {
+    expect(serieDoProduto(linhas, calendario, "2026-09-07", "2026-09-08").map((p) => p.data)).toEqual(["2026-09-07", "2026-09-08"]);
   });
 });

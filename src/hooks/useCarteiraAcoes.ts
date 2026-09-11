@@ -20,6 +20,7 @@ import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { CarteiraInfo, ProductListItem } from "@/hooks/useCarteiraRF";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
+import { dadosDaPosicao } from "@/lib/detalheDaPosicao";
 import {
   dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, ultimaBarraReal, type BarraDeAcao,
   type PeriodoDaCarteira,
@@ -52,6 +53,7 @@ let _acoesCached: {
   posicoes: PosicaoAcao[];
   productList: ProductListItem[];
   cdiRecords: CdiRecord[];
+  calendario: { data: string; dia_util: boolean }[];
   periodo: PeriodoDaCarteira | null;
 } | null = null;
 
@@ -65,6 +67,7 @@ export function useCarteiraAcoes() {
   const [productList, setProductList] = useState<ProductListItem[]>(_acoesCached?.productList ?? []);
   const [cdiRecords, setCdiRecords] = useState<CdiRecord[]>(_acoesCached?.cdiRecords ?? []);
   const [periodo, setPeriodo] = useState<PeriodoDaCarteira | null>(_acoesCached?.periodo ?? null);
+  const [calendario, setCalendario] = useState<{ data: string; dia_util: boolean }[]>(_acoesCached?.calendario ?? []);
   const [loading, setLoading] = useState(_acoesCachedVersion === null);
 
   useEffect(() => {
@@ -101,10 +104,10 @@ export function useCarteiraAcoes() {
 
       const vazio = () => {
         setCarteiraInfo((cartData as CarteiraInfo) ?? null);
-        setCarteiraRows([]); setAllProductRows([]); setPosicoes([]); setProductList([]); setCdiRecords([]); setPeriodo(null);
+        setCarteiraRows([]); setAllProductRows([]); setPosicoes([]); setProductList([]); setCdiRecords([]); setPeriodo(null); setCalendario([]);
         setLoading(false);
         _acoesCachedVersion = appliedVersion;
-        _acoesCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], posicoes: [], productList: [], cdiRecords: [], periodo: null };
+        _acoesCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], posicoes: [], productList: [], cdiRecords: [], calendario: [], periodo: null };
       };
 
       if (posicoesCustodia.length === 0 || !cartData?.data_inicio || !cartData?.data_calculo) {
@@ -255,6 +258,15 @@ export function useCarteiraAcoes() {
           existiuNaJanela: m.existiuNaJanela,
           fim: fimPapel,
           lingueta,
+          // Ultimo preco: o da ultima barra negociada ate o fim do periodo do papel.
+          dados: dadosDaPosicao(
+            ult?.valorInvestido ?? 0,
+            qtd,
+            (() => {
+              const barra = (barrasPorTicker.get(p.ticker) || []).find((b) => b.data === fimPapel);
+              return barra?.fechamento != null ? { data: barra.data, valor: barra.fechamento } : null;
+            })(),
+          ),
           custodiante: p.custodiante,
           ativo: !encerrado,
           estrategia: null,
@@ -294,11 +306,14 @@ export function useCarteiraAcoes() {
       setCarteiraRows(result);
       setCdiRecords(mergedCdi);
       setPeriodo(per);
+      // Sem a coluna `pregao`: quem soma carteiras usa o calendario bancario.
+      const calendarioBancario = calendario.map((c) => ({ data: c.data, dia_util: c.dia_util }));
+      setCalendario(calendarioBancario);
       _acoesCachedVersion = appliedVersion;
-      _acoesCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi, periodo: per };
+      _acoesCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi, calendario: calendarioBancario, periodo: per };
       setLoading(false);
     })();
   }, [user, appliedVersion]);
 
-  return { carteiraInfo, carteiraRows, allProductRows, posicoes, productList, cdiRecords, periodo, loading };
+  return { carteiraInfo, carteiraRows, allProductRows, posicoes, productList, cdiRecords, calendario, periodo, loading };
 }

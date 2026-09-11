@@ -31,7 +31,7 @@ interface Movimentacao {
 
 export interface PosicaoDetalheData {
   /** Decide a linha abaixo do nome: cota so existe em fundo, cotacao em moeda. */
-  tipo: "fundo" | "moeda" | "renda_fixa" | "outro";
+  tipo: "fundo" | "moeda" | "acao" | "renda_fixa" | "outro";
   nome: string;
   /** CNPJ da classe, nos fundos. Vai junto do nome, como no Gorila. */
   cnpj: string | null;
@@ -166,8 +166,8 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
     setDeleteId(null);
   }
 
-  const temPreco = data.tipo === "fundo" || data.tipo === "moeda";
-  const rotuloDoPreco = data.tipo === "moeda" ? "Última cotação divulgada" : "Última cota divulgada";
+  const temPreco = data.tipo === "fundo" || data.tipo === "moeda" || data.tipo === "acao";
+  const rotuloDoPreco = data.tipo === "moeda" ? "Última cotação divulgada" : data.tipo === "acao" ? "Último preço" : "Última cota divulgada";
   const sobreCdi = data.cdiAcumuladoPct != null && data.cdiAcumuladoPct > 0
     ? (data.rentabilidadePct / data.cdiAcumuladoPct) * 100
     : null;

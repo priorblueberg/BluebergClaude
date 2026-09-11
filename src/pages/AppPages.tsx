@@ -1,23 +1,14 @@
-import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { useMemo } from "react";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { useAuth } from "@/hooks/useAuth";
-import { useCarteiraRF } from "@/hooks/useCarteiraRF";
-import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
-import { useCarteiraMoedas } from "@/hooks/useCarteiraMoedas";
-import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
+import { useCarteiraInvestimentos } from "@/hooks/useCarteiraInvestimentos";
 import { HistoricoRentabilidadeChart } from "@/components/HistoricoRentabilidadeChart";
 import { buildCdiSeries, buildIbovespaSeries } from "@/lib/cdiCalculations";
-import { ateAData } from "@/lib/janelaDaCarteira";
-import { buildCarteiraDetailRows } from "@/lib/detailRowsBuilder";
 import { calcularAlocacaoPorGrupo } from "@/lib/alocacaoPorGrupo";
 import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
 import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
 import { useBoleta } from "@/contexts/BoletaContext";
 import LinguetaDeData from "@/components/LinguetaDeData";
-import { dataGlobalEfetiva, periodoDaCarteira, type PeriodoDaCarteira } from "@/lib/periodo";
 
 
 
@@ -30,96 +21,14 @@ const fmtPctValue = (v: number | null) => (v != null ? `${v.toFixed(2)}%` : "—
 
 export const CarteiraVisaoGeral = () => {
   const { abrirBoleta } = useBoleta();
-  const { user } = useAuth();
-  const [carteiraInfoBruta, setCarteiraInfo] = useState<{
-    nome_carteira: string;
-    status: string;
-    data_inicio: string | null;
-    data_calculo: string | null;
-  } | null>(null);
-  const [infoLoading, setInfoLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
-  const { appliedVersion, dataReferenciaISO } = useDataReferencia();
-  const navigate = useNavigate();
+  const { dataReferenciaISO } = useDataReferencia();
 
-  // Números vêm dos mesmos hooks que alimentam as lâminas por categoria: uma
-  // fonte só por categoria, consolidadas aqui pelo motor de carteira.
+  // A carteira de Investimentos é montada num lugar só, junto com a Posição Consolidada: as
+  // quatro carteiras por categoria somadas pelo mesmo motor (`useCarteiraInvestimentos`).
   const {
-    carteiraRows: rfCarteiraRows, allProductRows: rfProductRows, cdiRecords, ibovespaData,
-    productList: rfProductList, allCustodiaForCategoria, calendario: rfCalendario,
-    periodo: rfPeriodo, loading: rfLoading,
-  } = useCarteiraRF();
-  const {
-    allProductRows: fundoProductRows, productList: fundoProductList,
-    calendario: fundoCalendario, periodo: fundoPeriodo, loading: fundosLoading,
-  } = useCarteiraFundos();
-  const {
-    allProductRows: moedaProductRows, productList: moedaProductList,
-    periodo: moedaPeriodo, loading: moedasLoading,
-  } = useCarteiraMoedas();
-  const dadosLoading = rfLoading || fundosLoading || moedasLoading;
-
-  const allProductRows = useMemo(
-    () => [...rfProductRows, ...fundoProductRows, ...moedaProductRows],
-    [rfProductRows, fundoProductRows, moedaProductRows],
-  );
-  const productList = useMemo(
-    () => [...rfProductList, ...fundoProductList, ...moedaProductList],
-    [rfProductList, fundoProductList, moedaProductList],
-  );
-  /** Calendário da união: os fundos começam antes da renda fixa nesta carteira. */
-  const calendario = useMemo(() => {
-    const map = new Map<string, { data: string; dia_util: boolean }>();
-    for (const c of [...rfCalendario, ...fundoCalendario]) map.set(c.data, c);
-    return Array.from(map.values()).sort((a, b) => a.data.localeCompare(b.data));
-  }, [rfCalendario, fundoCalendario]);
-
-  /**
-   * Período da carteira de Investimentos: vai até o MAIOR fim entre as carteiras com posição
-   * (`src/lib/periodo.ts`). A carteira que termina antes entra com o valor repetido - os motores
-   * de cada produto rodam até a data global efetiva e repetem a última cota ou preço.
-   */
-  const periodo = useMemo(
-    () => periodoDaCarteira(
-      [rfPeriodo, fundoPeriodo, moedaPeriodo].filter((p): p is PeriodoDaCarteira => !!p),
-      dataGlobalEfetiva(calendario, dataReferenciaISO),
-    ),
-    [rfPeriodo, fundoPeriodo, moedaPeriodo, calendario, dataReferenciaISO],
-  );
-  const carteiraInfo = useMemo(
-    () => (carteiraInfoBruta && periodo.fim ? { ...carteiraInfoBruta, data_calculo: periodo.fim } : carteiraInfoBruta),
-    [carteiraInfoBruta, periodo],
-  );
-
-  /** Consolidado: renda fixa e fundos passam pelo MESMO motor de carteira. */
-  const carteiraRows = useMemo(() => {
-    if (!carteiraInfo?.data_inicio || !carteiraInfo?.data_calculo || calendario.length === 0) {
-      return rfCarteiraRows;
-    }
-    return calcularCarteiraRendaFixa({
-      productRows: allProductRows,
-      calendario,
-      dataInicio: carteiraInfo.data_inicio,
-      dataCalculo: carteiraInfo.data_calculo,
-    });
-  }, [allProductRows, calendario, carteiraInfo, rfCarteiraRows]);
-
-  useEffect(() => {
-    if (!user) return;
-    (async () => {
-      setInfoLoading(true);
-      const { data } = await supabase
-        .from("controle_de_carteiras")
-        .select("nome_carteira, status, data_inicio, data_calculo, data_limite, resgate_total")
-        .eq("nome_carteira", "Investimentos")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      setCarteiraInfo(ateAData(data as any, dataReferenciaISO));
-      setNotFound(!data);
-      setInfoLoading(false);
-    })();
-  }, [appliedVersion, user, dataReferenciaISO]);
+    carteiraInfo, notFound, loading: carregando, productList, allProductRows, calendario, periodo,
+    periodoPorCategoria, carteiraRows, detailRows, resumo, cdiRecords, ibovespaData, allCustodiaForCategoria,
+  } = useCarteiraInvestimentos();
 
   const chartData = useMemo(() => {
     if (!carteiraInfo?.data_inicio || carteiraRows.length === 0) return [];
@@ -159,38 +68,6 @@ export const CarteiraVisaoGeral = () => {
     [carteiraRows, dataReferenciaISO],
   );
 
-  const detailRows = useMemo(() => {
-    if (!carteiraInfo?.data_inicio || !carteiraInfo?.data_calculo) return [];
-    return buildCarteiraDetailRows(
-      allProductRows, carteiraRows, cdiRecords,
-      carteiraInfo.data_inicio, carteiraInfo.data_calculo,
-    );
-  }, [allProductRows, carteiraRows, cdiRecords, carteiraInfo]);
-
-  const resumo = useMemo(() => {
-    let patrimonio: number | null = null;
-    let rent: number | null = null;
-    let ganho: number | null = null;
-
-    for (let i = carteiraRows.length - 1; i >= 0; i--) {
-      if (carteiraRows[i].data <= dataReferenciaISO) {
-        patrimonio = carteiraRows[i].liquido;
-        rent = carteiraRows[i].rentAcumuladaPct * 100;
-        ganho = carteiraRows[i].rentAcumuladaRS;
-        break;
-      }
-    }
-
-    const cdiAcum = detailRows.length > 0 ? detailRows[0].cdiAcumulado : null;
-    // % do CDI com todas as casas; arredondar antes de dividir erra a segunda casa.
-    const cdiExato = detailRows.length > 0 ? (detailRows[0].cdiAcumuladoExato ?? cdiAcum) : null;
-    const sobreCdi = rent != null && cdiExato != null && cdiExato !== 0
-      ? (rent / cdiExato) * 100
-      : null;
-
-    return { patrimonio, ganho, rent, cdiAcum, sobreCdi };
-  }, [carteiraRows, detailRows, dataReferenciaISO]);
-
   /** Cada grupo passa pelo mesmo motor de carteira, para a rentabilidade da
    *  linha ser comparável com a do card (time-weighted, não ganho/capital). */
   const alocacaoCategoria = useMemo(() => {
@@ -212,16 +89,6 @@ export const CarteiraVisaoGeral = () => {
       extrasMap.set(c.categoria_nome, (extrasMap.get(c.categoria_nome) || 0) + valor);
     }
 
-    // Cada categoria é uma carteira e termina no fim dela, não no da carteira de Investimentos.
-    const periodoPorGrupo = new Map<string, PeriodoDaCarteira>();
-    const marcar = (lista: typeof productList, per: PeriodoDaCarteira | null) => {
-      if (!per) return;
-      for (const p of lista) periodoPorGrupo.set(p.analysisProduct?.categoria_nome || "Outros", per);
-    };
-    marcar(rfProductList, rfPeriodo);
-    marcar(fundoProductList, fundoPeriodo);
-    marcar(moedaProductList, moedaPeriodo);
-
     return calcularAlocacaoPorGrupo({
       gruposIdx,
       allProductRows,
@@ -231,12 +98,11 @@ export const CarteiraVisaoGeral = () => {
       dataCalculo: carteiraInfo.data_calculo,
       dataReferencia: dataReferenciaISO,
       extras: Array.from(extrasMap, ([nome, patrimonio]) => ({ nome, patrimonio })),
-      periodoPorGrupo,
+      // Cada categoria é uma carteira e termina no fim dela, não no da carteira de Investimentos.
+      periodoPorGrupo: periodoPorCategoria,
     });
-  }, [
-    productList, allProductRows, allCustodiaForCategoria, calendario, cdiRecords, carteiraInfo, dataReferenciaISO,
-    rfProductList, fundoProductList, moedaProductList, rfPeriodo, fundoPeriodo, moedaPeriodo,
-  ]);
+  }, [productList, allProductRows, allCustodiaForCategoria, calendario, cdiRecords, carteiraInfo, dataReferenciaISO,
+    periodoPorCategoria]);
 
   const fmtDate = (d: string | null) =>
     d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
@@ -268,7 +134,7 @@ export const CarteiraVisaoGeral = () => {
     return null;
   };
 
-  if (infoLoading || dadosLoading) {
+  if (carregando) {
     return (
       <div className="flex items-center justify-center py-20">
         <p className="text-muted-foreground">Carregando...</p>
