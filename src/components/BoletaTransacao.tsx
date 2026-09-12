@@ -936,6 +936,41 @@ export default function BoletaTransacao({
     return () => { vivo = false; };
   }, [user, isFundo, ehSaida]);
 
+  /**
+   * Instituicao da posicao do fundo, nas saidas (Daniel, 12/09/2026): o fundo escolhido ja esta
+   * atrelado a uma instituicao, entao ela vem preenchida e sem edicao. E informacao para o cliente,
+   * nao entra no calculo. `undefined` enquanto busca; `null` quando nao ha uma unica instituicao (o
+   * mesmo fundo por mais de uma corretora), e ai o campo volta a ser de escolha.
+   */
+  const [instituicaoDaPosicao, setInstituicaoDaPosicao] = useState<{ id: string; nome: string } | null | undefined>(undefined);
+  useEffect(() => {
+    if (!user || !isFundo || !ehSaida || !fundoId) {
+      setInstituicaoDaPosicao(undefined);
+      return;
+    }
+    let vivo = true;
+    setInstituicaoDaPosicao(undefined);
+    (async () => {
+      const { data: movs } = await supabase
+        .from("movimentacoes")
+        .select("instituicao_id")
+        .eq("user_id", user.id)
+        .eq("fundo_id", fundoId)
+        .not("instituicao_id", "is", null);
+      const ids = [...new Set(((movs || []) as { instituicao_id: string }[]).map((m) => m.instituicao_id))];
+      if (ids.length !== 1) {
+        if (vivo) setInstituicaoDaPosicao(null);
+        return;
+      }
+      const { data: inst } = await supabase.from("instituicoes").select("nome").eq("id", ids[0]).maybeSingle();
+      if (!vivo) return;
+      setInstituicaoId(ids[0]);
+      setInstituicaoNome(inst?.nome ?? "");
+      setInstituicaoDaPosicao({ id: ids[0], nome: inst?.nome ?? "" });
+    })();
+    return () => { vivo = false; };
+  }, [user, isFundo, ehSaida, fundoId]);
+
   /** Cotacao da moeda na data, so para mostrar o saldo tambem em reais. */
   const [cotacaoOp, setCotacaoOp] = useState<number | null>(null);
   useEffect(() => {
@@ -1899,7 +1934,19 @@ Confirma que o preço está certo?`,
   );
 
   // Mesmo campo em todas as movimentacoes de fundo; so o lugar muda (nas saidas, logo abaixo do fundo).
-  const campoInstituicaoFundo = (
+  // Nas saidas, com uma unica instituicao na posicao, ele vem preenchido e so de leitura.
+  const instituicaoTravada = ehSaida && !!fundoId && instituicaoDaPosicao !== null;
+  const campoInstituicaoFundo = instituicaoTravada ? (
+    <Field label="Instituição (custodiante)">
+      <Input
+        readOnly
+        tabIndex={-1}
+        className="bg-muted/50"
+        value={instituicaoDaPosicao?.nome ?? ""}
+        placeholder={instituicaoDaPosicao === undefined ? "Buscando a instituição da posição..." : ""}
+      />
+    </Field>
+  ) : (
     <Field label="Instituição (custodiante)" required>
       <EntidadeSelect
         tipo="instituicao"
