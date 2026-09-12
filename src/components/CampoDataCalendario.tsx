@@ -118,6 +118,9 @@ export default function CampoDataCalendario({
                 ...(max ? [{ after: paraDate(max) }] : []),
                 { dayOfWeek: [0, 6] },
               ]}
+              // Sempre 6 semanas: mes de 5 semanas deixava o calendario mais baixo, e ao navegar pelas
+              // setas o popover trocava de lado (embaixo/em cima do campo). Altura fixa, lugar fixo.
+              fixedWeeks
               initialFocus
               className="p-3 pointer-events-auto"
             />
