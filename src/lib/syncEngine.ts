@@ -4,7 +4,9 @@
  * Mantém custodia e controle_de_carteiras atualizadas
  * automaticamente quando movimentacoes são alteradas.
  */
-import { cotasCosturadas, TIPO_MUDANCA_DE_FUNDO, trechosDaPosicao } from "@/lib/posicaoDeFundo";
+import {
+  ajustarResgatesTotais, cotasCosturadas, ordenarMovimentosDeFundo, TIPO_MUDANCA_DE_FUNDO, trechosDaPosicao,
+} from "@/lib/posicaoDeFundo";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs, montarLotesPersistidos } from "@/lib/poupancaEngine";
@@ -1520,11 +1522,28 @@ export async function syncCustodiaFundo(
 
   const ENTRADAS = ["Aplicação", "Aplicação Inicial"];
 
+  // "Resgate Total" acompanha o historico (Daniel, 12/09/2026): movimentacao anterior a ele que entra,
+  // muda ou sai reescreve a quantidade (saldo exato do dia) e o valor (quantidade x cota), e a posicao
+  // segue zerada no fechamento. Toda gravacao e exclusao de fundo passa por aqui.
+  for (const a of ajustarResgatesTotais(movs as any[], cotaEm)) {
+    await supabase
+      .from("movimentacoes")
+      .update({ quantidade: a.quantidade, valor: a.valor, preco_unitario: a.preco_unitario })
+      .eq("id", a.id);
+    const alvo = (movs as any[]).find((x) => x.id === a.id);
+    if (alvo) {
+      alvo.quantidade = a.quantidade;
+      alvo.valor = a.valor;
+      alvo.preco_unitario = a.preco_unitario;
+    }
+  }
+
   let saldoCotas = 0;
   let custo = 0;
   let dataZerou: string | null = null;
 
-  for (const m of movs as any[]) {
+  // Mesma ordem do saldo da boleta: no mesmo dia, o "Resgate Total" por ultimo.
+  for (const m of ordenarMovimentosDeFundo(movs as any[])) {
     const dataCot = m.data_cotizacao || m.data;
     let qtd = m.quantidade != null ? Number(m.quantidade) : null;
     const cota = cotaEm(dataCot);

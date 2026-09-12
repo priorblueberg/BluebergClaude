@@ -13,6 +13,7 @@
  */
 
 export const TIPO_MUDANCA_DE_FUNDO = "Mudança de Fundo";
+export const TIPO_RESGATE_TOTAL = "Resgate Total";
 const ENTRADAS = ["Aplicação", "Aplicação Inicial"];
 
 export interface MovimentoDeFundo {
@@ -28,9 +29,58 @@ export interface MovimentoDeFundo {
 
 export const dataEfetiva = (m: { data: string; data_cotizacao?: string | null }) => m.data_cotizacao || m.data;
 
-function ordenar<T extends MovimentoDeFundo>(movs: T[]): T[] {
+/**
+ * Ordem da posicao: data de cotizacao e, no mesmo dia, o "Resgate Total" por ultimo, porque ele zera a
+ * posicao ao FINAL do dia, com tudo o que entrou nele; empate, pela ordem de cadastro.
+ */
+export function ordenarMovimentosDeFundo<T extends MovimentoDeFundo>(movs: T[]): T[] {
+  const peso = (m: MovimentoDeFundo) => (m.tipo_movimentacao === TIPO_RESGATE_TOTAL ? 1 : 0);
   return [...movs].sort((a, b) =>
-    dataEfetiva(a).localeCompare(dataEfetiva(b)) || (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+    dataEfetiva(a).localeCompare(dataEfetiva(b))
+    || peso(a) - peso(b)
+    || (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+}
+
+const ordenar = ordenarMovimentosDeFundo;
+
+/**
+ * "Resgate Total" de fundo acompanha o historico (Daniel, 12/09/2026), como na renda fixa e no Gorila:
+ * a posicao fica zerada ao final do dia do resgate mesmo quando uma aplicacao, um resgate ou uma
+ * mudanca de fundo ANTERIOR a ele entra, muda ou sai depois. A quantidade passa a ser o saldo de cotas
+ * na vespera do fechamento (com o que entrou no proprio dia) e o valor, essa quantidade x a cota da data
+ * de cotizacao dele.
+ *
+ * Devolve so os resgates totais que precisam mudar. Sem cota na data, o resgate fica como esta.
+ */
+export function ajustarResgatesTotais<T extends MovimentoDeFundo & { id: string }>(
+  movs: T[],
+  cotaEm: (dataISO: string) => number | null,
+): { id: string; quantidade: number; valor: number; preco_unitario: number }[] {
+  const ajustes: { id: string; quantidade: number; valor: number; preco_unitario: number }[] = [];
+  let saldo = 0;
+  for (const m of ordenar(movs)) {
+    let qtd = m.quantidade != null ? Number(m.quantidade) : null;
+    if (qtd == null && Number(m.preco_unitario) > 0) qtd = Number(m.valor) / Number(m.preco_unitario);
+
+    if (m.tipo_movimentacao === TIPO_RESGATE_TOTAL) {
+      const cota = cotaEm(dataEfetiva(m));
+      if (cota != null && cota > 0) {
+        const quantidade = Math.round(Math.max(saldo, 0) * 1e8) / 1e8;
+        const valor = Math.round(quantidade * cota * 100) / 100;
+        if (qtd == null || Math.abs(quantidade - qtd) > 1e-8 || Math.abs(valor - Number(m.valor)) >= 0.005) {
+          ajustes.push({ id: m.id, quantidade, valor, preco_unitario: cota });
+        }
+      }
+      saldo = 0;
+      continue;
+    }
+
+    if (qtd == null || !Number.isFinite(qtd)) continue;
+    if (m.tipo_movimentacao === TIPO_MUDANCA_DE_FUNDO) saldo = qtd;
+    else if (ENTRADAS.includes(m.tipo_movimentacao)) saldo += qtd;
+    else saldo -= qtd;
+  }
+  return ajustes;
 }
 
 /**
