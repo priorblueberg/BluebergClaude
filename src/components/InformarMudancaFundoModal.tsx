@@ -29,7 +29,8 @@ const lerQtd = (t: string): number | null => {
  */
 const MESMA_COTA = 0.02;
 
-interface Posicao { codigo: string; saldo: number; qtd: string }
+/** Uma posicao do fundo antigo: desde 12/09/2026 o mesmo fundo em duas instituicoes sao duas. */
+interface Posicao { codigo: string; instituicao: string; saldo: number; qtd: string }
 
 /**
  * Resposta do cliente a "Possível alteração na composição do fundo".
@@ -69,10 +70,23 @@ export default function InformarMudancaFundoModal({
   useEffect(() => {
     if (!user) return;
     let vivo = true;
-    Promise.all((d.codigos_custodia ?? []).map(async (codigo) => ({
-      codigo: String(codigo),
-      saldo: await saldoEmQuantidade(String(codigo), user.id, d.ultima_cota_em),
-    }))).then((ps) => { if (vivo) setPosicoes(ps.map((p) => ({ ...p, qtd: "" }))); });
+    Promise.all((d.codigos_custodia ?? []).map(async (codigo) => {
+      // A instituicao da posicao (a da primeira movimentacao) identifica cada uma na tela.
+      const { data: base } = await supabase.from("movimentacoes")
+        .select("instituicao_id")
+        .eq("user_id", user.id).eq("codigo_custodia", String(codigo))
+        .order("data").limit(1).maybeSingle();
+      let instituicao = "";
+      if (base?.instituicao_id) {
+        const { data: inst } = await supabase.from("instituicoes").select("nome").eq("id", base.instituicao_id).maybeSingle();
+        instituicao = inst?.nome ?? "";
+      }
+      return {
+        codigo: String(codigo),
+        instituicao,
+        saldo: await saldoEmQuantidade(String(codigo), user.id, d.ultima_cota_em),
+      };
+    })).then((ps) => { if (vivo) setPosicoes(ps.map((p) => ({ ...p, qtd: "" }))); });
     return () => { vivo = false; };
   }, [user, alerta.id, d.codigos_custodia, d.ultima_cota_em]);
 
@@ -246,7 +260,7 @@ export default function InformarMudancaFundoModal({
                 {posicoes.map((p, i) => (
                   <div key={p.codigo} className="space-y-1">
                     <p className="text-xs text-muted-foreground">
-                      Cotas no fundo novo{posicoes.length > 1 ? ` (posição ${p.codigo})` : ""} · antes: {fmtQtd(p.saldo)}
+                      Cotas no fundo novo{posicoes.length > 1 ? ` (${p.instituicao || `posição ${p.codigo}`})` : ""} · antes: {fmtQtd(p.saldo)}
                     </p>
                     <Input
                       value={p.qtd}

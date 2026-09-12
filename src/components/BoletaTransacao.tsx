@@ -28,7 +28,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData, fundosComPosicao, limitesDaSerieDoFundo } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData, fundosComPosicao, limitesDaSerieDoFundo, posicoesDoFundo } from "@/lib/validacaoBoleta";
 import { janelaDoCalendarioDoFundo, mensagemDaDataDoFundo, type LimitesDoFundo } from "@/lib/validacaoDataFundo";
 import CampoDataCalendario from "@/components/CampoDataCalendario";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -937,39 +937,38 @@ export default function BoletaTransacao({
   }, [user, isFundo, ehSaida]);
 
   /**
-   * Instituicao da posicao do fundo, nas saidas (Daniel, 12/09/2026): o fundo escolhido ja esta
-   * atrelado a uma instituicao, entao ela vem preenchida e sem edicao. E informacao para o cliente,
-   * nao entra no calculo. `undefined` enquanto busca; `null` quando nao ha uma unica instituicao (o
-   * mesmo fundo por mais de uma corretora), e ai o campo volta a ser de escolha.
+   * Posicoes do fundo escolhido, nas saidas (Daniel, 12/09/2026). O mesmo fundo em duas instituicoes
+   * sao duas posicoes, como nos demais produtos, e a saida incide sobre UMA delas. Com uma so, a
+   * instituicao vem preenchida e sem edicao (e informacao para o cliente); com mais de uma, o cliente
+   * escolhe entre as instituicoes em que tem o fundo. `undefined` enquanto busca.
+   * Na edicao a posicao e a da propria movimentacao, e a instituicao nao muda.
    */
-  const [instituicaoDaPosicao, setInstituicaoDaPosicao] = useState<{ id: string; nome: string } | null | undefined>(undefined);
+  const [posicoesFundo, setPosicoesFundo] = useState<
+    { codigo: string; instituicaoId: string | null; instituicaoNome: string }[] | undefined
+  >(undefined);
+  const [codigoSaidaFundo, setCodigoSaidaFundo] = useState("");
   useEffect(() => {
-    if (!user || !isFundo || !ehSaida || !fundoId) {
-      setInstituicaoDaPosicao(undefined);
+    setCodigoSaidaFundo("");
+    if (!user || !isFundo || !ehSaida || !fundoId || isEditing) {
+      setPosicoesFundo(undefined);
       return;
     }
     let vivo = true;
-    setInstituicaoDaPosicao(undefined);
-    (async () => {
-      const { data: movs } = await supabase
-        .from("movimentacoes")
-        .select("instituicao_id")
-        .eq("user_id", user.id)
-        .eq("fundo_id", fundoId)
-        .not("instituicao_id", "is", null);
-      const ids = [...new Set(((movs || []) as { instituicao_id: string }[]).map((m) => m.instituicao_id))];
-      if (ids.length !== 1) {
-        if (vivo) setInstituicaoDaPosicao(null);
-        return;
-      }
-      const { data: inst } = await supabase.from("instituicoes").select("nome").eq("id", ids[0]).maybeSingle();
+    setPosicoesFundo(undefined);
+    posicoesDoFundo(user.id, fundoId).then((ps) => {
       if (!vivo) return;
-      setInstituicaoId(ids[0]);
-      setInstituicaoNome(inst?.nome ?? "");
-      setInstituicaoDaPosicao({ id: ids[0], nome: inst?.nome ?? "" });
-    })();
+      setPosicoesFundo(ps);
+      if (ps.length === 1) {
+        setCodigoSaidaFundo(ps[0].codigo);
+        setInstituicaoId(ps[0].instituicaoId ?? "");
+        setInstituicaoNome(ps[0].instituicaoNome);
+      } else {
+        setInstituicaoId("");
+        setInstituicaoNome("");
+      }
+    });
     return () => { vivo = false; };
-  }, [user, isFundo, ehSaida, fundoId]);
+  }, [user, isFundo, ehSaida, fundoId, isEditing]);
 
   /** Cotacao da moeda na data, so para mostrar o saldo tambem em reais. */
   const [cotacaoOp, setCotacaoOp] = useState<number | null>(null);
@@ -986,11 +985,14 @@ export default function BoletaTransacao({
   }, [isMoeda, moedaSel, data]);
 
   /** Saldo do ativo escolhido na data: em cotas no fundo, na moeda estrangeira no cambio. */
+  // Posicao de fundo sobre a qual a saida incide: a da movimentacao em edicao, ou a escolhida.
+  const codigoPosicaoFundo = isEditing ? codigoCustodiaEmEdicao ?? "" : codigoSaidaFundo;
   const saldoDaSaida = useMemo(() => {
     if (!ehSaida || !comSaldo) return null;
-    const chave = isFundo ? fundoId : moedaSel;
+    // Fundo: saldo da posicao (fundo + instituicao), nao a soma do fundo; moeda: saldo da moeda.
+    const chave = isFundo ? (codigoPosicaoFundo ? `${fundoId}|${codigoPosicaoFundo}` : "") : moedaSel;
     return chave ? comSaldo.get(chave) ?? null : null;
-  }, [ehSaida, comSaldo, isFundo, fundoId, moedaSel]);
+  }, [ehSaida, comSaldo, isFundo, fundoId, moedaSel, codigoPosicaoFundo]);
 
   /**
    * Validacao da data de fundo, embaixo do campo (pedido do Daniel, 11/09/2026): data invalida, antes
@@ -1005,7 +1007,8 @@ export default function BoletaTransacao({
     diaUtil: diaUtilFundo && diaUtilFundo.data === data ? diaUtilFundo.util : undefined,
     cotaNaData: cotaOp && cotaOp.dataCotizacao === data ? cotaOp.cota : undefined,
     ehSaida,
-    saldoNaData: !ehSaida || comSaldo == null ? undefined : saldoDaSaida,
+    // Sem posicao escolhida (fundo em mais de uma instituicao) ainda nao ha o que dizer sobre custodia.
+    saldoNaData: !ehSaida || comSaldo == null || !codigoPosicaoFundo ? undefined : saldoDaSaida,
   });
 
   // Mudou a data numa venda de moeda: a moeda escolhida pode nao existir na nova data, entao sai.
@@ -1027,13 +1030,6 @@ export default function BoletaTransacao({
     [ehSaida, comSaldo],
   );
 
-  /** Quantidade de cotas da operacao: valor / cota. Exibida, nunca digitada. */
-  const qtdCotasDerivada = useMemo(() => {
-    const v = parseCurrencyToNumber(valor);
-    const c = cotaOp?.cota;
-    if (!c || !v) return null;
-    return v / c;
-  }, [valor, cotaOp]);
   const showMoedaFields = isMoeda && !!tipoMovimentacao;
   // Como em moedas: os campos so fazem sentido depois de saber se e compra ou venda - o
   // rotulo do valor e a checagem de saldo dependem disso.
@@ -1406,8 +1402,7 @@ Confirma que o preço está certo?`,
       if (!instituicaoId) faltando.add("instituicaoId");
       if (faltando.size > 0) {
         setValidationErrors(faltando);
-        // Nas saidas o aviso fica na linha reservada acima dos botoes; a aplicacao nao tem essa linha.
-        if (!ehSaida) toast.error("Preencha todos os campos obrigatórios.");
+        // O aviso fica na linha reservada acima dos botoes, sem toast.
         return;
       }
       setValidationErrors(new Set());
@@ -1452,22 +1447,32 @@ Confirma que o preço está certo?`,
         }
         const qtd = valorNum / cotaDoDia;
 
-        // Fundo que ja esta na carteira reaproveita o codigo de custodia.
-        const { data: existentes } = await supabase
-          .from("movimentacoes")
-          .select("codigo_custodia")
-          .eq("user_id", user.id)
-          .eq("fundo_id", fundoId)
-          .not("codigo_custodia", "is", null)
-          .limit(1);
-
+        // Mesmo fundo na mesma instituicao e a mesma posicao; em outra instituicao, e outra posicao,
+        // como em renda fixa, poupanca, acoes e moedas (Daniel, 12/09/2026).
+        // Na edicao a posicao nao muda; numa saida, e a posicao escolhida (fundo + instituicao).
         let codigoCustodia: string;
         let tipoFinal = tipoMovimentacao;
-        if (existentes && existentes.length > 0) {
-          codigoCustodia = String(existentes[0].codigo_custodia);
+        if (isEditing || ehSaida) {
+          if (!codigoPosicaoFundo) {
+            setValidationErrors(new Set(["instituicaoId"]));
+            return;
+          }
+          codigoCustodia = codigoPosicaoFundo;
         } else {
-          codigoCustodia = await proximoCodigoCustodia();
-          if (tipoMovimentacao === "Aplicação") tipoFinal = "Aplicação Inicial";
+          const { data: existentes } = await supabase
+            .from("movimentacoes")
+            .select("codigo_custodia")
+            .eq("user_id", user.id)
+            .eq("fundo_id", fundoId)
+            .eq("instituicao_id", instituicaoId)
+            .not("codigo_custodia", "is", null)
+            .limit(1);
+          if (existentes && existentes.length > 0) {
+            codigoCustodia = String(existentes[0].codigo_custodia);
+          } else {
+            codigoCustodia = await proximoCodigoCustodia();
+            if (tipoMovimentacao === "Aplicação") tipoFinal = "Aplicação Inicial";
+          }
         }
 
         // Resgate e come-cotas nao podem passar do saldo de cotas: posicao
@@ -1933,17 +1938,34 @@ Confirma que o preço está certo?`,
     </Field>
   );
 
-  // Mesmo campo em todas as movimentacoes de fundo; so o lugar muda (nas saidas, logo abaixo do fundo).
-  // Nas saidas, com uma unica instituicao na posicao, ele vem preenchido e so de leitura.
-  const instituicaoTravada = ehSaida && !!fundoId && instituicaoDaPosicao !== null;
-  const campoInstituicaoFundo = instituicaoTravada ? (
+  // Mesmo campo em toda movimentacao de fundo, logo abaixo do fundo. Na aplicacao o cliente escolhe;
+  // nas saidas vem da posicao (uma so: preenchida e sem edicao; mais de uma: escolha entre as
+  // instituicoes em que ha o fundo); na edicao nao muda, porque mudaria a posicao.
+  const instituicaoSomenteLeitura =
+    isEditing || (ehSaida && !!fundoId && (posicoesFundo === undefined || posicoesFundo.length === 1));
+  const campoInstituicaoFundo = instituicaoSomenteLeitura ? (
     <Field label="Instituição (custodiante)">
       <Input
         readOnly
         tabIndex={-1}
         className="bg-muted/50"
-        value={instituicaoDaPosicao?.nome ?? ""}
-        placeholder={instituicaoDaPosicao === undefined ? "Buscando a instituição da posição..." : ""}
+        value={instituicaoNome}
+        placeholder={!isEditing && posicoesFundo === undefined ? "Buscando a instituição da posição..." : ""}
+      />
+    </Field>
+  ) : ehSaida && posicoesFundo && posicoesFundo.length > 1 ? (
+    <Field label="Instituição (custodiante)" required>
+      <NativeSelect
+        value={codigoSaidaFundo}
+        onChange={(codigo) => {
+          const p = posicoesFundo.find((x) => x.codigo === codigo);
+          setCodigoSaidaFundo(codigo);
+          setInstituicaoId(p?.instituicaoId ?? "");
+          setInstituicaoNome(p?.instituicaoNome ?? "");
+        }}
+        placeholder="Selecione a instituição"
+        hasError={erroInstituicaoObrigatoria}
+        options={posicoesFundo.map((p) => ({ value: p.codigo, label: p.instituicaoNome || `Posição ${p.codigo}` }))}
       />
     </Field>
   ) : (
@@ -2202,8 +2224,8 @@ Confirma que o preço está certo?`,
 
         {/* ── Fundos de Investimentos ── */}
         {showFundoFields && campoFundo}
-        {/* Nas saidas a instituicao vem logo abaixo do fundo, de ponta a ponta (Daniel, 12/09/2026). */}
-        {showFundoFields && ehSaida && !!fundoId && campoInstituicaoFundo}
+        {/* A instituicao vem logo abaixo do fundo, de ponta a ponta, em toda movimentacao de fundo (Daniel, 12/09/2026). */}
+        {showFundoFields && !!fundoId && campoInstituicaoFundo}
         {showFundoFields && !fundoId && (
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => onFechar?.()}>
@@ -2223,9 +2245,9 @@ Confirma que o preço está certo?`,
                   max={janelaFundo.max}
                   mensagem={mensagemDataFundo}
                   destacarErro={erroDataObrigatoria}
-                  // Nas saidas a cota e so informacao, em cinza, na linha embaixo da data (Daniel, 12/09/2026).
+                  // A cota e so informacao, em cinza, na linha embaixo da data (Daniel, 12/09/2026).
                   informacao={
-                    ehSaida && data && !mensagemDataFundo && cotaOp?.cota != null
+                    data && !mensagemDataFundo && cotaOp?.cota != null
                       ? `Valor da cota: ${cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })}`
                       : null
                   }
@@ -2254,48 +2276,13 @@ Confirma que o preço está certo?`,
               </Field>
             </div>
 
-            {ehSaida ? (
-              /* Resgate e come-cotas (pedidos do Daniel, 12/09/2026): a instituição fica logo abaixo
-                 do fundo, a cota aparece em cinza embaixo da data e a quantidade não aparece. Esta
-                 linha é a do aviso de obrigatório vazio; ela existe sempre, vazia ou não, para os
-                 botões não descerem quando o aviso aparece. */
-              <p className="h-4 text-xs font-medium leading-4 text-destructive">
-                {faltamObrigatoriosFundo ? "Preencha os campos obrigatórios" : ""}
-              </p>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <Field label="Valor da Cota">
-                    <Input
-                      readOnly
-                      className="bg-muted/50"
-                      value={
-                        cotaOp?.cota != null
-                          ? cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
-                          : ""
-                      }
-                      placeholder={fundoId && data ? "Cota não divulgada" : "Selecione o fundo e a data"}
-                    />
-                  </Field>
-                  <Field label="Quantidade de Cotas">
-                    <Input
-                      readOnly
-                      className="bg-muted/50"
-                      value={
-                        qtdCotasDerivada != null
-                          ? qtdCotasDerivada.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
-                          : ""
-                      }
-                      placeholder="Valor ÷ cota"
-                    />
-                  </Field>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  {campoInstituicaoFundo}
-                </div>
-              </>
-            )}
+            {/* Aplicação, resgate e come-cotas (pedidos do Daniel, 12/09/2026): a instituição fica
+                logo abaixo do fundo, a cota aparece em cinza embaixo da data e a quantidade não
+                aparece. Esta linha é a do aviso de obrigatório vazio; ela existe sempre, vazia ou
+                não, para os botões não descerem quando o aviso aparece. */}
+            <p className="h-4 text-xs font-medium leading-4 text-destructive">
+              {faltamObrigatoriosFundo ? "Preencha os campos obrigatórios" : ""}
+            </p>
 
             <div className="flex gap-3">
               <Button onClick={handleSubmit} disabled={submitting}>
@@ -2978,7 +2965,8 @@ function NativeSelect({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`input-field ${hasError ? "border-destructive ring-1 ring-destructive" : ""}`}
+      // Com erro, so a borda vira vermelha, sem anel por fora (Daniel, 12/09/2026).
+      className={`input-field ${hasError ? "border-destructive" : ""}`}
       disabled={disabled}
     >
       <option value="">{placeholder}</option>

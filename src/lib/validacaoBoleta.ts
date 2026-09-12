@@ -151,7 +151,49 @@ export async function limitesDaSerieDoFundo(fundoId: string) {
 }
 
 /**
- * Saldo por fundo (ou por moeda) que o usuario tinha NA DATA. So entra quem tem saldo
+ * Posicoes de um fundo no portfolio em uso: uma por codigo de custodia, com a instituicao dela.
+ * Desde 12/09/2026 o mesmo fundo em duas instituicoes sao duas posicoes, como em renda fixa,
+ * poupanca, acoes e moedas; a saida escolhe a posicao, e nao so o fundo.
+ *
+ * A instituicao da posicao e a da primeira movimentacao, a mesma regra do syncEngine.
+ */
+export async function posicoesDoFundo(
+  userId: string,
+  fundoId: string,
+): Promise<{ codigo: string; instituicaoId: string | null; instituicaoNome: string }[]> {
+  const { data } = await supabase
+    .from("movimentacoes")
+    .select("codigo_custodia, instituicao_id, data, created_at")
+    .eq("user_id", userId)
+    .eq("fundo_id", fundoId)
+    .not("codigo_custodia", "is", null)
+    .order("data")
+    .order("created_at");
+
+  const primeiraPorCodigo = new Map<string, string | null>();
+  for (const m of (data || []) as any[]) {
+    const k = String(m.codigo_custodia);
+    if (!primeiraPorCodigo.has(k)) primeiraPorCodigo.set(k, m.instituicao_id ?? null);
+  }
+
+  const ids = [...new Set([...primeiraPorCodigo.values()].filter((id): id is string => !!id))];
+  const nomes = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: insts } = await supabase.from("instituicoes").select("id, nome").in("id", ids);
+    for (const i of (insts || []) as any[]) nomes.set(i.id, i.nome ?? "");
+  }
+
+  return [...primeiraPorCodigo.entries()]
+    .map(([codigo, instituicaoId]) => ({
+      codigo,
+      instituicaoId,
+      instituicaoNome: instituicaoId ? nomes.get(instituicaoId) ?? "" : "",
+    }))
+    .sort((a, b) => a.instituicaoNome.localeCompare(b.instituicaoNome, "pt-BR"));
+}
+
+/**
+ * Saldo por posicao de fundo (chave: `fundo|codigo de custodia`) ou por moeda que o usuario tinha NA DATA. So entra quem tem saldo
  * positivo, entao a presenca da chave ja responde "estava em custodia?" e o valor responde
  * "quanto?" - a boleta precisa das duas coisas: filtrar a lista e mostrar o disponivel.
  *
@@ -179,16 +221,19 @@ export async function saldosNaData(
   if (chave === "fundo_id") {
     // Fundo soma POSICAO a posicao, e nao movimento a movimento: uma "Mudança de Fundo" leva o
     // saldo inteiro da posicao para o fundo novo, e somar por `fundo_id` deixaria o antigo com
-    // cotas que nao existem mais.
+    // cotas que nao existem mais. A chave e o codigo de custodia: desde 12/09/2026 o mesmo fundo
+    // em duas instituicoes sao duas posicoes, e somar por fundo misturaria os saldos.
     const porPosicao = new Map<string, MovimentoDeFundo[]>();
     for (const m of ((data || []) as any[])) {
       if (!m.fundo_id) continue;
       const k = m.codigo_custodia ? String(m.codigo_custodia) : `sem-codigo:${m.fundo_id}`;
       porPosicao.set(k, [...(porPosicao.get(k) ?? []), m]);
     }
-    for (const movs of porPosicao.values()) {
+    for (const [codigo, movs] of porPosicao) {
       const p = posicaoNaData(movs, ateDataISO);
-      if (p.fundoId) saldos.set(p.fundoId, (saldos.get(p.fundoId) ?? 0) + p.saldo);
+      // Chave `fundo|codigo`: numa posicao que passou por "Mudança de Fundo", o saldo na data e do
+      // fundo daquela data, e o fundo antigo nao pode resgatar o que ja virou o novo.
+      if (p.fundoId) saldos.set(`${p.fundoId}|${codigo}`, p.saldo);
     }
     return new Map([...saldos].filter(([, v]) => v > 1e-8));
   }
