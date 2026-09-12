@@ -17,7 +17,7 @@ import { situacaoDaPosicao } from "@/lib/situacaoDaPosicao";
 import { buildCdiSeries, buildIbovespaSeries, type CdiRecord, type PontoIbovespa } from "@/lib/cdiCalculations";
 import type { DetailRow } from "@/components/RentabilidadeDetailTable";
 import type { PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
-import { dataGlobalEfetiva, fimDoProduto, ultimaDataAte } from "@/lib/periodo";
+import { dataGlobalEfetiva, encerramentoDoFundoPeloSaldo, fimDoProduto, ultimaDataAte } from "@/lib/periodo";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
 
@@ -66,6 +66,8 @@ export interface PosicaoDeFundoCalculada {
   /** Money-weighted, em %: a mesma da linha da Posição Consolidada. */
   rentabilidadePct: number;
   encerrada: boolean;
+  /** Dia do encerramento (resgate total do cadastro ou saldo zerado), quando a posição está encerrada. */
+  encerramento: string | null;
   dados: DadosDaPosicao;
   /** Rentabilidade acumulada (%) por dia util. */
   serie: { data: string; pct: number }[];
@@ -106,24 +108,30 @@ export function calcularPosicaoDeFundo(e: {
   });
   if (linhas.length === 0) return null;
 
-  const ult = linhas[linhas.length - 1];
-  const { encerrada, valorExibido } = situacaoDaPosicao(
-    ult.saldoBruto,
-    !!e.resgateTotal && e.resgateTotal <= e.dataReferenciaISO,
-  );
+  // Encerramento: o resgate total do cadastro ou, sem ele, o dia em que o saldo calculado zerou (o
+  // resgate digitado em reais deixa resíduo de fração de centavo). A posição encerrada mostra os dados
+  // até esse dia (Daniel, 12/09/2026).
+  const encerramento = (e.resgateTotal && e.resgateTotal <= global ? e.resgateTotal : null)
+    ?? encerramentoDoFundoPeloSaldo(linhas);
+  const fimDoPeriodo = fimDoProduto({ dataGlobal: global, ultimoDado: ultimaDataAte(cotas, global), encerramento });
+  // Os números são os do fim do período: depois do encerramento, o resíduo seguiria rendendo.
+  const noFim = fimDoPeriodo ? [...linhas].reverse().find((r) => r.data <= fimDoPeriodo) : undefined;
+  const ult = noFim ?? linhas[linhas.length - 1];
+  const { encerrada, valorExibido } = situacaoDaPosicao(ult.saldoBruto, !!encerramento);
   return {
     linhas,
     valorAtualizado: valorExibido,
     ganho: ult.ganhoAcumulado,
     rentabilidadePct: ult.rentabilidadeAcumuladaMWPct * 100,
     encerrada,
+    encerramento: encerrada ? encerramento : null,
     dados: dadosDaPosicao(
       ult.valorInvestido,
-      ult.saldoCotas,
-      ultimoAte(cotas.map((c) => ({ data: c.data, valor: c.valor_cota })), fim),
+      encerrada ? 0 : ult.saldoCotas,
+      ultimoAte(cotas.map((c) => ({ data: c.data, valor: c.valor_cota })), fimDoPeriodo ?? fim),
     ),
     serie: linhas.filter((r) => r.diaUtil).map((r) => ({ data: r.data, pct: r.rentabilidadeAcumuladaMWPct * 100 })),
-    fim: fimDoProduto({ dataGlobal: global, ultimoDado: ultimaDataAte(cotas, global), encerramento: e.resgateTotal }),
+    fim: fimDoPeriodo,
   };
 }
 

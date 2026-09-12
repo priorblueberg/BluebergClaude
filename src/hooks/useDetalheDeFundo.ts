@@ -20,6 +20,7 @@ interface Base {
   codigoCustodia: string;
   nome: string;
   cnpj: string | null;
+  instituicao: string | null;
   dataInicio: string;
   categoriaId: string;
   fim: string;
@@ -51,7 +52,7 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
       try {
         const { data: custodia } = await supabase
           .from("custodia")
-          .select("codigo_custodia, nome, fundo_id, data_inicio, resgate_total, categoria_id, produtos(nome), cadastro_de_fundos(cnpj_classe, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
+          .select("codigo_custodia, nome, fundo_id, data_inicio, resgate_total, categoria_id, produtos(nome), instituicoes(nome), cadastro_de_fundos(cnpj_classe, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
           .eq("user_id", user.id)
           .eq("codigo_custodia", codigoCustodia)
           .maybeSingle();
@@ -126,6 +127,7 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
           codigoCustodia: c.codigo_custodia,
           nome: c.nome || c.produtos?.nome || "",
           cnpj: c.cadastro_de_fundos?.cnpj_classe ?? null,
+          instituicao: c.instituicoes?.nome ?? null,
           dataInicio: c.data_inicio,
           categoriaId: c.categoria_id,
           // Período do fundo: da aplicação à última cota divulgada (`src/lib/periodo.ts`).
@@ -158,6 +160,8 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
       tipo: "fundo",
       nome: base.nome,
       cnpj: base.cnpj,
+      instituicao: base.instituicao,
+      encerradaEm: base.calculo.encerramento,
       valorAtualizado: base.calculo.valorAtualizado,
       pnl: base.calculo.ganho,
       rentabilidadePct: base.calculo.rentabilidadePct,

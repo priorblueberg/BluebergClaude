@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  dataGlobalEfetiva, encerramentoPeloSaldo, fimDaCarteira, fimDoProduto, linguetaDoFim, ultimaBarraReal, ultimaDataAte,
+  dataGlobalEfetiva, encerramentoDoFundoPeloSaldo, encerramentoPeloSaldo, fimDaCarteira, fimDoProduto, linguetaDoFim,
+  ultimaBarraReal, ultimaDataAte,
 } from "./periodo";
 
 /** Calendário corrido com fim de semana fora dos dias úteis. */
@@ -12,6 +13,37 @@ function calendario(de: string, ate: string) {
   }
   return dias;
 }
+
+describe("encerramento de fundo pelo saldo", () => {
+  it("resgate que deixa resíduo de fração de centavo encerra no dia do resgate", () => {
+    const linhas = [
+      { data: "2026-08-04", saldoBruto: 115230.5 },
+      { data: "2026-08-05", saldoBruto: 0.0029 },
+      { data: "2026-08-06", saldoBruto: 0.0029 },
+      { data: "2026-09-10", saldoBruto: 0.003 },
+    ];
+    expect(encerramentoDoFundoPeloSaldo(linhas)).toBe("2026-08-05");
+  });
+
+  it("com saldo no fim, não encerra", () => {
+    expect(encerramentoDoFundoPeloSaldo([
+      { data: "2026-08-04", saldoBruto: 1000 },
+      { data: "2026-08-05", saldoBruto: 400 },
+    ])).toBeNull();
+  });
+
+  it("saldo negativo é inconsistência, não encerramento", () => {
+    expect(encerramentoDoFundoPeloSaldo([
+      { data: "2026-08-04", saldoBruto: 1000 },
+      { data: "2026-08-05", saldoBruto: -500 },
+    ])).toBeNull();
+  });
+
+  it("sem saldo em nenhum dia, não há o que encerrar", () => {
+    expect(encerramentoDoFundoPeloSaldo([{ data: "2026-08-04", saldoBruto: 0 }])).toBeNull();
+    expect(encerramentoDoFundoPeloSaldo([])).toBeNull();
+  });
+});
 
 describe("período do produto", () => {
   it("fundo: da aplicação à última cota divulgada, mesmo com a data global depois", () => {

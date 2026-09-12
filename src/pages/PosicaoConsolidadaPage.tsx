@@ -281,6 +281,9 @@ export default function PosicaoConsolidadaPage() {
       tipo,
       nome: row.nome,
       cnpj: p.fundoCnpj ?? null,
+      instituicao: row.custodiante || null,
+      // Posicao de fundo encerrada: a linha ja termina no encerramento (`useCarteiraFundos`).
+      encerradaEm: tipo === "fundo" && !row.ativo ? row.fim ?? null : null,
       valorAtualizado: row.valorAtualizado,
       pnl: row.ganhoFinanceiro,
       rentabilidadePct: row.rentabilidade,

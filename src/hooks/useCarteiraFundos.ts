@@ -21,7 +21,8 @@ import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
 import { cotasCosturadas, trechosDaPosicao } from "@/lib/posicaoDeFundo";
 import { dadosDaPosicao, ultimoAte } from "@/lib/detalheDaPosicao";
 import {
-  dataGlobalEfetiva, fimDoProduto, linguetaDoFim, periodoDaCarteira, ultimaDataAte, type PeriodoDaCarteira,
+  dataGlobalEfetiva, encerramentoDoFundoPeloSaldo, fimDoProduto, linguetaDoFim, periodoDaCarteira, ultimaDataAte,
+  type PeriodoDaCarteira,
 } from "@/lib/periodo";
 
 interface FundoCustodia {
@@ -205,9 +206,13 @@ export function useCarteiraFundos() {
 
         prodRows.push(fundoRowsToDailyRows(rows));
 
-        // Periodo do fundo: da aplicacao a ultima cota divulgada.
+        // Periodo do fundo: da aplicacao a ultima cota divulgada ou ao encerramento, que e o resgate
+        // total do cadastro ou o dia em que o saldo calculado zerou (resgate em reais deixa residuo de
+        // fracao de centavo). A linha para nesse dia (Daniel, 12/09/2026).
+        const encerramentoFundo = (f.resgate_total && f.resgate_total <= global ? f.resgate_total : null)
+          ?? encerramentoDoFundoPeloSaldo(rows);
         const fimFundo = fimDoProduto({
-          dataGlobal: global, ultimoDado: ultimaDataAte(cotas, global), encerramento: f.resgate_total,
+          dataGlobal: global, ultimoDado: ultimaDataAte(cotas, global), encerramento: encerramentoFundo,
         });
         const ult = rows.length ? rows[rows.length - 1] : null;
         // Ganho e rentabilidade DO PERIODO DO FUNDO, pela mesma conta do card e dos grupos.
@@ -230,7 +235,7 @@ export function useCarteiraFundos() {
           dados: dadosDaPosicao(
             ult?.valorInvestido ?? 0,
             encerrado ? 0 : (ult?.saldoCotas ?? 0),
-            ultimoAte(cotas.map((c) => ({ data: c.data, valor: c.valor_cota })), fim),
+            ultimoAte(cotas.map((c) => ({ data: c.data, valor: c.valor_cota })), fimFundo ?? fim),
           ),
           custodiante: f.instituicao_nome,
           ativo: !encerrado,

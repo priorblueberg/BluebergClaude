@@ -35,6 +35,10 @@ export interface PosicaoDetalheData {
   nome: string;
   /** CNPJ da classe, nos fundos. Vai junto do nome, como no Gorila. */
   cnpj: string | null;
+  /** Instituição (custodiante) da posição: a primeira informação abaixo do nome. */
+  instituicao?: string | null;
+  /** Dia do encerramento da posição de fundo, quando encerrada: substitui a última cota. */
+  encerradaEm?: string | null;
   valorAtualizado: number;
   pnl: number;
   /** Ja em %, a mesma da linha da Posição Consolidada. */
@@ -202,14 +206,21 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
           <SheetDescription className="sr-only">{data.nome}</SheetDescription>
 
           <div className="space-y-5 px-6 py-5">
-            {/* Nome e ultima cota */}
+            {/* Nome; abaixo dele, primeiro a instituicao e, ao lado, a ultima cota ou o encerramento
+                da posicao de fundo (Daniel, 12/09/2026). */}
             <div className="space-y-1 pr-8">
               <h4 className="text-base font-bold text-foreground break-words">
                 {data.nome}
                 {data.cnpj ? ` - ${formatarCnpj(data.cnpj)}` : ""}
               </h4>
               <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-                {temPreco ? (
+                {data.instituicao && <p className="font-semibold text-foreground">{data.instituicao}</p>}
+                {data.tipo === "fundo" && data.encerradaEm ? (
+                  <p>
+                    Fundo encerrado em{" "}
+                    <span className="font-semibold text-foreground tabular-nums">{fmtData(data.encerradaEm)}</span>
+                  </p>
+                ) : temPreco ? (
                   <Info
                     rotulo={`${rotuloDoPreco}${data.dataUltimoPreco ? ` (${fmtData(data.dataUltimoPreco)})` : ""}`}
                     valor={fmtPreco(data.ultimoPreco)}

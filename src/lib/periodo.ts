@@ -128,6 +128,27 @@ export function encerramentoPeloSaldo(
 }
 
 /**
+ * Dia em que uma posição de FUNDO zerou, pelo saldo calculado dia a dia, ou null se ela segue com saldo.
+ *
+ * O resgate de fundo é digitado em reais e a quantidade sai de valor ÷ cota, então resgatar "tudo" deixa
+ * resíduo de fração de centavo (0,00019282 cota no SulAmérica da Ágora, R$ 0,003), e o cadastro
+ * (`resgate_total`) só é marcado por "Resgate Total". Sem isto a posição zerada seguia viva até a última
+ * cota, e o resíduo continuava rendendo (Daniel, 12/09/2026).
+ *
+ * Saldo negativo não é encerramento (`situacaoDaPosicao`): só |saldo| abaixo de meio centavo conta.
+ */
+export function encerramentoDoFundoPeloSaldo(
+  linhas: { data: string; saldoBruto: number }[],
+  eps = 0.005,
+): string | null {
+  if (linhas.length === 0 || Math.abs(linhas[linhas.length - 1].saldoBruto) >= eps) return null;
+  for (let i = linhas.length - 1; i >= 0; i--) {
+    if (Math.abs(linhas[i].saldoBruto) >= eps) return linhas[i + 1].data;
+  }
+  return null;
+}
+
+/**
  * Fim do período da carteira: o maior fim entre os produtos COM POSIÇÃO. Produto encerrado não
  * recebe mais nada e não estica a carteira. Se nenhum tem posição (carteira encerrada), vale o maior
  * fim entre todos. `null` quando não há período nenhum.
