@@ -812,6 +812,11 @@ export default function BoletaTransacao({
 
       setCategoriaId(mov.categoria_id);
       setTipoMovimentacao(mov.tipo_movimentacao);
+      // Resgate de fundo que fechou a posicao: abre como "Resgate" com "Fechar Posição" marcado.
+      if ((mov as any).fundo_id && mov.tipo_movimentacao === "Resgate Total") {
+        setTipoMovimentacao("Resgate");
+        setFecharPosicaoFundo(true);
+      }
       setProdutoId(mov.produto_id);
       setData(mov.data);
       setValor(mov.valor ? formatCurrency(Math.round(mov.valor * 100).toString()) : "");
@@ -995,6 +1000,34 @@ export default function BoletaTransacao({
   }, [ehSaida, comSaldo, isFundo, fundoId, moedaSel, codigoPosicaoFundo]);
 
   /**
+   * "Fechar Posição" no resgate de fundo (Daniel, 12/09/2026). Marcado, o resgate leva a quantidade
+   * EXATA de cotas da posicao e grava "Resgate Total". Sem isto o valor digitado em reais (valor / cota)
+   * deixava residuo de fracao de cota, e numa nova aplicacao o residuo rendia no intervalo sem
+   * investimento. Digitar o valor total da posicao marca sozinho: e sempre resgate total.
+   */
+  const ehResgateDeFundo = isFundo && tipoMovimentacao === "Resgate";
+  const [fecharPosicaoFundo, setFecharPosicaoFundo] = useState(false);
+  const totalDaPosicaoFundo =
+    ehResgateDeFundo && saldoDaSaida != null && saldoDaSaida > 1e-8 && cotaOp?.cota != null
+      ? Math.round(saldoDaSaida * cotaOp.cota * 100) / 100
+      : null;
+  useEffect(() => {
+    if (!ehResgateDeFundo) {
+      if (fecharPosicaoFundo) setFecharPosicaoFundo(false);
+      return;
+    }
+    if (totalDaPosicaoFundo == null) return;
+    const v = parseCurrencyToNumber(valor);
+    if (fecharPosicaoFundo) {
+      // Marcado: o valor acompanha o total da posicao (a data pode ter mudado).
+      if (Math.abs(v - totalDaPosicaoFundo) >= 0.005) setValor(numberToCurrency(totalDaPosicaoFundo));
+    } else if (v > 0 && Math.abs(v - totalDaPosicaoFundo) < 0.005) {
+      setFecharPosicaoFundo(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ehResgateDeFundo, totalDaPosicaoFundo, valor, fecharPosicaoFundo]);
+
+  /**
    * Validacao da data de fundo, embaixo do campo (pedido do Daniel, 11/09/2026): data invalida, antes
    * da constituicao do fundo, cota ainda nao divulgada e, na saida, sem custodia na data. Substituiu o
    * alerta vermelho e os avisos que so apareciam ao cadastrar.
@@ -1058,6 +1091,7 @@ export default function BoletaTransacao({
     setResgateDate(undefined);
     setResgateDateError(null);
     setFecharPosicao(false);
+    setFecharPosicaoFundo(false);
     setResgateCalendarOpen(false);
     if (isEditing) {
       onFechar?.();
@@ -1445,7 +1479,7 @@ Confirma que o preço está certo?`,
           );
           return;
         }
-        const qtd = valorNum / cotaDoDia;
+        let qtd = valorNum / cotaDoDia;
 
         // Mesmo fundo na mesma instituicao e a mesma posicao; em outra instituicao, e outra posicao,
         // como em renda fixa, poupanca, acoes e moedas (Daniel, 12/09/2026).
@@ -1479,6 +1513,15 @@ Confirma que o preço está certo?`,
         // negativa segue rendendo e o erro so aparece semanas depois.
         if (ehSaida) {
           const saldo = await saldoEmQuantidade(codigoCustodia, user.id, dataCotizacao, editId);
+          // Fechar Posição: a quantidade e o saldo exato, sem residuo, e o tipo e "Resgate Total".
+          if (ehResgateDeFundo && fecharPosicaoFundo) {
+            if (!(saldo > 1e-8)) {
+              setValidationErrors(new Set(["data"]));
+              return;
+            }
+            qtd = saldo;
+            tipoFinal = "Resgate Total";
+          }
           if (qtd > saldo + 1e-8) {
             setSubmitting(false);
             const fmtQtd = (n: number) => n.toLocaleString("pt-BR", { maximumFractionDigits: 8 });
@@ -1492,6 +1535,8 @@ Confirma que o preço está certo?`,
         if (isEditing) {
           const { error: errUp } = await supabase.from("movimentacoes").update({
             instituicao_id: instituicaoId,
+            // Na edicao o resgate pode virar "Resgate Total" (Fechar Posição) ou voltar a "Resgate".
+            tipo_movimentacao: tipoFinal,
             data,
             data_cotizacao: dataCotizacao,
             valor: valorNum,
@@ -2259,7 +2304,12 @@ Confirma que o preço está certo?`,
                   onChange={(e) => setValor(formatCurrency(e.target.value))}
                   placeholder="0,00"
                   inputMode="numeric"
-                  className={erroValorObrigatorio ? "border-destructive" : ""}
+                  // Com "Fechar Posição" marcado, o valor e o total da posicao e nao se digita.
+                  readOnly={ehResgateDeFundo && fecharPosicaoFundo}
+                  className={cn(
+                    erroValorObrigatorio ? "border-destructive" : "",
+                    ehResgateDeFundo && fecharPosicaoFundo ? "bg-muted/50" : "",
+                  )}
                 />
                 {/* Num resgate, o saldo na data compoe o campo: so o valor em reais. No come-cotas o
                     valor vem do extrato e o saldo nao ajuda em nada. */}
@@ -2275,6 +2325,25 @@ Confirma que o preço está certo?`,
                 )}
               </Field>
             </div>
+
+            {/* Fechar Posição, so no resgate: resgata o saldo exato de cotas e grava "Resgate Total". */}
+            {ehResgateDeFundo && (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="fechar-posicao-fundo"
+                  checked={fecharPosicaoFundo}
+                  disabled={totalDaPosicaoFundo == null}
+                  onCheckedChange={(c) => {
+                    const marcado = !!c;
+                    setFecharPosicaoFundo(marcado);
+                    setValor(marcado && totalDaPosicaoFundo != null ? numberToCurrency(totalDaPosicaoFundo) : "");
+                  }}
+                />
+                <label htmlFor="fechar-posicao-fundo" className="cursor-pointer text-sm font-medium text-foreground">
+                  Fechar Posição
+                </label>
+              </div>
+            )}
 
             {/* Aplicação, resgate e come-cotas (pedidos do Daniel, 12/09/2026): a instituição fica
                 logo abaixo do fundo, a cota aparece em cinza embaixo da data e a quantidade não
