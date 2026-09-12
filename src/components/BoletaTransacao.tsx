@@ -1889,7 +1889,7 @@ Confirma que o preço está certo?`,
     </Field>
   );
 
-  // Mesmo campo em todas as movimentacoes de fundo; so o lugar muda (no come-cotas sobe uma linha).
+  // Mesmo campo em todas as movimentacoes de fundo; so o lugar muda (nas saidas, logo abaixo do fundo).
   const campoInstituicaoFundo = (
     <Field label="Instituição (custodiante)" required>
       <EntidadeSelect
@@ -2145,6 +2145,8 @@ Confirma que o preço está certo?`,
 
         {/* ── Fundos de Investimentos ── */}
         {showFundoFields && campoFundo}
+        {/* Nas saidas a instituicao vem logo abaixo do fundo, de ponta a ponta (Daniel, 12/09/2026). */}
+        {showFundoFields && ehSaida && !!fundoId && campoInstituicaoFundo}
         {showFundoFields && !fundoId && (
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => onFechar?.()}>
@@ -2175,7 +2177,8 @@ Confirma que o preço está certo?`,
                 {/* Num resgate, o saldo na data compoe o campo: so o valor em reais. No come-cotas o
                     valor vem do extrato e o saldo nao ajuda em nada. */}
                 {ehSaida && !ehComeCotas && data && (
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  // Mesma altura da linha de mensagem da data ao lado: aparecer nao muda a boleta.
+                  <p className="mt-1 h-4 whitespace-nowrap text-xs leading-4 text-muted-foreground">
                     {comSaldo == null
                       ? "Calculando o saldo..."
                       : saldoDaSaida != null && cotaOp?.cota != null
@@ -2186,22 +2189,18 @@ Confirma que o preço está certo?`,
               </Field>
             </div>
 
-            {ehComeCotas ? (
-              /* Come-cotas (pedido do Daniel, 12/09/2026): a cota é só informação, em texto, depois
-                 da data; a quantidade não aparece; a instituição sobe uma linha para a lista da
-                 busca abrir sem barra de rolagem na boleta. */
-              <div className="grid grid-cols-2 gap-4">
-                {data && !mensagemDataFundo && cotaOp?.cota != null ? (
-                  <div className="min-w-0 space-y-1.5">
-                    <p className="text-xs font-medium text-foreground">Valor da Cota</p>
-                    <p className="py-2 text-sm tabular-nums text-foreground">
-                      {cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })}
-                    </p>
-                  </div>
-                ) : (
-                  <div />
-                )}
-                {campoInstituicaoFundo}
+            {ehSaida ? (
+              /* Resgate e come-cotas (pedidos do Daniel, 12/09/2026): a cota é só informação, em
+                 texto, depois da data; a quantidade não aparece; a instituição fica logo abaixo do
+                 fundo. O espaço da cota existe antes da data, invisível, para os botões não descerem
+                 quando ela aparece. */
+              <div className={`space-y-1.5 ${data && !mensagemDataFundo && cotaOp?.cota != null ? "" : "invisible"}`}>
+                <p className="text-xs font-medium text-foreground">Valor da Cota</p>
+                <p className="h-9 py-2 text-sm leading-5 tabular-nums text-foreground">
+                  {data && !mensagemDataFundo && cotaOp?.cota != null
+                    ? cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
+                    : ""}
+                </p>
               </div>
             ) : (
               <>
