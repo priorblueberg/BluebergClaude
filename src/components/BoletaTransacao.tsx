@@ -1889,6 +1889,20 @@ Confirma que o preço está certo?`,
     </Field>
   );
 
+  // Mesmo campo em todas as movimentacoes de fundo; so o lugar muda (no come-cotas sobe uma linha).
+  const campoInstituicaoFundo = (
+    <Field label="Instituição (custodiante)" required>
+      <EntidadeSelect
+        tipo="instituicao"
+        value={instituicaoId}
+        onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); }}
+        tituloCadastro="Cadastrar Nova Instituição"
+        labelCadastro="Nome da Instituição"
+        placeholder="Busque a corretora ou banco"
+      />
+    </Field>
+  );
+
   return (
     <div className="space-y-6">
 
@@ -2172,45 +2186,57 @@ Confirma que o preço está certo?`,
               </Field>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Valor da Cota">
-                <Input
-                  readOnly
-                  className="bg-muted/50"
-                  value={
-                    cotaOp?.cota != null
-                      ? cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
-                      : ""
-                  }
-                  placeholder={fundoId && data ? "Cota não divulgada" : "Selecione o fundo e a data"}
-                />
-              </Field>
-              <Field label="Quantidade de Cotas">
-                <Input
-                  readOnly
-                  className="bg-muted/50"
-                  value={
-                    qtdCotasDerivada != null
-                      ? qtdCotasDerivada.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
-                      : ""
-                  }
-                  placeholder="Valor ÷ cota"
-                />
-              </Field>
-            </div>
+            {ehComeCotas ? (
+              /* Come-cotas (pedido do Daniel, 12/09/2026): a cota é só informação, em texto, depois
+                 da data; a quantidade não aparece; a instituição sobe uma linha para a lista da
+                 busca abrir sem barra de rolagem na boleta. */
+              <div className="grid grid-cols-2 gap-4">
+                {data && !mensagemDataFundo && cotaOp?.cota != null ? (
+                  <div className="min-w-0 space-y-1.5">
+                    <p className="text-xs font-medium text-foreground">Valor da Cota</p>
+                    <p className="py-2 text-sm tabular-nums text-foreground">
+                      {cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })}
+                    </p>
+                  </div>
+                ) : (
+                  <div />
+                )}
+                {campoInstituicaoFundo}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Valor da Cota">
+                    <Input
+                      readOnly
+                      className="bg-muted/50"
+                      value={
+                        cotaOp?.cota != null
+                          ? cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
+                          : ""
+                      }
+                      placeholder={fundoId && data ? "Cota não divulgada" : "Selecione o fundo e a data"}
+                    />
+                  </Field>
+                  <Field label="Quantidade de Cotas">
+                    <Input
+                      readOnly
+                      className="bg-muted/50"
+                      value={
+                        qtdCotasDerivada != null
+                          ? qtdCotasDerivada.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
+                          : ""
+                      }
+                      placeholder="Valor ÷ cota"
+                    />
+                  </Field>
+                </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Instituição (custodiante)" required>
-                <EntidadeSelect
-                  tipo="instituicao"
-                  value={instituicaoId}
-                  onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); }}
-                  tituloCadastro="Cadastrar Nova Instituição"
-                  labelCadastro="Nome da Instituição"
-                  placeholder="Busque a corretora ou banco"
-                />
-              </Field>
-            </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {campoInstituicaoFundo}
+                </div>
+              </>
+            )}
 
             <div className="flex gap-3">
               <Button onClick={handleSubmit} disabled={submitting}>

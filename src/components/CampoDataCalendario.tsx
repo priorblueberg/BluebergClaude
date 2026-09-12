@@ -89,7 +89,8 @@ export default function CampoDataCalendario({
           value={texto}
           inputMode="numeric"
           disabled={disabled}
-          className={cn("flex-1 min-w-0", erro ? "border-destructive ring-1 ring-destructive" : "")}
+          // Com erro, a borda cinza vira vermelha; nada de anel por fora (pedido do Daniel, 12/09/2026).
+          className={cn("flex-1 min-w-0", erro ? "border-destructive" : "")}
           onChange={(e) => digitar(e.target.value)}
         />
         <Popover open={aberto} onOpenChange={setAberto}>
@@ -117,7 +118,10 @@ export default function CampoDataCalendario({
           </PopoverContent>
         </Popover>
       </div>
-      {erro && <p className="mt-1 text-xs font-medium text-destructive">{erro}</p>}
+      {/* A linha da mensagem existe sempre, vazia ou não: se ela só entrasse com o erro, a boleta
+          inteira desceria uma linha. Sem quebra de linha pelo mesmo motivo; a mais longa avança
+          sobre o espaço vazio embaixo do campo vizinho. */}
+      <p className="mt-1 h-4 whitespace-nowrap text-xs font-medium leading-4 text-destructive">{erro}</p>
     </div>
   );
 }
