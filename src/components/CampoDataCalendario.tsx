@@ -40,6 +40,8 @@ export default function CampoDataCalendario({
   min,
   max,
   mensagem,
+  informacao,
+  destacarErro,
   disabled,
 }: {
   /** Data em ISO (aaaa-mm-dd), ou "" quando vazia ou incompleta. */
@@ -51,6 +53,10 @@ export default function CampoDataCalendario({
   max?: string | null;
   /** Mensagem de validação vinda da boleta, mostrada embaixo do campo. */
   mensagem?: string | null;
+  /** Informação neutra (não é erro), na mesma linha da mensagem, quando não há erro. */
+  informacao?: string | null;
+  /** Borda vermelha sem mensagem: campo obrigatório vazio ao cadastrar. */
+  destacarErro?: boolean;
   disabled?: boolean;
 }) {
   const [texto, setTexto] = useState(paraTexto(value));
@@ -90,7 +96,7 @@ export default function CampoDataCalendario({
           inputMode="numeric"
           disabled={disabled}
           // Com erro, a borda cinza vira vermelha; nada de anel por fora (pedido do Daniel, 12/09/2026).
-          className={cn("flex-1 min-w-0", erro ? "border-destructive" : "")}
+          className={cn("flex-1 min-w-0", erro || destacarErro ? "border-destructive" : "")}
           onChange={(e) => digitar(e.target.value)}
         />
         <Popover open={aberto} onOpenChange={setAberto}>
@@ -120,8 +126,16 @@ export default function CampoDataCalendario({
       </div>
       {/* A linha da mensagem existe sempre, vazia ou não: se ela só entrasse com o erro, a boleta
           inteira desceria uma linha. Sem quebra de linha pelo mesmo motivo; a mais longa avança
-          sobre o espaço vazio embaixo do campo vizinho. */}
-      <p className="mt-1 h-4 whitespace-nowrap text-xs font-medium leading-4 text-destructive">{erro}</p>
+          sobre o espaço vazio embaixo do campo vizinho. O erro, em vermelho, tem prioridade sobre a
+          informação, em cinza (o valor da cota, nas saídas de fundo). */}
+      <p
+        className={cn(
+          "mt-1 h-4 whitespace-nowrap text-xs leading-4",
+          erro ? "font-medium text-destructive" : "text-muted-foreground",
+        )}
+      >
+        {erro ?? informacao}
+      </p>
     </div>
   );
 }

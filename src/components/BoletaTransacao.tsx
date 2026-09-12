@@ -1371,7 +1371,8 @@ Confirma que o preço está certo?`,
       if (!instituicaoId) faltando.add("instituicaoId");
       if (faltando.size > 0) {
         setValidationErrors(faltando);
-        toast.error("Preencha todos os campos obrigatórios.");
+        // Nas saidas o aviso fica na linha reservada acima dos botoes; a aplicacao nao tem essa linha.
+        if (!ehSaida) toast.error("Preencha todos os campos obrigatórios.");
         return;
       }
       setValidationErrors(new Set());
@@ -1867,6 +1868,14 @@ Confirma que o preço está certo?`,
    * Numa SAIDA tambem (decisao do Daniel, 10/09/2026): logo depois do tipo, com os fundos que tem
    * posicao no portfolio. O saldo na data aparece abaixo do campo de valor, em reais.
    */
+  // Obrigatorio vazio ao cadastrar um fundo: a marca so vale enquanto o campo continua vazio, entao
+  // some sozinha quando ele e preenchido. A data marcada por mensagemDataFundo (preenchida, mas
+  // recusada) nao conta aqui: ela ja se explica embaixo do campo.
+  const erroDataObrigatoria = validationErrors.has("data") && !data;
+  const erroValorObrigatorio = validationErrors.has("valor") && !(parseCurrencyToNumber(valor) > 0);
+  const erroInstituicaoObrigatoria = validationErrors.has("instituicaoId") && !instituicaoId;
+  const faltamObrigatoriosFundo = erroDataObrigatoria || erroValorObrigatorio || erroInstituicaoObrigatoria;
+
   const campoFundo = (
     <Field label="Fundo" required>
       {ehSaida && fundosComPosicaoIds && fundosDisponiveis.length === 0 ? (
@@ -1899,6 +1908,7 @@ Confirma que o preço está certo?`,
         tituloCadastro="Cadastrar Nova Instituição"
         labelCadastro="Nome da Instituição"
         placeholder="Busque a corretora ou banco"
+        hasError={erroInstituicaoObrigatoria}
       />
     </Field>
   );
@@ -2165,6 +2175,13 @@ Confirma que o preço está certo?`,
                   min={janelaFundo.min}
                   max={janelaFundo.max}
                   mensagem={mensagemDataFundo}
+                  destacarErro={erroDataObrigatoria}
+                  // Nas saidas a cota e so informacao, em cinza, na linha embaixo da data (Daniel, 12/09/2026).
+                  informacao={
+                    ehSaida && data && !mensagemDataFundo && cotaOp?.cota != null
+                      ? `Valor da cota: ${cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })}`
+                      : null
+                  }
                 />
               </Field>
               <Field label="Valor" required>
@@ -2173,6 +2190,7 @@ Confirma que o preço está certo?`,
                   onChange={(e) => setValor(formatCurrency(e.target.value))}
                   placeholder="0,00"
                   inputMode="numeric"
+                  className={erroValorObrigatorio ? "border-destructive" : ""}
                 />
                 {/* Num resgate, o saldo na data compoe o campo: so o valor em reais. No come-cotas o
                     valor vem do extrato e o saldo nao ajuda em nada. */}
@@ -2190,18 +2208,13 @@ Confirma que o preço está certo?`,
             </div>
 
             {ehSaida ? (
-              /* Resgate e come-cotas (pedidos do Daniel, 12/09/2026): a cota é só informação, em
-                 texto, depois da data; a quantidade não aparece; a instituição fica logo abaixo do
-                 fundo. O espaço da cota existe antes da data, invisível, para os botões não descerem
-                 quando ela aparece. */
-              <div className={`space-y-1.5 ${data && !mensagemDataFundo && cotaOp?.cota != null ? "" : "invisible"}`}>
-                <p className="text-xs font-medium text-foreground">Valor da Cota</p>
-                <p className="h-9 py-2 text-sm leading-5 tabular-nums text-foreground">
-                  {data && !mensagemDataFundo && cotaOp?.cota != null
-                    ? cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })
-                    : ""}
-                </p>
-              </div>
+              /* Resgate e come-cotas (pedidos do Daniel, 12/09/2026): a instituição fica logo abaixo
+                 do fundo, a cota aparece em cinza embaixo da data e a quantidade não aparece. Esta
+                 linha é a do aviso de obrigatório vazio; ela existe sempre, vazia ou não, para os
+                 botões não descerem quando o aviso aparece. */
+              <p className="h-4 text-xs font-medium leading-4 text-destructive">
+                {faltamObrigatoriosFundo ? "Preencha os campos obrigatórios" : ""}
+              </p>
             ) : (
               <>
                 <div className="grid grid-cols-2 gap-4">

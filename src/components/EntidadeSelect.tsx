@@ -191,7 +191,8 @@ export default function EntidadeSelect({
           }}
           placeholder={placeholder}
           disabled={disabled}
-          className={`input-field pl-9 pr-8 ${hasError ? "border-destructive ring-1 ring-destructive" : ""}`}
+          // Com erro, so a borda vira vermelha, sem anel por fora (Daniel, 12/09/2026).
+          className={`input-field pl-9 pr-8 ${hasError ? "border-destructive" : ""}`}
         />
         {value && !disabled && (
           <button
