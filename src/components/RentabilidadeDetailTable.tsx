@@ -34,7 +34,8 @@ export interface DetailRow {
 /** Linhas que a tabela sabe mostrar. "% do CDI" sai da rentabilidade e do CDI de cada período. */
 export type LinhaDaTabela = "patrimonio" | "ganho" | "rentabilidade" | "cdi" | "percentualCdi";
 
-const LINHAS_PADRAO: LinhaDaTabela[] = ["patrimonio", "ganho", "rentabilidade", "cdi"];
+// "% do CDI" no lugar de "CDI" em todas as tabelas, como na gaveta de detalhes (Daniel, 13/09/2026).
+const LINHAS_PADRAO: LinhaDaTabela[] = ["patrimonio", "ganho", "rentabilidade", "percentualCdi"];
 
 function fmtPct(v: number | null): string {
   if (v === null) return "—";
@@ -52,7 +53,7 @@ const percentualDoCdi = (rent: number | null, cdi: number | null) =>
 interface Props {
   rows: DetailRow[];
   tituloLabel: string;
-  /** Padrão: Patrimônio, Ganho Financeiro, Rentabilidade e CDI, como nas lâminas de carteira. */
+  /** Padrão: Patrimônio, Ganho Financeiro, Rentabilidade e % do CDI, como nas lâminas de carteira. */
   linhas?: LinhaDaTabela[];
   /** Colunas estreitas, para caber na gaveta de detalhes da posição sem rolagem. */
   compacto?: boolean;

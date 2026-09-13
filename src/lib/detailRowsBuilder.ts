@@ -20,6 +20,11 @@ interface EngineRowLike {
   rentDiariaPct?: number;
 }
 
+/** % do CDI de um periodo, sem arredondar; null sem CDI no periodo. */
+function percentualDoCdi(rent: number | undefined, cdi: number | undefined): number | null {
+  return rent != null && cdi != null && cdi > 0 ? (rent / cdi) * 100 : null;
+}
+
 function calcFatorDiarioCdi(taxaAnual: number): number {
   return Math.pow(taxaAnual / 100 + 1, 1 / 252) - 1;
 }
@@ -186,6 +191,7 @@ export function buildDetailRowsFromEngine(
     const ganhoMs: (number | null)[] = [];
     const rentMs: (number | null)[] = [];
     const cdiMs: (number | null)[] = [];
+    const percentualMs: (number | null)[] = [];
 
     for (let mm = 0; mm < 12; mm++) {
       if (tMap?.has(mm)) {
@@ -202,6 +208,8 @@ export function buildDetailRowsFromEngine(
       } else {
         cdiMs.push(null);
       }
+      // % do CDI com todas as casas: dividir os valores ja arredondados erra ate ~0,3 ponto.
+      percentualMs.push(percentualDoCdi(tMap?.get(mm), cMap?.get(mm)));
       patrimonioMs.push(pMap?.has(mm) ? parseFloat(pMap.get(mm)!.toFixed(2)) : null);
       ganhoMs.push(gMap?.has(mm) ? parseFloat(gMap.get(mm)!.toFixed(2)) : null);
     }
@@ -219,6 +227,8 @@ export function buildDetailRowsFromEngine(
       cdiAcumuladoExato: (cdiFatorAcumRows - 1) * 100,
       ganhoNoAno: ganhoAnualMap.has(year) ? parseFloat(ganhoAnualMap.get(year)!.toFixed(2)) : null,
       ganhoAcumulado: ganhoAcum,
+      percentualCdiMonths: percentualMs,
+      percentualCdiNoAno: percentualDoCdi(rentYearly.get(year), cdiYearly.get(year)),
     });
   }
 
