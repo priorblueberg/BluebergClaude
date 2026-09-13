@@ -25,6 +25,8 @@ export interface MovimentoDeFundo {
   valor?: number | string | null;
   preco_unitario?: number | string | null;
   created_at?: string | null;
+  /** So na "Mudança de Fundo": quantidade no fundo novo / saldo no fundo antigo. */
+  fator_conversao?: number | string | null;
 }
 
 export const dataEfetiva = (m: { data: string; data_cotizacao?: string | null }) => m.data_cotizacao || m.data;
@@ -50,37 +52,108 @@ const ordenar = ordenarMovimentosDeFundo;
  * na vespera do fechamento (com o que entrou no proprio dia) e o valor, essa quantidade x a cota da data
  * de cotizacao dele.
  *
- * Devolve so os resgates totais que precisam mudar. Sem cota na data, o resgate fica como esta.
+ * A "Mudança de Fundo" tambem acompanha (Daniel, 12/09/2026): com o fator de conversao guardado, a
+ * quantidade no fundo novo passa a ser o saldo do fundo antigo na data x fator, e o valor, essa quantidade
+ * x a cota nova. Sem fator (lancamento anterior a regra), fica como esta.
+ *
+ * Devolve so os movimentos que precisam mudar. Sem cota na data, o resgate total fica como esta.
  */
-export function ajustarResgatesTotais<T extends MovimentoDeFundo & { id: string }>(
+export interface AjusteDeMovimento { id: string; quantidade: number; valor: number; preco_unitario: number }
+
+const quantidadeDe = (m: MovimentoDeFundo): number | null => {
+  let qtd = m.quantidade != null ? Number(m.quantidade) : null;
+  if (qtd == null && Number(m.preco_unitario) > 0) qtd = Number(m.valor) / Number(m.preco_unitario);
+  return qtd != null && Number.isFinite(qtd) ? qtd : null;
+};
+
+const fatorDe = (m: MovimentoDeFundo): number | null => {
+  const f = m.fator_conversao != null ? Number(m.fator_conversao) : null;
+  return f != null && Number.isFinite(f) && f > 0 ? f : null;
+};
+
+const arredondarCotas = (n: number) => Math.round(n * 1e8) / 1e8;
+
+export function ajustarMovimentosDerivados<T extends MovimentoDeFundo & { id: string }>(
   movs: T[],
   cotaEm: (dataISO: string) => number | null,
-): { id: string; quantidade: number; valor: number; preco_unitario: number }[] {
-  const ajustes: { id: string; quantidade: number; valor: number; preco_unitario: number }[] = [];
+): AjusteDeMovimento[] {
+  const ajustes: AjusteDeMovimento[] = [];
   let saldo = 0;
   for (const m of ordenar(movs)) {
-    let qtd = m.quantidade != null ? Number(m.quantidade) : null;
-    if (qtd == null && Number(m.preco_unitario) > 0) qtd = Number(m.valor) / Number(m.preco_unitario);
+    const qtd = quantidadeDe(m);
+    const mudou = (quantidade: number, valor: number) =>
+      qtd == null || Math.abs(quantidade - qtd) > 1e-8 || Math.abs(valor - Number(m.valor)) >= 0.005;
 
     if (m.tipo_movimentacao === TIPO_RESGATE_TOTAL) {
       const cota = cotaEm(dataEfetiva(m));
       if (cota != null && cota > 0) {
-        const quantidade = Math.round(Math.max(saldo, 0) * 1e8) / 1e8;
+        const quantidade = arredondarCotas(Math.max(saldo, 0));
         const valor = Math.round(quantidade * cota * 100) / 100;
-        if (qtd == null || Math.abs(quantidade - qtd) > 1e-8 || Math.abs(valor - Number(m.valor)) >= 0.005) {
-          ajustes.push({ id: m.id, quantidade, valor, preco_unitario: cota });
-        }
+        if (mudou(quantidade, valor)) ajustes.push({ id: m.id, quantidade, valor, preco_unitario: cota });
       }
       saldo = 0;
       continue;
     }
 
-    if (qtd == null || !Number.isFinite(qtd)) continue;
-    if (m.tipo_movimentacao === TIPO_MUDANCA_DE_FUNDO) saldo = qtd;
-    else if (ENTRADAS.includes(m.tipo_movimentacao)) saldo += qtd;
+    if (m.tipo_movimentacao === TIPO_MUDANCA_DE_FUNDO) {
+      const fator = fatorDe(m);
+      const cotaNova = Number(m.preco_unitario);
+      if (fator != null && cotaNova > 0) {
+        const quantidade = arredondarCotas(Math.max(saldo, 0) * fator);
+        const valor = Math.round(quantidade * cotaNova * 100) / 100;
+        if (mudou(quantidade, valor)) ajustes.push({ id: m.id, quantidade, valor, preco_unitario: cotaNova });
+        saldo = quantidade;
+      } else if (qtd != null) {
+        saldo = qtd;
+      }
+      continue;
+    }
+
+    if (qtd == null) continue;
+    if (ENTRADAS.includes(m.tipo_movimentacao)) saldo += qtd;
     else saldo -= qtd;
   }
   return ajustes;
+}
+
+/** Nome do primeiro recalculo, que so tratava o "Resgate Total". */
+export const ajustarResgatesTotais = ajustarMovimentosDerivados;
+
+/**
+ * Primeira saida (resgate ou come-cotas) sem saldo na posicao, ou null (Daniel, 12/09/2026).
+ *
+ * Serve para conferir uma inclusao, edicao ou exclusao ANTES de gravar: aplicacao editada para menos,
+ * aplicacao excluida ou resgate retroativo nao podem deixar um resgate posterior maior que o saldo, senao
+ * a posicao fica negativa sem aviso. O "Resgate Total" nunca falta (ele leva o saldo do dia) e a "Mudança
+ * de Fundo" com fator acompanha o saldo, como em `ajustarMovimentosDerivados`.
+ */
+export function primeiraSaidaSemSaldo<T extends MovimentoDeFundo & { id: string }>(
+  movs: T[],
+): { id: string; data: string; tipo: string; quantidade: number; saldo: number } | null {
+  let saldo = 0;
+  for (const m of ordenar(movs)) {
+    const qtd = quantidadeDe(m);
+    if (m.tipo_movimentacao === TIPO_RESGATE_TOTAL) {
+      saldo = 0;
+      continue;
+    }
+    if (m.tipo_movimentacao === TIPO_MUDANCA_DE_FUNDO) {
+      const fator = fatorDe(m);
+      if (fator != null) saldo = arredondarCotas(Math.max(saldo, 0) * fator);
+      else if (qtd != null) saldo = qtd;
+      continue;
+    }
+    if (qtd == null) continue;
+    if (ENTRADAS.includes(m.tipo_movimentacao)) {
+      saldo += qtd;
+    } else {
+      if (qtd > saldo + 1e-8) {
+        return { id: m.id, data: dataEfetiva(m), tipo: m.tipo_movimentacao, quantidade: qtd, saldo: Math.max(saldo, 0) };
+      }
+      saldo -= qtd;
+    }
+  }
+  return null;
 }
 
 /**

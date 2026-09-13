@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
+import { saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -195,6 +196,18 @@ export default function MovimentacoesPage() {
       );
       applyDataReferencia();
     } else {
+      // Fundo: excluir nao pode deixar sem saldo um resgate ou come-cotas posterior (Daniel, 12/09/2026).
+      // Em posicao que nao e de fundo a conferencia devolve null.
+      if (movData?.codigo_custodia && movData.user_id) {
+        const semSaldo = await saidaSemSaldoNaPosicaoDeFundo(movData.user_id, movData.codigo_custodia, (ms) =>
+          ms.filter((m) => m.id !== deleteId));
+        if (semSaldo) {
+          toast.error(semSaldo);
+          setDeleteId(null);
+          return;
+        }
+      }
+
       const { error } = await supabase.from("movimentacoes").delete().eq("id", deleteId);
       if (error) {
         toast.error("Erro ao excluir movimentação.");

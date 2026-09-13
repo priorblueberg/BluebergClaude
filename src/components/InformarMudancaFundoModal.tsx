@@ -171,6 +171,8 @@ export default function InformarMudancaFundoModal({
           tipo_movimentacao: TIPO_MUDANCA_DE_FUNDO,
           valor: Math.round(i.n! * novo.cota * 100) / 100,
           quantidade: i.n,
+          // Guardado para a quantidade acompanhar o historico anterior: saldo x fator (Daniel, 12/09/2026).
+          fator_conversao: i.saldo > 1e-8 ? i.n! / i.saldo : null,
           preco_unitario: novo.cota,
           origem: "mudanca_de_fundo",
           observacao: `Mudança de fundo informada pelo cliente: ${d.fundo_nome} (CNPJ ${formatarCnpj(d.cnpj)}) `

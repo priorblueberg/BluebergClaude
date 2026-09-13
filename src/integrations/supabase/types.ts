@@ -1025,6 +1025,7 @@ export type Database = {
           poupanca_lote_id: string | null
           acao_id: string | null
           custos_operacao: number | null
+          fator_conversao: number | null
           codigo_custodia: string | null
           nome_ativo: string | null
           data: string
@@ -1053,6 +1054,7 @@ export type Database = {
           poupanca_lote_id?: string | null
           acao_id?: string | null
           custos_operacao?: number | null
+          fator_conversao?: number | null
           codigo_custodia?: string | null
           nome_ativo?: string | null
           data: string
@@ -1081,6 +1083,7 @@ export type Database = {
           poupanca_lote_id?: string | null
           acao_id?: string | null
           custos_operacao?: number | null
+          fator_conversao?: number | null
           codigo_custodia?: string | null
           nome_ativo?: string | null
           data?: string

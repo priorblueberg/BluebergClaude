@@ -19,6 +19,7 @@ import {
   textoConfirmacaoDeExclusao, AVISO_EXCLUSAO_ATIVO, AVISO_EXCLUSAO_MOVIMENTACAO, TITULO_CONFIRMACAO_DE_EXCLUSAO,
 } from "@/lib/confirmacaoDeExclusao";
 import { formatarCnpj } from "@/components/FundoSelect";
+import { saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
 
 interface Movimentacao {
   id: string;
@@ -156,6 +157,16 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
       setDeleteId(null);
       onClose();
       return;
+    }
+
+    // Fundo: excluir nao pode deixar sem saldo um resgate ou come-cotas posterior (Daniel, 12/09/2026).
+    if (data.tipo === "fundo") {
+      const semSaldo = await saidaSemSaldoNaPosicaoDeFundo(userId, data.codigoCustodia, (ms) => ms.filter((m) => m.id !== mov.id));
+      if (semSaldo) {
+        toast.error(semSaldo);
+        setDeleteId(null);
+        return;
+      }
     }
 
     const { error } = await supabase.from("movimentacoes").delete().eq("id", mov.id);

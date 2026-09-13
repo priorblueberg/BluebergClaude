@@ -7,7 +7,7 @@
  * negativa em silêncio, como aconteceu com o título 228 da massa de CDB.
  */
 import { supabase } from "@/integrations/supabase/client";
-import { posicaoNaData, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
+import { posicaoNaData, primeiraSaidaSemSaldo, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
 import { diasDeCotizacao } from "@/lib/fundoEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 
@@ -190,6 +190,34 @@ export async function posicoesDoFundo(
       instituicaoNome: instituicaoId ? nomes.get(instituicaoId) ?? "" : "",
     }))
     .sort((a, b) => a.instituicaoNome.localeCompare(b.instituicaoNome, "pt-BR"));
+}
+
+/**
+ * Confere, ANTES de gravar, se uma inclusao, edicao ou exclusao numa posicao de fundo deixa sem saldo um
+ * resgate ou come-cotas posterior ja lancado (Daniel, 12/09/2026). `alterar` recebe as movimentacoes
+ * atuais da posicao e devolve como elas ficariam. Devolve a mensagem para o cliente, ou null.
+ *
+ * Aplicacao, resgate parcial e come-cotas nao sao recalculados quando o historico muda: a quantidade de
+ * cada um vem do proprio valor e da cota do dia. Por isso o que precisa de conferencia e o saldo.
+ */
+export async function saidaSemSaldoNaPosicaoDeFundo(
+  userId: string,
+  codigoCustodia: string,
+  alterar: (movs: (MovimentoDeFundo & { id: string })[]) => (MovimentoDeFundo & { id: string })[],
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("movimentacoes")
+    .select("id, fundo_id, data, data_cotizacao, tipo_movimentacao, quantidade, valor, preco_unitario, created_at, fator_conversao")
+    .eq("user_id", userId)
+    .eq("codigo_custodia", codigoCustodia);
+  const movs = (data || []) as unknown as (MovimentoDeFundo & { id: string })[];
+  if (!movs.some((m) => m.fundo_id)) return null;
+
+  const falha = primeiraSaidaSemSaldo(alterar(movs));
+  if (!falha) return null;
+  const fmtQtd = (n: number) => n.toLocaleString("pt-BR", { maximumFractionDigits: 8 });
+  const qual = falha.tipo === "Come-Cotas" ? "O come-cotas" : "O resgate";
+  return `${qual} de ${fmtData(falha.data)} ficaria maior que o saldo da posição: ${fmtQtd(falha.quantidade)} cotas para ${fmtQtd(falha.saldo)} disponíveis. Ajuste ou exclua esse lançamento antes.`;
 }
 
 /**

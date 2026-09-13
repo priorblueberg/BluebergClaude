@@ -28,7 +28,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData, fundosComPosicao, limitesDaSerieDoFundo, posicoesDoFundo } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData, fundosComPosicao, limitesDaSerieDoFundo, posicoesDoFundo, saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
 import { janelaDoCalendarioDoFundo, mensagemDaDataDoFundo, type LimitesDoFundo } from "@/lib/validacaoDataFundo";
 import CampoDataCalendario from "@/components/CampoDataCalendario";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -1530,6 +1530,28 @@ Confirma que o preço está certo?`,
             );
             return;
           }
+        }
+
+        // A inclusao ou a edicao nao pode deixar sem saldo um resgate ou come-cotas POSTERIOR ja lancado
+        // (Daniel, 12/09/2026): aplicacao editada para menos, resgate retroativo etc.
+        const saidaSemSaldo = await saidaSemSaldoNaPosicaoDeFundo(user.id, codigoCustodia, (movs) => [
+          ...movs.filter((m) => m.id !== editId),
+          {
+            id: editId ?? "nova",
+            fundo_id: fundoId,
+            data,
+            data_cotizacao: dataCotizacao,
+            tipo_movimentacao: tipoFinal,
+            quantidade: qtd,
+            valor: valorNum,
+            preco_unitario: cotaDoDia,
+            created_at: movs.find((m) => m.id === editId)?.created_at ?? new Date().toISOString(),
+          },
+        ]);
+        if (saidaSemSaldo) {
+          setSubmitting(false);
+          toast.error(saidaSemSaldo);
+          return;
         }
 
         if (isEditing) {
