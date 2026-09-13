@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ajustarResgatesTotais, posicaoNaData, TIPO_MUDANCA_DE_FUNDO } from "./posicaoDeFundo";
+import { ajustarResgatesTotais, posicaoNaData } from "./posicaoDeFundo";
 
 /** Cotas do Ágora Bolsa (08.909.429/0001-08) nas datas do teste validado contra o Gorila. */
 const COTAS: Record<string, number> = {
@@ -53,15 +53,6 @@ describe("Resgate Total de fundo acompanha o histórico", () => {
   it("resgate parcial anterior e exclusão de aplicação reduzem o resgate total", () => {
     const comParcial = [...base, mov("parcial", "2024-10-01", "Resgate", 683.52321776, 1982.22, "2026-09-13T10:00:00Z")];
     expect(ajustarResgatesTotais(comParcial, cotaEm)[0].quantidade).toBeCloseTo(2000, 8);
-  });
-
-  it("mudança de fundo antes do fechamento: o resgate leva a quantidade do fundo novo", () => {
-    const movs = [
-      mov("ap1", "2024-05-08", "Aplicação Inicial", 1000, 2981.16),
-      { ...mov("mud", "2024-10-01", TIPO_MUDANCA_DE_FUNDO, 1500, 4350), fundo_id: "f2" },
-      mov("rt", "2025-01-02", "Resgate Total", 1000, 2721.01),
-    ];
-    expect(ajustarResgatesTotais(movs, cotaEm)[0].quantidade).toBe(1500);
   });
 
   it("sem cota na data do resgate total, ele fica como está", () => {

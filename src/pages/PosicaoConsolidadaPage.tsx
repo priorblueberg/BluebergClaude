@@ -26,6 +26,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import BoletaCustodiaDialog, { type CustodiaRowForBoleta } from "@/components/BoletaCustodiaDialog";
 import PosicaoDetalheDialog, { type PosicaoDetalheData } from "@/components/PosicaoDetalheDialog";
+import AlertaFundoSemCota from "@/components/AlertaFundoSemCota";
+import type { AlertaSemCota } from "@/lib/alertaDeFundo";
+import { excluirContrapartesDeMigracao } from "@/lib/migracaoDeFundo";
 
 /** O cadastro da posição: o que a boleta, a exclusão e a gaveta precisam. Os números vêm dos hooks. */
 interface CustodiaProduct {
@@ -69,6 +72,8 @@ interface PosicaoRow {
   lingueta: string | null;
   /** Linhas diárias do motor da posição: a série do gráfico da gaveta sai delas. */
   linhas: DailyRow[];
+  /** Fundo sem cota da CVM: "!" ao lado do nome. */
+  alertaSemCota: AlertaSemCota | null;
 }
 
 // Cadastro das posições entre navegações: evita a tabela piscar vazia enquanto a busca volta.
@@ -168,6 +173,7 @@ export default function PosicaoConsolidadaPage() {
         fim: item.fim ?? null,
         lingueta: item.lingueta ?? null,
         linhas,
+        alertaSemCota: item.alertaSemCota ?? null,
       });
     }
     // Categoria ainda sem motor (ex.: Tesouro Direto): entra só com o valor investido.
@@ -185,6 +191,7 @@ export default function PosicaoConsolidadaPage() {
         fim: null,
         lingueta: null,
         linhas: [],
+        alertaSemCota: null,
       });
     }
     return lista;
@@ -253,6 +260,13 @@ export default function PosicaoConsolidadaPage() {
   async function handleDelete() {
     if (!deleteRow || !user) return;
     const p = deleteRow.product;
+    // Migracao de fundo: a outra ponta, na outra posicao, sai junto (Daniel, 12/09/2026).
+    const semSaldo = await excluirContrapartesDeMigracao(user.id, p.codigo_custodia, dataReferenciaISO);
+    if (semSaldo) {
+      toast.error(semSaldo);
+      setDeleteRow(null);
+      return;
+    }
     await supabase.from("movimentacoes").delete().eq("codigo_custodia", p.codigo_custodia).eq("user_id", user.id);
     const { error } = await supabase.from("custodia").delete().eq("id", p.id);
     if (error) { toast.error("Erro ao excluir."); } else {
@@ -284,6 +298,7 @@ export default function PosicaoConsolidadaPage() {
       instituicao: row.custodiante || null,
       // Posicao de fundo encerrada: a linha ja termina no encerramento (`useCarteiraFundos`).
       encerradaEm: tipo === "fundo" && !row.ativo ? row.fim ?? null : null,
+      alertaSemCota: row.alertaSemCota,
       valorAtualizado: row.valorAtualizado,
       pnl: row.ganhoFinanceiro,
       rentabilidadePct: row.rentabilidade,
@@ -369,7 +384,12 @@ export default function PosicaoConsolidadaPage() {
                         {row.ativo ? "Em custódia" : "Liquidado"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm font-medium">{row.nome}</TableCell>
+                    <TableCell className="text-sm font-medium">
+                      <span className="inline-flex items-center gap-1.5">
+                        {row.nome}
+                        {row.alertaSemCota && <AlertaFundoSemCota alerta={row.alertaSemCota} />}
+                      </span>
+                    </TableCell>
                     <TableCell className="text-sm">{fmtBrl(row.valorAtualizado)}</TableCell>
                     <TableCell className="text-sm">{fmtBrl(row.ganhoFinanceiro)}</TableCell>
                     <TableCell className="text-sm">{row.rentabilidade.toFixed(2)}%</TableCell>

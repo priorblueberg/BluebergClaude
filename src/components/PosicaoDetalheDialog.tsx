@@ -20,6 +20,9 @@ import {
 } from "@/lib/confirmacaoDeExclusao";
 import { formatarCnpj } from "@/components/FundoSelect";
 import { saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
+import AlertaFundoSemCota from "@/components/AlertaFundoSemCota";
+import type { AlertaSemCota } from "@/lib/alertaDeFundo";
+import { ehMigracao, excluirContrapartesDeMigracao, excluirMigracao } from "@/lib/migracaoDeFundo";
 
 interface Movimentacao {
   id: string;
@@ -40,6 +43,8 @@ export interface PosicaoDetalheData {
   instituicao?: string | null;
   /** Dia do encerramento da posição de fundo, quando encerrada: substitui a última cota. */
   encerradaEm?: string | null;
+  /** Fundo sem cota da CVM: "!" ao lado do nome, com encerrar ou migrar. */
+  alertaSemCota?: AlertaSemCota | null;
   valorAtualizado: number;
   pnl: number;
   /** Ja em %, a mesma da linha da Posição Consolidada. */
@@ -149,6 +154,13 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
     const isAplicacaoInicial = mov.tipo_movimentacao === "Aplicação Inicial";
 
     if (isAplicacaoInicial) {
+      // Migracao de fundo: a outra ponta, na outra posicao, sai junto.
+      const contraparte = await excluirContrapartesDeMigracao(userId, data.codigoCustodia, dataReferenciaISO);
+      if (contraparte) {
+        toast.error(contraparte);
+        setDeleteId(null);
+        return;
+      }
       await supabase.from("movimentacoes").delete().eq("codigo_custodia", data.codigoCustodia).eq("user_id", userId);
       await supabase.from("custodia").delete().eq("codigo_custodia", data.codigoCustodia).eq("user_id", userId);
       toast.success(AVISO_EXCLUSAO_ATIVO);
@@ -156,6 +168,20 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
       onDataChanged();
       setDeleteId(null);
       onClose();
+      return;
+    }
+
+    // Migracao de fundo: as duas pontas saem juntas (Daniel, 12/09/2026).
+    if (ehMigracao(mov.tipo_movimentacao)) {
+      const msg = await excluirMigracao(userId, mov.id, dataReferenciaISO);
+      if (msg) {
+        toast.error(msg);
+      } else {
+        toast.success(AVISO_EXCLUSAO_MOVIMENTACAO);
+        onDataChanged();
+        fetchMovs();
+      }
+      setDeleteId(null);
       return;
     }
 
@@ -223,6 +249,11 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
               <h4 className="text-base font-bold text-foreground break-words">
                 {data.nome}
                 {data.cnpj ? ` - ${formatarCnpj(data.cnpj)}` : ""}
+                {data.alertaSemCota && (
+                  <span className="ml-2 inline-flex align-middle">
+                    <AlertaFundoSemCota alerta={data.alertaSemCota} />
+                  </span>
+                )}
               </h4>
               <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
                 {data.instituicao && <p className="font-semibold text-foreground">{data.instituicao}</p>}
@@ -312,12 +343,15 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                               <TableCell className="text-right">
                                 {!isAuto && (
                                   <div className="flex justify-end gap-1">
-                                    <Button
-                                      variant="ghost" size="icon" className="h-7 w-7" title="Editar"
-                                      onClick={() => abrirBoleta(m.id)}
-                                    >
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </Button>
+                                    {/* Migracao nao se edita: exclui-se o par e migra-se de novo. */}
+                                    {!ehMigracao(m.tipo_movimentacao) && (
+                                      <Button
+                                        variant="ghost" size="icon" className="h-7 w-7" title="Editar"
+                                        onClick={() => abrirBoleta(m.id)}
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </Button>
+                                    )}
                                     <Button
                                       variant="ghost" size="icon" className="h-7 w-7 text-destructive" title="Excluir"
                                       onClick={() => setDeleteId(m)}

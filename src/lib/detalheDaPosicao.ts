@@ -12,7 +12,6 @@
  * está em `src/lib/periodo.ts`.
  */
 import { calcularFundoDiario, type FundoDailyRow, type FundoMovimentacao } from "@/lib/fundoEngine";
-import { cotasCosturadas, trechosDaPosicao, type MovimentoDeFundo } from "@/lib/posicaoDeFundo";
 import { situacaoDaPosicao } from "@/lib/situacaoDaPosicao";
 import { buildCdiSeries, buildIbovespaSeries, type CdiRecord, type PontoIbovespa } from "@/lib/cdiCalculations";
 import type { DetailRow } from "@/components/RentabilidadeDetailTable";
@@ -84,8 +83,6 @@ export function calcularPosicaoDeFundo(e: {
   diasCotizacaoResgate?: number | null;
   /** Todas as movimentações da posição. */
   movimentacoes: FundoMovimentacao[];
-  /** As mesmas, com o fundo de cada uma: costuram a série quando o fundo mudou no caminho. */
-  movimentosDaPosicao: MovimentoDeFundo[];
   cotasPorFundo: Map<string, { data: string; valor_cota: number }[]>;
   calendario: { data: string; dia_util: boolean }[];
   dataReferenciaISO: string;
@@ -93,8 +90,8 @@ export function calcularPosicaoDeFundo(e: {
   // No fim de semana a data global cai no último dia útil.
   const global = dataGlobalEfetiva(e.calendario, e.dataReferenciaISO);
   const fim = e.resgateTotal && e.resgateTotal < global ? e.resgateTotal : global;
-  const trechos = trechosDaPosicao(e.movimentosDaPosicao);
-  const cotas = trechos.length > 1 ? cotasCosturadas(trechos, e.cotasPorFundo) : (e.cotasPorFundo.get(e.fundoId) || []);
+  // A posicao tem um fundo so (desde 12/09/2026 a migracao abre outra posicao).
+  const cotas = e.cotasPorFundo.get(e.fundoId) || [];
   const linhas = calcularFundoDiario({
     dataInicio: e.dataInicio,
     dataCalculo: fim,

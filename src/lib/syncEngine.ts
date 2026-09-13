@@ -5,7 +5,7 @@
  * automaticamente quando movimentacoes são alteradas.
  */
 import {
-  ajustarResgatesTotais, cotasCosturadas, ordenarMovimentosDeFundo, TIPO_MUDANCA_DE_FUNDO, trechosDaPosicao,
+  ajustarMovimentosDerivados, entradaDaMigracao, ordenarMovimentosDeFundo, TIPO_MIGRACAO_ENTRADA, TIPO_MIGRACAO_SAIDA,
 } from "@/lib/posicaoDeFundo";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -1486,29 +1486,23 @@ export async function syncCustodiaFundo(
   }
 
   const primeira = movs[0] as any;
-  // A posicao pode ter passado por mais de um fundo ("Mudança de Fundo", CVM 175): a serie de
-  // cotas e costurada por trechos, e a custodia fica com o fundo ATUAL.
-  const trechos = trechosDaPosicao(movs as any[]);
-  if (!trechos.length) return;
-  const fundoId = trechos[trechos.length - 1].fundoId;
+  // Desde 12/09/2026 a posicao tem um fundo so: a migracao para outro fundo fecha esta posicao e
+  // abre (ou soma) a do fundo novo.
+  const fundoId: string | null = (movs as any[]).find((m) => m.fundo_id)?.fundo_id ?? null;
+  if (!fundoId) return;
 
-  const cotasPorFundo = new Map<string, { data: string; valor_cota: number }[]>();
-  for (const id of new Set(trechos.map((t) => t.fundoId))) {
-    const linhas: { data: string; valor_cota: number }[] = [];
-    // Paginado: a serie passa das 1000 linhas que o PostgREST devolve, e o corte e silencioso.
-    for (let de = 0; ; de += 1000) {
-      const { data: pagina } = await supabase
-        .from("cotas_fundos")
-        .select("data, valor_cota")
-        .eq("fundo_id", id)
-        .order("data")
-        .range(de, de + 999);
-      linhas.push(...((pagina || []) as any[]).map((c) => ({ data: c.data, valor_cota: Number(c.valor_cota) })));
-      if (!pagina || pagina.length < 1000) break;
-    }
-    cotasPorFundo.set(id, linhas);
+  const cotas: { data: string; valor_cota: number }[] = [];
+  // Paginado: a serie passa das 1000 linhas que o PostgREST devolve, e o corte e silencioso.
+  for (let de = 0; ; de += 1000) {
+    const { data: pagina } = await supabase
+      .from("cotas_fundos")
+      .select("data, valor_cota")
+      .eq("fundo_id", fundoId)
+      .order("data")
+      .range(de, de + 999);
+    cotas.push(...((pagina || []) as any[]).map((c) => ({ data: c.data, valor_cota: Number(c.valor_cota) })));
+    if (!pagina || pagina.length < 1000) break;
   }
-  const cotas = cotasCosturadas(trechos, cotasPorFundo);
 
   /** Ultima cota divulgada ate a data (fundo nao divulga em dia sem movimento). */
   const cotaEm = (dataISO: string): number | null => {
@@ -1520,12 +1514,14 @@ export async function syncCustodiaFundo(
     return achada;
   };
 
-  const ENTRADAS = ["Aplicação", "Aplicação Inicial"];
+  const ENTRADAS = ["Aplicação", "Aplicação Inicial", TIPO_MIGRACAO_ENTRADA];
 
-  // "Resgate Total" acompanha o historico (Daniel, 12/09/2026): movimentacao anterior a ele que entra,
-  // muda ou sai reescreve a quantidade (saldo exato do dia) e o valor (quantidade x cota), e a posicao
-  // segue zerada no fechamento. Toda gravacao e exclusao de fundo passa por aqui.
-  for (const a of ajustarResgatesTotais(movs as any[], cotaEm)) {
+  // "Resgate Total" e "Migração (saída)" acompanham o historico (Daniel, 12/09/2026): movimentacao
+  // anterior a eles que entra, muda ou sai reescreve a quantidade (saldo exato do dia) e o valor
+  // (quantidade x cota), e a posicao segue zerada no fechamento. Toda gravacao e exclusao de fundo
+  // passa por aqui. A entrada da migracao, na posicao do fundo novo, acompanha a saida pelo fator.
+  const posicoesARefazer = new Set<string>();
+  for (const a of ajustarMovimentosDerivados(movs as any[], cotaEm)) {
     await supabase
       .from("movimentacoes")
       .update({ quantidade: a.quantidade, valor: a.valor, preco_unitario: a.preco_unitario })
@@ -1535,6 +1531,20 @@ export async function syncCustodiaFundo(
       alvo.quantidade = a.quantidade;
       alvo.valor = a.valor;
       alvo.preco_unitario = a.preco_unitario;
+    }
+    if (alvo?.tipo_movimentacao === TIPO_MIGRACAO_SAIDA && alvo.transferencia_id) {
+      const { data: entrada } = await supabase
+        .from("movimentacoes")
+        .select("id, codigo_custodia, fator_conversao")
+        .eq("user_id", userId)
+        .eq("transferencia_id", alvo.transferencia_id)
+        .eq("tipo_movimentacao", TIPO_MIGRACAO_ENTRADA)
+        .maybeSingle();
+      if (entrada) {
+        const nova = entradaDaMigracao(a, Number(entrada.fator_conversao) || 1);
+        await supabase.from("movimentacoes").update({ quantidade: nova.quantidade, valor: nova.valor }).eq("id", entrada.id);
+        if (entrada.codigo_custodia && String(entrada.codigo_custodia) !== codigo) posicoesARefazer.add(String(entrada.codigo_custodia));
+      }
     }
   }
 
@@ -1556,13 +1566,6 @@ export async function syncCustodiaFundo(
         .eq("id", m.id);
     }
     if (qtd == null) continue;
-
-    // O fundo mudou: a posicao passa a ter `qtd` cotas do fundo novo, com o mesmo custo.
-    if (m.tipo_movimentacao === TIPO_MUDANCA_DE_FUNDO) {
-      saldoCotas = qtd;
-      if (saldoCotas > 1e-8) dataZerou = null;
-      continue;
-    }
 
     if (ENTRADAS.includes(m.tipo_movimentacao)) {
       saldoCotas += qtd;
@@ -1603,6 +1606,11 @@ export async function syncCustodiaFundo(
     await supabase.from("custodia").update(dados).eq("id", custodiaExistente.id);
   } else {
     await supabase.from("custodia").insert(dados);
+  }
+
+  // Posicoes do fundo novo cuja entrada de migracao mudou junto com esta.
+  for (const outra of posicoesARefazer) {
+    await syncCustodiaFundo(outra, userId, dataReferencia);
   }
 }
 

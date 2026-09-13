@@ -18,7 +18,7 @@ import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { ProductListItem, CarteiraInfo } from "@/hooks/useCarteiraRF";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import { metricasDoProdutoNaJanela } from "@/lib/janelaDoProduto";
-import { cotasCosturadas, trechosDaPosicao } from "@/lib/posicaoDeFundo";
+import { fundoSemCotaDesde } from "@/lib/alertaDeFundo";
 import { dadosDaPosicao, ultimoAte } from "@/lib/detalheDaPosicao";
 import {
   dataGlobalEfetiva, encerramentoDoFundoPeloSaldo, fimDoProduto, linguetaDoFim, periodoDaCarteira, ultimaDataAte,
@@ -37,6 +37,7 @@ interface FundoCustodia {
   categoria_nome: string;
   produto_nome: string;
   instituicao_nome: string;
+  instituicao_id: string | null;
   fundo: {
     nome_curto: string | null;
     cnpj_classe: string | null;
@@ -84,7 +85,7 @@ export function useCarteiraFundos() {
           .maybeSingle(),
         supabase
           .from("custodia")
-          .select("id, codigo_custodia, nome, fundo_id, data_inicio, data_calculo, resgate_total, valor_investido, categorias(nome), produtos(nome), instituicoes(nome), cadastro_de_fundos(nome_curto, cnpj_classe, benchmark, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
+          .select("id, codigo_custodia, nome, fundo_id, instituicao_id, data_inicio, data_calculo, resgate_total, valor_investido, categorias(nome), produtos(nome), instituicoes(nome), cadastro_de_fundos(nome_curto, cnpj_classe, benchmark, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
           .eq("user_id", user.id)
           .not("fundo_id", "is", null),
       ]);
@@ -103,6 +104,7 @@ export function useCarteiraFundos() {
         categoria_nome: r.categorias?.nome || "Fundos de Investimentos",
         produto_nome: r.produtos?.nome || "Fundos de Investimentos",
         instituicao_nome: r.instituicoes?.nome || "—",
+        instituicao_id: r.instituicao_id ?? null,
         fundo: r.cadastro_de_fundos || null,
       }));
 
@@ -184,8 +186,7 @@ export function useCarteiraFundos() {
         // variacao zero, e esse e o valor provisorio que a carteira usa ate o fim dela.
         const fim = f.resgate_total && f.resgate_total < global ? f.resgate_total : global;
         const movsDaPosicao = movsPorCodigo.get(f.codigo_custodia) || [];
-        const trechos = trechosDaPosicao(movsDaPosicao);
-        const cotas = trechos.length > 1 ? cotasCosturadas(trechos, cotasPorFundo) : (cotasPorFundo.get(f.fundo_id) || []);
+        const cotas = cotasPorFundo.get(f.fundo_id) || [];
         const rows = calcularFundoDiario({
           dataInicio: f.data_inicio,
           dataCalculo: fim,
@@ -232,6 +233,20 @@ export function useCarteiraFundos() {
           existiuNaJanela: m.existiuNaJanela,
           fim: fimFundo,
           lingueta: linguetaDoFim(fimFundo, global, !encerrado),
+          // Fundo sem cota da CVM: "!" ao lado do nome, com encerrar ou migrar (Daniel, 12/09/2026).
+          alertaSemCota: (() => {
+            const desde = encerrado ? null : fundoSemCotaDesde(calendario, ultimaDataAte(cotas, global), global);
+            if (!desde) return null;
+            return {
+              codigoCustodia: String(f.codigo_custodia),
+              fundoId: f.fundo_id,
+              fundoNome: f.nome || f.fundo?.nome_curto || f.produto_nome,
+              instituicaoId: f.instituicao_id,
+              instituicaoNome: f.instituicao_nome,
+              ultimaCota: desde,
+              valorCota: cotas.find((c) => c.data === desde)?.valor_cota ?? null,
+            };
+          })(),
           dados: dadosDaPosicao(
             ult?.valorInvestido ?? 0,
             encerrado ? 0 : (ult?.saldoCotas ?? 0),

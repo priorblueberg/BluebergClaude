@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { format, parse, isValid } from "date-fns";
 import { PlusCircle, AlertTriangle, HelpCircle, CalendarIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,7 +8,8 @@ import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { buildNomeAtivo } from "@/lib/nomeAtivo";
 import { toast } from "sonner";
 import { fullSyncAfterMovimentacao } from "@/lib/syncEngine";
-import { verificarMudancaDoFundo } from "@/lib/verificarMudancaDoFundo";
+import type { PreenchimentoDaBoleta } from "@/contexts/BoletaContext";
+import { ehMigracao, MSG_MIGRACAO_NAO_EDITA } from "@/lib/migracaoDeFundo";
 import { calcularRendaFixaDiario, opcoesPagamentoDoProduto, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaSeNecessario, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
@@ -167,10 +168,13 @@ function parseCurrencyToNumber(value: string): number {
  */
 export default function BoletaTransacao({
   editId = null,
+  preenchimento = null,
   onFechar,
 }: {
   /** Id da movimentacao em edicao; nulo cadastra uma nova. */
   editId?: string | null;
+  /** Boleta aberta ja preenchida por outra tela (ex.: "Encerrar Posição" do fundo sem cota). */
+  preenchimento?: PreenchimentoDaBoleta | null;
   onFechar?: () => void;
 }) {
   const { user } = useAuth();
@@ -810,6 +814,12 @@ export default function BoletaTransacao({
         return;
       }
 
+      // Migracao de fundo nao se edita pela boleta: exclui-se o par e migra-se de novo.
+      if (ehMigracao(mov.tipo_movimentacao)) {
+        toast.error(MSG_MIGRACAO_NAO_EDITA);
+        onFechar?.();
+        return;
+      }
       setCategoriaId(mov.categoria_id);
       setTipoMovimentacao(mov.tipo_movimentacao);
       // Resgate de fundo que fechou a posicao: abre como "Resgate" com "Fechar Posição" marcado.
@@ -963,17 +973,19 @@ export default function BoletaTransacao({
     posicoesDoFundo(user.id, fundoId).then((ps) => {
       if (!vivo) return;
       setPosicoesFundo(ps);
-      if (ps.length === 1) {
-        setCodigoSaidaFundo(ps[0].codigo);
-        setInstituicaoId(ps[0].instituicaoId ?? "");
-        setInstituicaoNome(ps[0].instituicaoNome);
+      // Uma posicao so, ou a indicada por quem abriu a boleta ("Encerrar Posição" do fundo sem cota).
+      const escolhida = ps.length === 1 ? ps[0] : ps.find((p) => p.codigo === preenchimento?.codigoCustodia);
+      if (escolhida) {
+        setCodigoSaidaFundo(escolhida.codigo);
+        setInstituicaoId(escolhida.instituicaoId ?? "");
+        setInstituicaoNome(escolhida.instituicaoNome);
       } else {
         setInstituicaoId("");
         setInstituicaoNome("");
       }
     });
     return () => { vivo = false; };
-  }, [user, isFundo, ehSaida, fundoId, isEditing]);
+  }, [user, isFundo, ehSaida, fundoId, isEditing, preenchimento]);
 
   /** Cotacao da moeda na data, so para mostrar o saldo tambem em reais. */
   const [cotacaoOp, setCotacaoOp] = useState<number | null>(null);
@@ -1026,6 +1038,21 @@ export default function BoletaTransacao({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ehResgateDeFundo, totalDaPosicaoFundo, valor, fecharPosicaoFundo]);
+
+  // Aberta pelo "!" do fundo sem cota (Daniel, 12/09/2026): resgate da posicao com "Fechar Posição"
+  // na data da ultima cota. O valor vem do efeito acima, quando o saldo e a cota chegam.
+  const preenchidoRef = useRef(false);
+  useEffect(() => {
+    if (!preenchimento || preenchidoRef.current || categorias.length === 0) return;
+    const categoriaFundos = categorias.find((c) => c.nome === "Fundos de Investimentos");
+    if (!categoriaFundos) return;
+    preenchidoRef.current = true;
+    setCategoriaId(categoriaFundos.id);
+    setTipoMovimentacao("Resgate");
+    setFundoId(preenchimento.fundoId);
+    setData(preenchimento.data);
+    setFecharPosicaoFundo(true);
+  }, [preenchimento, categorias]);
 
   /**
    * Validacao da data de fundo, embaixo do campo (pedido do Daniel, 11/09/2026): data invalida, antes
@@ -1569,7 +1596,6 @@ Confirma que o preço está certo?`,
           await fullSyncAfterMovimentacao(editId!, categoriaId, user.id, dataReferenciaISO);
           applyDataReferencia();
           toast.success("Movimentação de fundo atualizada com sucesso!");
-          verificarMudancaDoFundo(fundoId);
           onFechar?.();
           return;
         }
@@ -1596,7 +1622,6 @@ Confirma que o preço está certo?`,
         await fullSyncAfterMovimentacao(inserida.id, categoriaId, user.id, dataReferenciaISO);
         applyDataReferencia();
         toast.success("Movimentação de fundo cadastrada com sucesso!");
-        verificarMudancaDoFundo(fundoId);
         resetForm();
         setFundoId("");
         setQtdCotas("");

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useState, ReactNode } from "react";
 import BoletaTransacao from "@/components/BoletaTransacao";
+import BoletaMigracaoFundo from "@/components/BoletaMigracaoFundo";
 import {
   Dialog,
   DialogContent,
@@ -7,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { AlertaSemCota } from "@/lib/alertaDeFundo";
 
 /**
  * A boleta em modal.
@@ -18,11 +20,24 @@ import {
  * `abrirBoleta()`.
  *
  * O estado vive aqui, num provider unico dentro do AppLayout, para nao existir uma copia do
- * modal em cada tela que o abre.
+ * modal em cada tela que o abre. A boleta de migracao de fundo (aberta pelo "!" do fundo sem cota)
+ * mora aqui pelo mesmo motivo.
  */
+
+/** Boleta aberta ja preenchida por outra tela. */
+export type PreenchimentoDaBoleta = {
+  /** "!" do fundo sem cota: resgate com "Fechar Posição" na data da ultima cota. */
+  tipo: "encerrar_fundo";
+  fundoId: string;
+  codigoCustodia: string;
+  data: string;
+};
+
 interface BoletaContextType {
-  /** Abre a boleta. Com `editId`, em modo de edicao daquela movimentacao. */
-  abrirBoleta: (editId?: string | null) => void;
+  /** Abre a boleta. Com `editId`, em modo de edicao daquela movimentacao; com `preenchimento`, ja preenchida. */
+  abrirBoleta: (editId?: string | null, preenchimento?: PreenchimentoDaBoleta | null) => void;
+  /** Abre a boleta de migracao da posicao de fundo que parou de receber cota. */
+  abrirMigracao: (origem: AlertaSemCota) => void;
 }
 
 const BoletaContext = createContext<BoletaContextType | null>(null);
@@ -30,16 +45,21 @@ const BoletaContext = createContext<BoletaContextType | null>(null);
 export function BoletaProvider({ children }: { children: ReactNode }) {
   const [aberta, setAberta] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [preenchimento, setPreenchimento] = useState<PreenchimentoDaBoleta | null>(null);
+  const [migracao, setMigracao] = useState<AlertaSemCota | null>(null);
 
-  const abrirBoleta = useCallback((id?: string | null) => {
+  const abrirBoleta = useCallback((id?: string | null, pre?: PreenchimentoDaBoleta | null) => {
     setEditId(id ?? null);
+    setPreenchimento(pre ?? null);
     setAberta(true);
   }, []);
+
+  const abrirMigracao = useCallback((origem: AlertaSemCota) => setMigracao(origem), []);
 
   const fechar = useCallback(() => setAberta(false), []);
 
   return (
-    <BoletaContext.Provider value={{ abrirBoleta }}>
+    <BoletaContext.Provider value={{ abrirBoleta, abrirMigracao }}>
       {children}
       <Dialog open={aberta} onOpenChange={(o) => !o && fechar()}>
         {/*
@@ -61,7 +81,24 @@ export function BoletaProvider({ children }: { children: ReactNode }) {
             da movimentacao editada.
           */}
           {aberta && (
-            <BoletaTransacao key={editId ?? "nova"} editId={editId} onFechar={fechar} />
+            <BoletaTransacao
+              key={editId ?? (preenchimento ? `encerrar-${preenchimento.codigoCustodia}` : "nova")}
+              editId={editId}
+              preenchimento={preenchimento}
+              onFechar={fechar}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!migracao} onOpenChange={(o) => !o && setMigracao(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Migrar posição</DialogTitle>
+            <DialogDescription>Migração da posição para o fundo novo</DialogDescription>
+          </DialogHeader>
+          {migracao && (
+            <BoletaMigracaoFundo key={migracao.codigoCustodia} origem={migracao} onFechar={() => setMigracao(null)} />
           )}
         </DialogContent>
       </Dialog>

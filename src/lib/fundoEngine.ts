@@ -11,8 +11,11 @@
  */
 import type { DailyRow } from "./rendaFixaEngine";
 
-const TIPOS_ENTRADA = new Set(["Aplicação", "Aplicacao", "Aplicação Inicial", "Aplicacao Inicial"]);
-const TIPOS_SAIDA = new Set(["Resgate", "Resgate Total", "Come-Cotas", "Come-cotas", "Resgate no Vencimento"]);
+// A migracao de fundo (Daniel, 12/09/2026) e saida na posicao antiga e entrada na do fundo novo, com a
+// quantidade e o valor gravados: a entrada leva o valor da saida, entao o rendimento do intervalo ate a
+// primeira cota do fundo novo aparece como ganho dele, e nao como aporte.
+const TIPOS_ENTRADA = new Set(["Aplicação", "Aplicacao", "Aplicação Inicial", "Aplicacao Inicial", "Migração (entrada)"]);
+const TIPOS_SAIDA = new Set(["Resgate", "Resgate Total", "Come-Cotas", "Come-cotas", "Resgate no Vencimento", "Migração (saída)"]);
 
 /**
  * Prazo de cotizacao, em dias uteis, que vale para o tipo de movimentacao. Toda entrada usa o prazo
@@ -28,12 +31,6 @@ export function diasDeCotizacao(
   if (TIPOS_ENTRADA.has(tipo)) return prazos?.dias_cotizacao_aplicacao ?? 0;
   return prazos?.dias_cotizacao_resgate ?? 0;
 }
-/**
- * O fundo da posicao mudou (CVM 175: troca de CNPJ, virou subclasse, absorcao). Nao e entrada
- * nem saida de dinheiro: a posicao passa a ter `qtd_cotas` cotas do fundo novo, com o MESMO
- * valor. Ver `src/lib/posicaoDeFundo.ts`.
- */
-export const TIPO_MUDANCA_DE_FUNDO = "Mudança de Fundo";
 
 export interface FundoMovimentacao {
   data: string;
@@ -116,20 +113,13 @@ export function calcularFundoDiario(input: FundoEngineInput): FundoDailyRow[] {
   const maxData = calendario.length ? calendario[calendario.length - 1].data : dataCalculo;
 
   // Movimentos entram na data de COTIZACAO, nao na data da ordem.
-  const movsPorCotizacao = new Map<string, { aplic: FundoMovimentacao[]; resg: FundoMovimentacao[]; mudanca: FundoMovimentacao[] }>();
+  const movsPorCotizacao = new Map<string, { aplic: FundoMovimentacao[]; resg: FundoMovimentacao[] }>();
   for (const mv of movimentacoes) {
-    if (mv.tipo === TIPO_MUDANCA_DE_FUNDO) {
-      // A mudanca vale no dia informado, sem prazo de cotizacao: nao e ordem ao administrador.
-      const dia = mv.data_cotizacao || mv.data;
-      if (!movsPorCotizacao.has(dia)) movsPorCotizacao.set(dia, { aplic: [], resg: [], mudanca: [] });
-      movsPorCotizacao.get(dia)!.mudanca.push(mv);
-      continue;
-    }
     const ehEntrada = TIPOS_ENTRADA.has(mv.tipo);
     if (!ehEntrada && !TIPOS_SAIDA.has(mv.tipo)) continue;
     const dias = ehEntrada ? dCotAplic : dCotResg;
     const dataCot = mv.data_cotizacao || offsetDiasUteis(mv.data, dias, utilSet, maxData);
-    if (!movsPorCotizacao.has(dataCot)) movsPorCotizacao.set(dataCot, { aplic: [], resg: [], mudanca: [] });
+    if (!movsPorCotizacao.has(dataCot)) movsPorCotizacao.set(dataCot, { aplic: [], resg: [] });
     const bucket = movsPorCotizacao.get(dataCot)!;
     if (ehEntrada) bucket.aplic.push(mv);
     else bucket.resg.push(mv);
@@ -149,19 +139,7 @@ export function calcularFundoDiario(input: FundoEngineInput): FundoDailyRow[] {
   for (const dia of dias) {
     const data = dia.data;
     const diaUtil = !!dia.dia_util;
-    const bucket = movsPorCotizacao.get(data) || { aplic: [], resg: [], mudanca: [] };
-
-    // Mudanca de fundo, ANTES de tudo: a posicao abre o dia ja no fundo novo, com a quantidade
-    // informada e o mesmo valor de ontem. A "cota de ontem" passa a ser valor / quantidade nova,
-    // entao o ganho do dia sai da cota nova contra ela - a costura da serie nao perde nem inventa
-    // rendimento, com ou sem fator de conversao.
-    for (const mv of bucket.mudanca) {
-      const qtdNova = mv.qtd_cotas != null ? Number(mv.qtd_cotas) : 0;
-      if (saldoCotas > 1e-8 && qtdNova > 0 && ultimaCota) {
-        ultimaCota = (saldoCotas * ultimaCota) / qtdNova;
-        saldoCotas = qtdNova;
-      }
-    }
+    const bucket = movsPorCotizacao.get(data) || { aplic: [], resg: [] };
 
     const valorCotaAnterior = ultimaCota;
     const saldoCotasAnterior = saldoCotas;

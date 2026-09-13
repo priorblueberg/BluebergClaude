@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
 import { saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
+import { ehMigracao, excluirContrapartesDeMigracao, excluirMigracao } from "@/lib/migracaoDeFundo";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -162,6 +163,13 @@ export default function MovimentacoesPage() {
     const isAplicacaoInicial = movData?.tipo_movimentacao === "Aplicação Inicial";
 
     if (isAplicacaoInicial && movData?.codigo_custodia) {
+      // Migracao de fundo: a outra ponta, na outra posicao, sai junto (Daniel, 12/09/2026).
+      const contraparte = await excluirContrapartesDeMigracao(movData.user_id!, movData.codigo_custodia, dataReferenciaISO);
+      if (contraparte) {
+        toast.error(contraparte);
+        setDeleteId(null);
+        return;
+      }
       const { error: movError } = await supabase
         .from("movimentacoes")
         .delete()
@@ -195,6 +203,15 @@ export default function MovimentacoesPage() {
         dataReferenciaISO
       );
       applyDataReferencia();
+    } else if (ehMigracao(movData?.tipo_movimentacao) && movData?.user_id) {
+      // Migracao de fundo: as duas pontas saem juntas (Daniel, 12/09/2026).
+      const msg = await excluirMigracao(movData.user_id, deleteId, dataReferenciaISO);
+      if (msg) {
+        toast.error(msg);
+      } else {
+        toast.success(AVISO_EXCLUSAO_MOVIMENTACAO);
+        applyDataReferencia();
+      }
     } else {
       // Fundo: excluir nao pode deixar sem saldo um resgate ou come-cotas posterior (Daniel, 12/09/2026).
       // Em posicao que nao e de fundo a conferencia devolve null.
@@ -342,13 +359,16 @@ export default function MovimentacoesPage() {
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Auto</Badge>
                     ) : (
                       <>
-                        <button
-                          onClick={() => handleEdit(r.id)}
-                          className="text-muted-foreground hover:text-foreground transition-colors mr-2"
-                          title="Editar"
-                        >
-                          <Pencil size={14} />
-                        </button>
+                        {/* Migracao de fundo nao se edita: exclui-se o par e migra-se de novo. */}
+                        {!ehMigracao(r.tipo_movimentacao) && (
+                          <button
+                            onClick={() => handleEdit(r.id)}
+                            className="text-muted-foreground hover:text-foreground transition-colors mr-2"
+                            title="Editar"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )}
                         <button
                           onClick={() => setDeleteId(r.id)}
                           className="text-muted-foreground hover:text-destructive transition-colors"

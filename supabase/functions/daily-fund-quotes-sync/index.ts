@@ -35,7 +35,6 @@
 // anos de uma vez pode estourar o tempo da edge function. Fatiar por ano e o uso normal.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { ficaComNova } from "../_shared/informeCvm.ts";
-import { detectarMudancaDoFundo, diasUteisDesde, registrarMudanca } from "../_shared/alertaDeMudanca.ts";
 
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
 const JANELA_MESES = 3;
@@ -191,29 +190,17 @@ Deno.serve(async (req) => {
 
     const cnpjs = new Set(porCnpj.keys());
     const novasPorFundo = new Map<string, number>();
-    const zerosPorFundo = new Map<string, string[]>();
-    const subclassesNovasPorFundo = new Map<string, Set<string>>();
     let total = 0;
     for (const mes of meses) {
       const linhas = await cotasDoMes(mes, cnpjs);
       const lote: { fundo_id: string; data: string; valor_cota: number }[] = [];
       for (const l of linhas) {
         for (const f of porCnpj.get(l.cnpj) ?? []) {
-          // A subclasse tem que casar EXATAMENTE. Antes, fundo sem subclasse aceitava a linha de
-          // qualquer uma, e um CNPJ que passasse a publicar por subclasse gravaria a cota de uma
-          // delas por cima da serie antiga, sem erro. Agora isso vira sinal de mudanca.
-          if (l.sub !== (f.sub ?? "")) {
-            if (!f.sub && l.sub && l.data > f.ultima) {
-              const set = subclassesNovasPorFundo.get(f.id) ?? new Set<string>();
-              set.add(l.sub);
-              subclassesNovasPorFundo.set(f.id, set);
-            }
-            continue;
-          }
-          if (l.cota <= 0) {
-            if (l.data > f.ultima) zerosPorFundo.set(f.id, [...(zerosPorFundo.get(f.id) ?? []), l.data]);
-            continue;
-          }
+          // A subclasse tem que casar EXATAMENTE: um CNPJ que passa a publicar por subclasse nao grava a
+          // cota de uma delas por cima da serie antiga. A serie antiga para, e a tela avisa o cliente.
+          if (l.sub !== (f.sub ?? "")) continue;
+          // Cota zero (fundo cancelado) nao entra na serie.
+          if (l.cota <= 0) continue;
           // No diario, pula o que ja passou; no backfill, o corte e a JANELA PEDIDA - senao nada
           // do passado entraria, que e justamente o que se quer preencher.
           if (desdeParam) {
@@ -230,49 +217,10 @@ Deno.serve(async (req) => {
       total += lote.length;
     }
 
-    // Mudanca na composicao do fundo: so na rotina diaria, nao no backfill, que olha o passado.
-    // O detector nao adivinha para onde o fundo foi - ele so avisa quem tem posicao.
-    const mudancas: Record<string, unknown>[] = [];
-    if (!desdeParam) {
-      const reais = acompanhados.map((f) => f.ultima).filter((d) => d > "1900-01-01").sort();
-      const trintaDias = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-      const dias = await diasUteisDesde(sb, [reais[0] ?? trintaDias, trintaDias].sort()[0]);
-      for (const f of acompanhados) {
-        try {
-          const extras = {
-            datasComCotaZero: zerosPorFundo.get(f.id),
-            subclassesNovas: [...(subclassesNovasPorFundo.get(f.id) ?? [])],
-          };
-          const d = await detectarMudancaDoFundo(sb, f.fundo, extras, dias);
-          if (!d) continue;
-          const [{ data: jaAvisado }, { data: jaCosturado }] = await Promise.all([
-            sb.from("mudancas_de_fundo").select("id").eq("fundo_id", f.id).eq("ultima_cota_em", d.mudanca.ultimaCotaEm).maybeSingle(),
-            sb.from("sucessoes_de_fundo").select("id").eq("antecessor_id", f.id).eq("ativa", true).limit(1),
-          ]);
-          // Ja costurado: a serie segue pelo sucessor assim que a carga dele avancar.
-          if (jaCosturado?.length) continue;
-          if (jaAvisado) {
-            // Ja passou pela tentativa de costura: so atualiza quem precisa do alerta.
-            await registrarMudanca(sb, f.fundo, d.mudanca, d.ultimaCota);
-            mudancas.push({ fundo: f.nome, ...d.mudanca, etapa: "alerta" });
-          } else {
-            // Primeira vez: a costura le o informe em volta da troca, entao roda numa chamada
-            // propria, com CPU cheia. Sem sucessao inequivoca, ela mesma registra o alerta.
-            const { error } = await sb.rpc("disparar_funcao", {
-              nome: "carga-cotas-fundo",
-              corpo: { fundoId: f.id, costura: "avancar", extras },
-            });
-            if (error) throw error;
-            mudancas.push({ fundo: f.nome, ...d.mudanca, etapa: "costura agendada" });
-          }
-        } catch (e) {
-          mudancas.push({ fundo: f.nome, erro: String((e as Error).message ?? e) });
-        }
-      }
-    }
-
+    // Fundo que parou de publicar: nada a fazer aqui. A tela avisa o cliente ao lado do nome e ele
+    // encerra ou migra a posicao (decisao do Daniel, 12/09/2026).
     const detalhe = acompanhados.map((f) => ({ fundo: f.nome, antes: f.ultima, gravadas: novasPorFundo.get(f.id) ?? 0 }));
-    return json({ modo: desdeParam ? "backfill" : "diario", fundos: fundos.length, meses, gravadas: total, detalhe, mudancas });
+    return json({ modo: desdeParam ? "backfill" : "diario", fundos: fundos.length, meses, gravadas: total, detalhe });
   } catch (e) {
     return json({ error: String((e as Error).message ?? e) }, 500);
   }

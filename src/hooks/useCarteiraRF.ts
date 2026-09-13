@@ -23,6 +23,7 @@ import {
   dataGlobalEfetiva, encerramentoPeloSaldo, fimDoProduto, linguetaDoFim, periodoDaCarteira, type PeriodoDaCarteira,
 } from "@/lib/periodo";
 import { SEM_DADOS, type DadosDaPosicao } from "@/lib/detalheDaPosicao";
+import type { AlertaSemCota } from "@/lib/alertaDeFundo";
 
 export interface CarteiraInfo {
   nome_carteira: string;
@@ -74,6 +75,8 @@ export interface ProductListItem {
   ativo: boolean;
   estrategia: string | null;
   emissor_nome: string;
+  /** Fundo sem cota da CVM: o "!" ao lado do nome, com encerrar ou migrar. */
+  alertaSemCota?: AlertaSemCota | null;
   analysisProduct: AnalysisCustodiaProduct;
 }
 

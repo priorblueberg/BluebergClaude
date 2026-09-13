@@ -15,12 +15,15 @@ import { pisoDoCalendario } from "@/lib/ipcaSeries";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import { calcularPosicaoDeFundo, montarGraficoETabela, type PosicaoDeFundoCalculada } from "@/lib/detalheDaPosicao";
 import type { PosicaoDetalheData } from "@/components/PosicaoDetalheDialog";
+import { fundoSemCotaDesde, type AlertaSemCota } from "@/lib/alertaDeFundo";
+import { dataGlobalEfetiva, ultimaDataAte } from "@/lib/periodo";
 
 interface Base {
   codigoCustodia: string;
   nome: string;
   cnpj: string | null;
   instituicao: string | null;
+  alertaSemCota: AlertaSemCota | null;
   dataInicio: string;
   categoriaId: string;
   fim: string;
@@ -52,7 +55,7 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
       try {
         const { data: custodia } = await supabase
           .from("custodia")
-          .select("codigo_custodia, nome, fundo_id, data_inicio, resgate_total, categoria_id, produtos(nome), instituicoes(nome), cadastro_de_fundos(cnpj_classe, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
+          .select("codigo_custodia, nome, fundo_id, instituicao_id, data_inicio, resgate_total, categoria_id, produtos(nome), instituicoes(nome), cadastro_de_fundos(cnpj_classe, dias_cotizacao_aplicacao, dias_cotizacao_resgate)")
           .eq("user_id", user.id)
           .eq("codigo_custodia", codigoCustodia)
           .maybeSingle();
@@ -107,13 +110,6 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
             data_cotizacao: m.data_cotizacao ?? null,
             qtd_cotas: m.quantidade != null ? Number(m.quantidade) : null,
           })),
-          movimentosDaPosicao: movs.filter((m) => m.fundo_id).map((m) => ({
-            fundo_id: m.fundo_id,
-            data: m.data,
-            data_cotizacao: m.data_cotizacao ?? null,
-            tipo_movimentacao: m.tipo_movimentacao,
-            created_at: m.created_at ?? null,
-          })),
           cotasPorFundo,
           calendario,
           dataReferenciaISO,
@@ -128,6 +124,23 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
           nome: c.nome || c.produtos?.nome || "",
           cnpj: c.cadastro_de_fundos?.cnpj_classe ?? null,
           instituicao: c.instituicoes?.nome ?? null,
+          // Fundo sem cota da CVM: "!" ao lado do nome (Daniel, 12/09/2026).
+          alertaSemCota: (() => {
+            if (calculo.encerrada) return null;
+            const cotasDoFundo = cotasPorFundo.get(c.fundo_id) || [];
+            const global = dataGlobalEfetiva(calendario, dataReferenciaISO);
+            const desde = fundoSemCotaDesde(calendario, ultimaDataAte(cotasDoFundo, global), global);
+            if (!desde) return null;
+            return {
+              codigoCustodia: String(c.codigo_custodia),
+              fundoId: c.fundo_id as string,
+              fundoNome: c.nome || c.produtos?.nome || "",
+              instituicaoId: c.instituicao_id ?? null,
+              instituicaoNome: c.instituicoes?.nome ?? "",
+              ultimaCota: desde,
+              valorCota: cotasDoFundo.find((x) => x.data === desde)?.valor_cota ?? null,
+            };
+          })(),
           dataInicio: c.data_inicio,
           categoriaId: c.categoria_id,
           // Período do fundo: da aplicação à última cota divulgada (`src/lib/periodo.ts`).
@@ -162,6 +175,7 @@ export function useDetalheDeFundo(codigoCustodia: string | null): { detalhe: Pos
       cnpj: base.cnpj,
       instituicao: base.instituicao,
       encerradaEm: base.calculo.encerramento,
+      alertaSemCota: base.alertaSemCota,
       valorAtualizado: base.calculo.valorAtualizado,
       pnl: base.calculo.ganho,
       rentabilidadePct: base.calculo.rentabilidadePct,

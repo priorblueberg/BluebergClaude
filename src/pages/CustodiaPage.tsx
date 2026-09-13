@@ -6,6 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
+import { excluirContrapartesDeMigracao } from "@/lib/migracaoDeFundo";
 import BoletaCustodiaDialog, {
   type CustodiaRowForBoleta,
 } from "@/components/BoletaCustodiaDialog";
@@ -191,6 +192,14 @@ export default function CustodiaPage() {
     if (!deleteRow || !user) return;
     const codigoCustodia = deleteRow.codigo_custodia;
     const categoriaId = deleteRow.categoria_id;
+
+    // Migracao de fundo: a outra ponta, na outra posicao, sai junto (Daniel, 12/09/2026).
+    const contraparte = await excluirContrapartesDeMigracao(user.id, codigoCustodia, dataReferenciaISO);
+    if (contraparte) {
+      toast.error(contraparte);
+      setDeleteRow(null);
+      return;
+    }
 
     // Delete all movimentações for this codigo_custodia
     const { error: movError } = await supabase

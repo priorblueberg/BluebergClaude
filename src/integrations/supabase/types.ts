@@ -1026,6 +1026,7 @@ export type Database = {
           acao_id: string | null
           custos_operacao: number | null
           fator_conversao: number | null
+          transferencia_id: string | null
           codigo_custodia: string | null
           nome_ativo: string | null
           data: string
@@ -1055,6 +1056,7 @@ export type Database = {
           acao_id?: string | null
           custos_operacao?: number | null
           fator_conversao?: number | null
+          transferencia_id?: string | null
           codigo_custodia?: string | null
           nome_ativo?: string | null
           data: string
@@ -1084,6 +1086,7 @@ export type Database = {
           acao_id?: string | null
           custos_operacao?: number | null
           fator_conversao?: number | null
+          transferencia_id?: string | null
           codigo_custodia?: string | null
           nome_ativo?: string | null
           data?: string

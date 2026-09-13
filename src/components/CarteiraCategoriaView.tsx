@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { HistoricoRentabilidadeChart } from "@/components/HistoricoRentabilidadeChart";
 import { useIbovespa } from "@/hooks/useIbovespa";
@@ -20,6 +20,8 @@ export interface LinhaCarteira {
   nome: string;
   /** Linha de apoio abaixo do nome, ex.: o saldo na moeda. */
   detalhe?: string | null;
+  /** Aviso ao lado do nome, ex.: o "!" do fundo sem cota da CVM. */
+  alerta?: ReactNode;
   custodiante: string;
   patrimonio: number;
   ganho: number;
@@ -215,7 +217,10 @@ export default function CarteiraCategoriaView({
                   onClick={onClicarLinha ? () => onClicarLinha(l.chave) : undefined}
                 >
                   <TableCell className="max-w-[320px] font-medium">
-                    <span className="block truncate">{l.nome}</span>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate">{l.nome}</span>
+                      {l.alerta}
+                    </span>
                     {l.detalhe && <span className="block text-xs text-muted-foreground">{l.detalhe}</span>}
                   </TableCell>
                   <TableCell className="max-w-[220px] truncate text-muted-foreground">{l.custodiante}</TableCell>

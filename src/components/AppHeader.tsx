@@ -3,7 +3,6 @@ import { useBoleta } from "@/contexts/BoletaContext";
 import { format, parse, isValid, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { CalendarIcon, Check, ChevronDown, Layers, Plus } from "lucide-react";
-import { SininhoDeAlertas } from "@/components/SininhoDeAlertas";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/hooks/useAuth";
@@ -239,8 +238,6 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
               Aplicar
             </button>
           </div>
-
-          <SininhoDeAlertas />
         </div>
       </header>
     </div>
