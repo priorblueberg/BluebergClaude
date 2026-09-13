@@ -14,7 +14,7 @@ import { calcularRendaFixaDiario, permiteVendaNoSecundario, DailyRow } from "@/l
 import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
-import { CdiRecord } from "@/lib/cdiCalculations";
+import { buildCdiSeries, CdiRecord } from "@/lib/cdiCalculations";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { ateAData } from "@/lib/janelaDaCarteira";
 import type { CustodiaProduct as AnalysisCustodiaProduct } from "@/pages/AnaliseIndividualPage";
@@ -63,6 +63,8 @@ export interface ProductListItem {
   ganhoFinanceiro: number;
   /** Rentabilidade DENTRO da janela de análise. */
   rentabilidade: number;
+  /** % do CDI no período do título (do primeiro dia com posição na janela até o fim dele), com todas as casas. */
+  sobreCdi?: number | null;
   /** false quando o papel nao teve nenhum dia dentro da janela. Some da lista. */
   existiuNaJanela?: boolean;
   /** Fim do periodo do produto (`src/lib/periodo.ts`). */
@@ -385,6 +387,16 @@ export function useCarteiraRF() {
         const fimTitulo = fimDoProduto({ dataGlobal: global, encerramento }) ?? global;
         // Ganho e rentabilidade DO PERIODO, pela mesma conta do card e dos grupos.
         const m = metricasDoProdutoNaJanela(rows, calendario, dataInicio, fimTitulo);
+        // CDI do periodo em que o titulo teve posicao, a mesma regra dos grupos de alocacao: papel que
+        // comecou depois da carteira nao se compara com o CDI da carteira inteira.
+        const primeiraComPosicao = rows.find(
+          (r) => r.data >= dataInicio && r.data <= fimTitulo && (r.liquido > 0.005 || r.liquido2 > 0.005),
+        );
+        const cdiDoTitulo = m.existiuNaJanela
+          ? buildCdiSeries(mergedCdi, primeiraComPosicao?.data ?? dataInicio, fimTitulo)
+          : [];
+        const cdiAcumTitulo = cdiDoTitulo.length ? cdiDoTitulo[cdiDoTitulo.length - 1].cdi_acumulado : null;
+        const sobreCdi = cdiAcumTitulo && cdiAcumTitulo > 0 ? (m.rentabilidade / cdiAcumTitulo) * 100 : null;
         // "Encerrado" vem do SALDO calculado, nao so do cadastro. `custodia.resgate_total`
         // guarda o vencimento quando o papel foi zerado por uma movimentacao do tipo
         // "Resgate" (parcial que zerou) em vez de "Resgate Total" - `resgateTotalDeMovs` so
@@ -396,6 +408,7 @@ export function useCarteiraRF() {
           valorAtualizado: encerrado ? 0 : m.patrimonio,
           ganhoFinanceiro: m.ganho,
           rentabilidade: m.rentabilidade,
+          sobreCdi,
           existiuNaJanela: m.existiuNaJanela,
           fim: fimTitulo,
           lingueta: linguetaDoFim(fimTitulo, global, !encerrado),

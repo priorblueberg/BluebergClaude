@@ -111,17 +111,43 @@ export default function CarteiraRendaFixaPage() {
     );
   }, [allProductRows, carteiraRows, cdiRecords, carteiraInfo]);
 
+  /**
+   * Titulos que entram na alocacao. Com titulo em custodia na data, os que tem patrimonio nela. Sem
+   * nenhum (carteira toda vencida ou resgatada), vale o ultimo dia em que a carteira teve patrimonio:
+   * antes as roscas ficavam vazias numa carteira encerrada (Daniel, 13/09/2026).
+   */
+  const baseDaAlocacao = useMemo(() => {
+    const ativos = productList
+      .map((p) => ({ p, valor: p.valorAtualizado }))
+      .filter((x) => x.p.ativo && x.valor > 0);
+    if (ativos.length > 0) return { itens: ativos, data: null as string | null };
+
+    let ultimaComPatrimonio: string | null = null;
+    for (let i = carteiraRows.length - 1; i >= 0; i--) {
+      if (carteiraRows[i].data <= dataReferenciaISO && carteiraRows[i].liquido > 0.005) {
+        ultimaComPatrimonio = carteiraRows[i].data;
+        break;
+      }
+    }
+    if (!ultimaComPatrimonio) return { itens: [], data: null as string | null };
+    // `allProductRows` segue a ordem de `productList`: os dois saem do mesmo laco no hook.
+    const itens = productList
+      .map((p, i) => ({ p, valor: allProductRows[i]?.find((r) => r.data === ultimaComPatrimonio)?.liquido ?? 0 }))
+      .filter((x) => x.valor > 0.005);
+    return { itens, data: ultimaComPatrimonio };
+  }, [productList, allProductRows, carteiraRows, dataReferenciaISO]);
+
   // Allocation charts data
   const allocationData = useMemo(() => {
-    const activeProducts = productList.filter(p => p.ativo && p.valorAtualizado > 0);
-    const total = activeProducts.reduce((sum, p) => sum + p.valorAtualizado, 0);
+    const { itens } = baseDaAlocacao;
+    const total = itens.reduce((sum, x) => sum + x.valor, 0);
     if (total === 0) return { estrategia: [], custodiante: [], emissor: [] };
 
-    const groupBy = (key: (p: typeof activeProducts[0]) => string) => {
+    const groupBy = (key: (p: (typeof itens)[number]["p"]) => string) => {
       const map = new Map<string, number>();
-      for (const p of activeProducts) {
-        const k = key(p) || "Não definido";
-        map.set(k, (map.get(k) || 0) + p.valorAtualizado);
+      for (const x of itens) {
+        const k = key(x.p) || "Não definido";
+        map.set(k, (map.get(k) || 0) + x.valor);
       }
       return Array.from(map.entries()).map(([name, value]) => ({
         name,
@@ -134,7 +160,7 @@ export default function CarteiraRendaFixaPage() {
       custodiante: groupBy(p => p.custodiante),
       emissor: groupBy(p => p.emissor_nome),
     };
-  }, [productList]);
+  }, [baseDaAlocacao]);
 
   // Category allocation (RF vs other categories)
   const categoriaAllocation = useMemo(() => {
@@ -150,12 +176,13 @@ export default function CarteiraRendaFixaPage() {
     if (rfTotal > 0) entries.push(["Renda Fixa", rfTotal]);
     for (const [k, v] of otherMap) entries.push([k, v]);
     const total = entries.reduce((s, [, v]) => s + v, 0);
-    if (total === 0) return [];
+    // Nada em custodia na data: a renda fixa do ultimo dia com patrimonio e a carteira inteira.
+    if (total === 0) return baseDaAlocacao.itens.length > 0 ? [{ name: "Renda Fixa", value: 100 }] : [];
     return entries.map(([name, value]) => ({
       name,
       value: parseFloat(((value / total) * 100).toFixed(1)),
     }));
-  }, [productList, allCustodiaForCategoria]);
+  }, [productList, allCustodiaForCategoria, baseDaAlocacao]);
 
   const fmtDate = (d: string | null) =>
     d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
@@ -225,13 +252,19 @@ export default function CarteiraRendaFixaPage() {
             for (let i = carteiraRows.length - 1; i >= 0; i--) {
               if (carteiraRows[i].data <= dataReferenciaISO) {
                 patrimonioValue = carteiraRows[i].liquido;
-                rentValue = parseFloat((carteiraRows[i].rentAcumuladaPct * 100).toFixed(2));
+                // Com todas as casas: o % do CDI sai desta conta, e quem exibe arredonda.
+                rentValue = carteiraRows[i].rentAcumuladaPct * 100;
                 ganhoValue = carteiraRows[i].rentAcumuladaRS;
                 break;
               }
             }
 
-            const cdiAcum = detailRows.length > 0 ? detailRows[0].cdiAcumulado : null;
+            // % do CDI no lugar do CDI Acumulado (Daniel, 13/09/2026), com todas as casas: arredondar
+            // antes de dividir erra a segunda casa.
+            const cdiExato = detailRows.length > 0
+              ? (detailRows[0].cdiAcumuladoExato ?? detailRows[0].cdiAcumulado)
+              : null;
+            const sobreCdi = rentValue != null && cdiExato ? (rentValue / cdiExato) * 100 : null;
             const fmtPct = (v: number | null) =>
               v != null ? `${v.toFixed(2)}%` : "—";
 
@@ -239,7 +272,7 @@ export default function CarteiraRendaFixaPage() {
               { label: "Patrimônio", value: fmtBrl(patrimonioValue) },
               { label: "Ganho Financeiro", value: fmtBrl(ganhoValue) },
               { label: "Rentabilidade", value: fmtPct(rentValue) },
-              { label: "CDI Acumulado", value: fmtPct(cdiAcum) },
+              { label: "% do CDI", value: fmtPct(sobreCdi) },
             ];
 
             return (
@@ -269,6 +302,11 @@ export default function CarteiraRendaFixaPage() {
           <RentabilidadeDetailTable rows={detailRows} tituloLabel="Rentabilidade" />
 
           {/* Allocation Charts */}
+          {baseDaAlocacao.data && baseDaAlocacao.itens.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Nenhum título em custódia no fim do período. Alocação em {fmtDate(baseDaAlocacao.data)}, último dia com patrimônio.
+            </p>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
               { title: "Alocação por Estratégia", data: allocationData.estrategia },
@@ -322,9 +360,10 @@ export default function CarteiraRendaFixaPage() {
                     <TableRow>
                       <TableHead className="min-w-[50px]">Status</TableHead>
                       <TableHead className="min-w-[250px]">Ativo</TableHead>
-                      <TableHead className="min-w-[130px]">Valor Atualizado</TableHead>
+                      <TableHead className="min-w-[130px]">Patrimônio</TableHead>
                       <TableHead className="min-w-[130px]">Ganho Financeiro</TableHead>
                       <TableHead className="min-w-[110px]">Rentabilidade</TableHead>
+                      <TableHead className="min-w-[90px]">% do CDI</TableHead>
                       <TableHead className="min-w-[150px]">Custodiante</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -343,6 +382,7 @@ export default function CarteiraRendaFixaPage() {
                         <TableCell className="text-foreground">{fmtBrl(row.valorAtualizado)}</TableCell>
                         <TableCell className="text-foreground">{fmtBrl(row.ganhoFinanceiro)}</TableCell>
                         <TableCell className="text-foreground">{row.rentabilidade.toFixed(2)}%</TableCell>
+                        <TableCell className="text-foreground">{row.sobreCdi != null ? `${row.sobreCdi.toFixed(2)}%` : "—"}</TableCell>
                         <TableCell className="text-foreground">
                           {row.custodiante}
                           <LinguetaDeData data={row.lingueta} dataGlobal={periodo?.dataGlobal} />
