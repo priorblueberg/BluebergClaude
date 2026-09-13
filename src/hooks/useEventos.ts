@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { fetchAllRows } from "@/lib/fetchAllRows";
-import { calcularRendaFixaDiario, gerarDatasPagamentoJuros, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, gerarDatasPagamentoJuros } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaDoTitulo, carregarSeriesIpca, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 
 /**
@@ -196,8 +196,6 @@ export function useEventos() {
             dataInicio: p.data_inicio,
             dataCalculo: fim > dataReferenciaISO ? dataReferenciaISO : fim,
             taxa: p.taxa || 0,
-            // Debenture, CRI e CRA rendem no proprio dia da compra.
-            rendeNoDiaDaCompra: permiteVendaNoSecundario((p as any).produtos?.nome),
             modalidade: p.modalidade || "",
             puInicial: p.preco_unitario || 1000,
             calendario,

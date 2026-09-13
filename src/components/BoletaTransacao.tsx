@@ -690,10 +690,6 @@ export default function BoletaTransacao({
           dataCalculo: dateISO,
           taxa: selectedCustodia.taxa!,
           modalidade: selectedCustodia.modalidade!,
-          // Debenture, CRI e CRA rendem no proprio dia da compra.
-          rendeNoDiaDaCompra: permiteVendaNoSecundario(
-            produtos.find((p) => p.id === selectedCustodia.produto_id)?.nome,
-          ),
           puInicial: selectedCustodia.preco_unitario!,
           calendario,
           movimentacoes,

@@ -10,7 +10,7 @@ import {
   buildIbovespaSeries,
   CdiRecord, DiaUtilRecord,
 } from "@/lib/cdiCalculations";
-import { calcularRendaFixaDiario, permiteVendaNoSecundario, DailyRow } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, DailyRow } from "@/lib/rendaFixaEngine";
 import { pisoDoCalendario } from "@/lib/ipcaSeries";
 import RentabilidadeDetailTable, { DetailRow } from "@/components/RentabilidadeDetailTable";
 import { HistoricoRentabilidadeChart } from "@/components/HistoricoRentabilidadeChart";
@@ -117,8 +117,6 @@ export function ProductDetail({ product, onBack, backLabel = "Voltar para lista 
           dataCalculo: endDate,
           taxa: product.taxa || 0,
           modalidade: product.modalidade || "Prefixado",
-          // Debenture, CRI e CRA rendem no proprio dia da compra.
-          rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
           puInicial: product.preco_unitario || 1000,
           calendario: diasData.map(d => ({ data: d.data, dia_util: d.dia_util })),
           movimentacoes: (movsRes.data || []).map((m: any) => ({

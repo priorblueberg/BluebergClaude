@@ -10,7 +10,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs, montarLotesPersistidos } from "@/lib/poupancaEngine";
-import { calcularRendaFixaDiario, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario } from "@/lib/rendaFixaEngine";
 import { fatoresIpcaSeNecessario, limparCacheIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 
 /**
@@ -210,8 +210,6 @@ async function syncManualResgatesTotais(
             dataInicio: custodiaRecord.data_inicio,
             dataCalculo: manualResgate.data,
             taxa: custodiaRecord.taxa || 0,
-            // Debenture, CRI e CRA rendem no proprio dia da compra.
-            rendeNoDiaDaCompra: (await produtosNegociaveisIds()).has(custodiaRecord.produto_id),
             modalidade: custodiaRecord.modalidade || "Prefixado",
             puInicial: custodiaRecord.preco_unitario || 1000,
             calendario,
@@ -343,8 +341,6 @@ async function syncResgateNoVencimento(
       dataInicio: custodiaRecord.data_inicio,
       dataCalculo: vencimento!,
       taxa: custodiaRecord.taxa || 0,
-      // Debenture, CRI e CRA rendem no proprio dia da compra.
-      rendeNoDiaDaCompra: (await produtosNegociaveisIds()).has(custodiaRecord.produto_id),
       modalidade: custodiaRecord.modalidade || "Prefixado",
       puInicial: custodiaRecord.preco_unitario || 1000,
       calendario,
@@ -574,25 +570,6 @@ function computeDataCalculo(dataReferencia: string, resgateTotal: string | null,
  * A alternativa era carregar o nome do produto junto de cada movimentacao, o que somaria uma
  * leitura por titulo no reprocessamento inteiro. Aqui e uma consulta por sessao.
  */
-let _idsNegociaveis: Set<string> | undefined;
-/**
- * Ids dos produtos negociados no mercado secundario (debenture, CRI, CRA).
- *
- * O syncEngine so carrega o produto_id do papel, nao o nome, entao a lista de nomes de
- * PRODUTOS_NEGOCIAVEIS_SECUNDARIO e resolvida uma vez e guardada - mesmo padrao do
- * produtoPoupancaId aqui embaixo.
- */
-export async function produtosNegociaveisIds(): Promise<Set<string>> {
-  if (_idsNegociaveis !== undefined) return _idsNegociaveis;
-  const { data } = await supabase.from("produtos").select("id, nome");
-  _idsNegociaveis = new Set(
-    (data ?? [])
-      .filter((p: { nome: string | null }) => permiteVendaNoSecundario(p.nome))
-      .map((p: { id: string }) => p.id),
-  );
-  return _idsNegociaveis;
-}
-
 let _idProdutoPoupanca: string | null | undefined;
 export async function produtoPoupancaId(): Promise<string | null> {
   if (_idProdutoPoupanca !== undefined) return _idProdutoPoupanca;
@@ -1160,9 +1137,6 @@ export async function reprocessMovimentacoesForCodigo(
       dataInicio: baseInfo.dataInicio,
       dataCalculo: mov.data,
       taxa: baseInfo.taxa,
-      // Debenture, CRI e CRA rendem no proprio dia da compra.
-      rendeNoDiaDaCompra: !!baseInfo.produtoId &&
-        (await produtosNegociaveisIds()).has(baseInfo.produtoId),
       modalidade: baseInfo.modalidade,
       puInicial: baseInfo.puInicial,
       calendario,

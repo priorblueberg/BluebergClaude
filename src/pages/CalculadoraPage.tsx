@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { calcularRendaFixaDiario, DailyRow, permiteVendaNoSecundario } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, DailyRow } from "@/lib/rendaFixaEngine";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { calcularPoupancaDiario, type PoupancaLote, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { carregarSeriesIpca, fatoresIpcaDoTitulo, fatoresIpcaSeNecessario, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
@@ -148,8 +148,6 @@ export default function CalculadoraPage() {
             dataCalculo: dataFim,
             taxa: product.taxa || 0,
             modalidade: product.modalidade || "",
-            // Debenture, CRI e CRA rendem no proprio dia da compra.
-            rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
             puInicial: product.preco_unitario || 1000,
             calendario,
             movimentacoes: (movRes.data || []).map((m: any) => ({ data: m.data, tipo_movimentacao: m.tipo_movimentacao, valor: Number(m.valor) })),
@@ -253,8 +251,6 @@ export default function CalculadoraPage() {
           dataCalculo: dataFim > dataCalculo ? dataCalculo : dataFim,
           taxa: product.taxa || 0,
           modalidade: product.modalidade || "",
-          // Debenture, CRI e CRA rendem no proprio dia da compra.
-          rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
           puInicial: product.preco_unitario || 1000,
           calendario,
           movimentacoes: movByCodigo.get(product.codigo_custodia) || [],

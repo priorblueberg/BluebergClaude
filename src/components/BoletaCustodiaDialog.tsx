@@ -268,8 +268,6 @@ export default function BoletaCustodiaDialog({
           dataCalculo: dateISO,
           taxa: row.taxa!,
           modalidade: row.modalidade!,
-          // Debenture, CRI e CRA rendem no proprio dia da compra.
-          rendeNoDiaDaCompra: permiteVendaNoSecundario(row.produto),
           puInicial: row.preco_unitario!,
           calendario,
           movimentacoes,

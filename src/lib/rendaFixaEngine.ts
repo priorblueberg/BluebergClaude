@@ -104,28 +104,6 @@ export interface EngineInput {
    */
   ipcaFatores?: Map<string, number>;
   dataLimite?: string | null;
-  /**
-   * O papel rende no PROPRIO dia da compra, em vez de comecar a render no dia seguinte.
-   *
-   * Vale para os produtos negociados no mercado secundario (ver
-   * PRODUTOS_NEGOCIAVEIS_SECUNDARIO): quem compra uma debenture paga o PU daquele dia, e o
-   * dia ja conta. Um CDB e o contrario - e um contrato com o banco, que passa a render no
-   * dia seguinte.
-   *
-   * Medido em 06/09/2026 na debenture GASP15 (COMGAS, IPCA+7,80%, 14/06 a 15/12/2023,
-   * R$ 150.976,22):
-   *
-   *   127 dias uteis (sem esta regra) -> P&L R$ 7.493,89
-   *   128 dias uteis (com esta regra) -> P&L R$ 7.541,13
-   *   Gorila                          -> P&L R$ 7.541,12
-   *   extrato da XP                   -> P&L R$ 7.541,08
-   *
-   * O recorte por produto nao e escolha: os CDB continuam batendo ao centavo com o Gorila
-   * SEM a regra, medido no mesmo dia em dois papeis liquidados com taxa diferente de zero
-   * (IPCA+5,60% 10/08/2026, P&L R$ 1.303,94, e IPCA+0,00% 15/12/2025, P&L R$ 894,21).
-   * Aplicar a regra a todos quebraria os que ja batiam.
-   */
-  rendeNoDiaDaCompra?: boolean;
   /** Pre-computed CDI map (data -> taxa_anual) to avoid rebuilding per product */
   precomputedCdiMap?: Map<string, number>;
   /** If true, skip sorting calendario (already sorted) */
@@ -298,7 +276,7 @@ function findDayBefore(dataInicio: string, calendario: EngineInput["calendario"]
 // ── Main engine ──
 
 export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
-  const { dataInicio, dataCalculo, taxa, modalidade, puInicial, calendario, movimentacoes, dataResgateTotal, pagamento, vencimento, indexador, cdiRecords, dataLimite, precomputedCdiMap, calendarioSorted, ipcaFatores, rendeNoDiaDaCompra } = input;
+  const { dataInicio, dataCalculo, taxa, modalidade, puInicial, calendario, movimentacoes, dataResgateTotal, pagamento, vencimento, indexador, cdiRecords, dataLimite, precomputedCdiMap, calendarioSorted, ipcaFatores } = input;
 
   const cotaInicial = puInicial > 0 ? puInicial : 1000;
   const rawMultiplicador = getMultiplicador(modalidade, taxa);
@@ -382,11 +360,14 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     }
 
     const isDataInicio = cal.data === dataInicio;
-    // O dia da compra rende? Em debenture, CRI e CRA sim; em CDB e afins nao.
-    // `entradaSeca` e quem suprime o rendimento do primeiro dia - nao mais o `isDataInicio`,
-    // que continua marcando apenas "o dia em que o dinheiro entra".
-    const entradaRende = isDataInicio && !!rendeNoDiaDaCompra;
-    const entradaSeca = isDataInicio && !rendeNoDiaDaCompra;
+    // O dia da compra NAO rende, em produto nenhum: o papel rende a partir do dia util seguinte.
+    //
+    // Em 06/09/2026 pareceu que debenture, CRI e CRA rendiam no dia da compra (COMGAS GASP15,
+    // IPCA+7,80%, 14/06 a 15/12/2023: Gorila R$ 7.541,12, XP R$ 7.541,08, nosso R$ 7.493,89), e o
+    // motor ganhou essa regra. A diferenca era o calendario: 20/11/2023 estava marcado como feriado,
+    // e a Consciencia Negra so virou feriado nacional em 2024. Com o dia util corrigido (09/09/2026)
+    // a regra passou a contar um dia a mais (R$ 7.588,38); sem ela, R$ 7.541,13. Saiu em 13/09/2026.
+    const entradaSeca = isDataInicio;
     const isVencimentoDay = !!vencimento && cal.data === vencimento;
     const isResgateTotalDay = !!dataResgateTotal && cal.data === dataResgateTotal;
     const isFinalDay = isVencimentoDay || isResgateTotalDay;
@@ -447,25 +428,10 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
 
     const multiplicadorDia = dailyMult;
 
-    /**
-     * Multiplicador do DIA DA COMPRA, quando o papel rende nesse dia.
-     *
-     * So o JURO, sem a correcao do indice: o VNA daquele dia ja esta embutido no PU que o
-     * comprador pagou, e cobra-lo de novo contaria a inflacao duas vezes. O que ele ganha
-     * por carregar o papel no dia e o spread negociado.
-     *
-     * Medido na COMGAS: com juro + IPCA no dia da compra o P&L ia a R$ 7.557,68, R$ 16,56
-     * acima do Gorila. So com o juro, R$ 7.541,13 contra R$ 7.541,12 dele.
-     */
-    const multEntrada = isMistaIPCA ? mistaSpreadFactor - 1 : dailyMult;
-
     // R: Apoio para o cupom automático
     let apoioCupom: number;
     if (entradaSeca) {
       apoioCupom = aplicacoes;
-    } else if (entradaRende) {
-      // A propria aplicacao ja rende o fator do dia.
-      apoioCupom = aplicacoes * (1 + multEntrada);
     } else {
       apoioCupom = prevLiquido * (1 + dailyMult) + aplicacoes;
     }
@@ -482,8 +448,6 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     const isNoVencimentoFinal = pagamento === "No Vencimento" && isFinalDay;
     if (entradaSeca) {
       precoUnitario = puInicialCustodia;
-    } else if (entradaRende) {
-      precoUnitario = puInicialCustodia * (1 + multEntrada);
     } else if (!diaUtil) {
       precoUnitario = prevPrecoUnitario;
     } else if (isPagamento || isNoVencimentoFinal) {
@@ -586,9 +550,7 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
 
     // E: Líquido (1) — subtract both resgates and jurosPago
     let liquido1: number;
-    if (entradaRende) {
-      liquido1 = aplicacoes * (1 + multEntrada) - resgatesTotal - jurosPago;
-    } else if (isDataInicio) {
+    if (isDataInicio) {
       // No caso normal o primeiro dia so tem a aplicacao, e os dois outros termos sao zero.
       // Eles importam quando a serie COMECA num resgate - o que acontece se a data da
       // aplicacao for editada para depois dele (ver `inicioDaSerie` no syncEngine). Antes o
@@ -691,8 +653,6 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
     let puJurosPeriodicos: number;
     if (entradaSeca) {
       puJurosPeriodicos = puInicialCustodia;
-    } else if (entradaRende) {
-      puJurosPeriodicos = puInicialCustodia * (1 + multEntrada);
     } else if (!diaUtil) {
       puJurosPeriodicos = prevPuJurosPeriodicos;
     } else if (isPagamento && effectiveDataLimite && cal.data !== effectiveDataLimite) {

@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { calcularRendaFixaDiario, permiteVendaNoSecundario, DailyRow } from "@/lib/rendaFixaEngine";
+import { calcularRendaFixaDiario, DailyRow } from "@/lib/rendaFixaEngine";
 import { carregarSeriesIpca, fatoresIpcaDoTitulo, algumIndexadoAoIpca, type SeriesIpca, pisoDoCalendario } from "@/lib/ipcaSeries";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
@@ -333,8 +333,6 @@ export function useCarteiraRF() {
           dataCalculo: dataFim > global ? global : dataFim,
           taxa: product.taxa || 0,
           modalidade: product.modalidade || "",
-          // Debenture, CRI e CRA rendem no proprio dia da compra.
-          rendeNoDiaDaCompra: permiteVendaNoSecundario(product.produto_nome),
           puInicial: product.preco_unitario || 1000,
           calendario,
           movimentacoes: movByCodigo.get(product.codigo_custodia) || [],

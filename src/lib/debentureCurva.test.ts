@@ -32,7 +32,9 @@ import { pisoDoCalendario, FOLGA_CICLO_IPCA_DIAS } from "./ipcaSeries";
 const FERIADOS_2023 = new Set([
   "2023-01-01", "2023-02-20", "2023-02-21", "2023-04-07", "2023-04-21",
   "2023-05-01", "2023-06-08", "2023-09-07", "2023-10-12", "2023-11-02",
-  "2023-11-15", "2023-11-20", "2023-12-25",
+  // 20/11/2023 NAO e feriado: a Consciencia Negra so virou feriado nacional em 2024. Com ele aqui,
+  // o teste pedia a regra falsa do "rende no dia da compra" para bater com o Gorila (13/09/2026).
+  "2023-11-15", "2023-12-25",
 ]);
 
 function calendario(de: string, ate: string) {
@@ -108,8 +110,6 @@ function rodar(dataCalculo: string, opcoes: { pagamento?: string } = {}) {
     vencimento: VENCIMENTO,
     pagamento: opcoes.pagamento ?? "No Vencimento",
     ipcaFatores,
-    // Debenture: rende no proprio dia da compra (128 dias uteis, nao 127).
-    rendeNoDiaDaCompra: true,
   });
 }
 
@@ -156,6 +156,11 @@ describe("COMGAS DEZ 2023 na curva", () => {
     // A posicao e zerada no vencimento, e o P&L e preservado.
     expect(fim.liquido).toBeCloseTo(0, 2);
     expect(fim.ganhoAcumulado).toBeCloseTo(valorNoVencimento - VALOR, 2);
+
+    // O numero do Gorila (R$ 7.541,12) e do extrato da XP (R$ 7.541,08), com o calendario certo e
+    // sem render no dia da compra. Os 128 dias uteis sao (14/06, 15/12] com 20/11/2023 util.
+    expect(du).toBe(128);
+    expect(fim.ganhoAcumulado).toBeCloseTo(7541.13, 2);
   });
 
   it("a curva sobe sem solavanco ate a vespera", () => {
@@ -194,15 +199,14 @@ describe("COMGAS DEZ 2023 na curva", () => {
 });
 
 /**
- * Guarda do recorte por produto.
+ * Guarda do recorte por produto da venda no mercado secundario.
  *
- * O motor so aplica a regra dos 128 dias uteis quando o chamador liga `rendeNoDiaDaCompra`,
- * e quem decide isso e `permiteVendaNoSecundario(nome do produto)`. Se um nome do banco
- * deixar de casar com a lista - acento perdido, plural mudado - o flag chega falso e o papel
- * volta silenciosamente para 127 dias, sem erro de tipo e sem teste vermelho em nenhum outro
- * lugar. Por isso os nomes abaixo sao os EXATOS de invest.produtos.
+ * `permiteVendaNoSecundario(nome do produto)` libera o valor digitado no fechamento de posicao
+ * (a venda sai a preco de mercado, nao pela curva). Se um nome do banco deixar de casar com a
+ * lista - acento perdido, plural mudado - o flag chega falso em silencio. Por isso os nomes abaixo
+ * sao os EXATOS de invest.produtos.
  */
-describe("quais produtos rendem no dia da compra", () => {
+describe("quais produtos tem venda no secundario", () => {
   it("os tres negociaveis, com o nome exato do banco", () => {
     for (const nome of ["Debêntures", "CRI", "CRA"]) {
       expect(permiteVendaNoSecundario(nome)).toBe(true);
