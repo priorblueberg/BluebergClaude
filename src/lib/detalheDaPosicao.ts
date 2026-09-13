@@ -19,6 +19,8 @@ import type { PontoRentabilidade } from "@/components/HistoricoRentabilidadeChar
 import { dataGlobalEfetiva, encerramentoDoFundoPeloSaldo, fimDoProduto, ultimaDataAte } from "@/lib/periodo";
 import { calcularCarteiraRendaFixa } from "@/lib/carteiraRendaFixaEngine";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
+import type { PosicaoDetalheData } from "@/components/PosicaoDetalheDialog";
+import type { AlertaSemCota } from "@/lib/alertaDeFundo";
 
 /** Dados da posição na data de referência. */
 export interface DadosDaPosicao {
@@ -259,5 +261,89 @@ export function montarGraficoETabela(e: {
     grafico: [...pontos.values()].sort((a, b) => a.data.localeCompare(b.data)),
     cdiAcumuladoPct: cdiSerie.length ? cdiSerie[cdiSerie.length - 1].cdi_acumulado : null,
     tabela: tabelaDeRentabilidade(naJanela, cdiSerie),
+  };
+}
+
+/** O cadastro da posição que a gaveta usa: o tipo, a data de início e os termos. */
+export interface CadastroDaPosicao {
+  codigo_custodia: string;
+  data_inicio: string;
+  categoria_id: string;
+  categoria_nome: string;
+  fundo_id: string | null;
+  moeda: string | null;
+  acao_id: string | null;
+  fundoCnpj: string | null;
+  indexador: string | null;
+  taxa: number | null;
+  modalidade: string | null;
+  pagamento: string | null;
+  emissor_nome: string | null;
+  vencimento: string | null;
+}
+
+/** A linha da posição na lâmina: os números dela e as linhas diárias do motor. */
+export interface LinhaDaPosicao {
+  nome: string;
+  valorAtualizado: number;
+  ganhoFinanceiro: number;
+  rentabilidade: number;
+  custodiante: string;
+  ativo: boolean;
+  dados: DadosDaPosicao;
+  /** Fim do período do produto (`src/lib/periodo.ts`). */
+  fim: string | null;
+  alertaSemCota: AlertaSemCota | null;
+  linhas: DailyRow[];
+}
+
+/**
+ * Os dados da gaveta de detalhes a partir da linha da lâmina. É a mesma conta na Posição Consolidada
+ * e em todas as lâminas de carteira: o período é o da linha, e o CDI, o gráfico e a tabela param no
+ * fim dele.
+ */
+export function montarDetalheDaPosicao(
+  p: CadastroDaPosicao,
+  row: LinhaDaPosicao,
+  ctx: {
+    calendario: { data: string; dia_util: boolean }[];
+    cdiRecords: CdiRecord[];
+    ibovespa: PontoIbovespa[];
+    dataGlobal: string;
+  },
+): PosicaoDetalheData {
+  const tipo = p.fundo_id ? "fundo" : p.moeda ? "moeda" : p.acao_id ? "acao" : p.categoria_nome === "Renda Fixa" ? "renda_fixa" : "outro";
+  const inicio = p.data_inicio;
+  const fim = row.fim ?? ctx.dataGlobal;
+  const { grafico, cdiAcumuladoPct, tabela } = montarGraficoETabela({
+    serie: serieDoProduto(row.linhas, ctx.calendario, inicio, fim),
+    cdiRecords: ctx.cdiRecords, ibovespa: ctx.ibovespa, inicio, fim,
+  });
+
+  return {
+    tipo,
+    nome: row.nome,
+    cnpj: p.fundoCnpj ?? null,
+    instituicao: row.custodiante || null,
+    // Posicao de fundo encerrada: a linha ja termina no encerramento (`useCarteiraFundos`).
+    encerradaEm: tipo === "fundo" && !row.ativo ? row.fim ?? null : null,
+    alertaSemCota: row.alertaSemCota,
+    valorAtualizado: row.valorAtualizado,
+    pnl: row.ganhoFinanceiro,
+    rentabilidadePct: row.rentabilidade,
+    cdiAcumuladoPct,
+    ultimoPreco: row.dados.ultimoPreco,
+    dataUltimoPreco: row.dados.dataUltimoPreco,
+    grafico,
+    tabelaRentabilidade: tabela,
+    dataInicio: p.data_inicio,
+    codigoCustodia: p.codigo_custodia,
+    categoriaId: p.categoria_id,
+    indexador: p.indexador,
+    taxa: p.taxa,
+    modalidade: p.modalidade,
+    pagamento: p.pagamento,
+    emissor: p.emissor_nome,
+    vencimento: p.vencimento,
   };
 }

@@ -9,7 +9,7 @@ import { useIbovespa } from "@/hooks/useIbovespa";
 import { useCarteiraInvestimentos } from "@/hooks/useCarteiraInvestimentos";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
 import LinguetaDeData from "@/components/LinguetaDeData";
-import { SEM_DADOS, montarGraficoETabela, serieDoProduto, type DadosDaPosicao } from "@/lib/detalheDaPosicao";
+import { SEM_DADOS, montarDetalheDaPosicao, type DadosDaPosicao } from "@/lib/detalheDaPosicao";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
 import { PaginaCabecalho, BarraDeFiltros, Contagem, TabelaCartao, LinhaMensagem } from "@/components/PaginaPadrao";
 import { Input } from "@/components/ui/input";
@@ -277,46 +277,9 @@ export default function PosicaoConsolidadaPage() {
     setDeleteRow(null);
   }
 
+  // A mesma conta da gaveta aberta pelas laminas de carteira (`montarDetalheDaPosicao`).
   function getDetalheData(row: PosicaoRow): PosicaoDetalheData {
-    const p = row.product;
-    const tipo = p.fundo_id ? "fundo" : p.moeda ? "moeda" : p.acao_id ? "acao" : p.categoria_nome === "Renda Fixa" ? "renda_fixa" : "outro";
-    const dados = row.dados;
-
-    // Periodo da posicao, o mesmo da linha da lamina (`src/lib/periodo.ts`): CDI, grafico e tabela
-    // param no fim dele.
-    const inicio = p.data_inicio;
-    const fim = row.fim ?? periodo.dataGlobal;
-    const { grafico, cdiAcumuladoPct, tabela } = montarGraficoETabela({
-      serie: serieDoProduto(row.linhas, calendario, inicio, fim),
-      cdiRecords, ibovespa, inicio, fim,
-    });
-
-    return {
-      tipo,
-      nome: row.nome,
-      cnpj: p.fundoCnpj ?? null,
-      instituicao: row.custodiante || null,
-      // Posicao de fundo encerrada: a linha ja termina no encerramento (`useCarteiraFundos`).
-      encerradaEm: tipo === "fundo" && !row.ativo ? row.fim ?? null : null,
-      alertaSemCota: row.alertaSemCota,
-      valorAtualizado: row.valorAtualizado,
-      pnl: row.ganhoFinanceiro,
-      rentabilidadePct: row.rentabilidade,
-      cdiAcumuladoPct,
-      ultimoPreco: dados.ultimoPreco,
-      dataUltimoPreco: dados.dataUltimoPreco,
-      grafico,
-      tabelaRentabilidade: tabela,
-      dataInicio: p.data_inicio,
-      codigoCustodia: p.codigo_custodia,
-      categoriaId: p.categoria_id,
-      indexador: p.indexador,
-      taxa: p.taxa,
-      modalidade: p.modalidade,
-      pagamento: p.pagamento,
-      emissor: p.emissor_nome,
-      vencimento: p.vencimento,
-    };
+    return montarDetalheDaPosicao(row.product, row, { calendario, cdiRecords, ibovespa, dataGlobal: periodo.dataGlobal });
   }
 
   const detalheData = useMemo(

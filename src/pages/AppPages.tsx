@@ -1,76 +1,38 @@
 import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { useCarteiraInvestimentos } from "@/hooks/useCarteiraInvestimentos";
-import { HistoricoRentabilidadeChart } from "@/components/HistoricoRentabilidadeChart";
-import { buildCdiSeries, buildIbovespaSeries } from "@/lib/cdiCalculations";
 import { calcularAlocacaoPorGrupo } from "@/lib/alocacaoPorGrupo";
-import RentabilidadeDetailTable from "@/components/RentabilidadeDetailTable";
-import AlocacaoBloco from "@/components/AlocacaoBloco";
-import PatrimonioChart, { serieDePatrimonio } from "@/components/PatrimonioChart";
+import CarteiraCategoriaView, { type LinhaCarteira } from "@/components/CarteiraCategoriaView";
 import { useBoleta } from "@/contexts/BoletaContext";
-import LinguetaDeData from "@/components/LinguetaDeData";
 
+/** O dashboard de cada carteira, aberto pelo clique na linha dela. */
+const ROTA_DA_CARTEIRA: Record<string, string> = {
+  "Renda Fixa": "/carteira/renda-fixa",
+  "Fundos de Investimentos": "/carteira/fundos",
+  "Moedas": "/carteira/moedas",
+  "Renda Variável": "/carteira/renda-variavel",
+  "Tesouro Direto": "/carteira/tesouro-direto",
+};
 
-
-
-const fmtBrlValue = (v: number | null) =>
-  v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
-const fmtPctValue = (v: number | null) => (v != null ? `${v.toFixed(2)}%` : "—");
-
-
-
+/**
+ * Carteira de Investimentos, no modelo de todas as carteiras (Daniel, 13/09/2026). A exceção é a lista:
+ * em vez das posições, uma linha por carteira com o total dela, e o clique abre o dashboard da carteira.
+ */
 export const CarteiraVisaoGeral = () => {
+  const navigate = useNavigate();
   const { abrirBoleta } = useBoleta();
   const { dataReferenciaISO } = useDataReferencia();
 
   // A carteira de Investimentos é montada num lugar só, junto com a Posição Consolidada: as
   // quatro carteiras por categoria somadas pelo mesmo motor (`useCarteiraInvestimentos`).
   const {
-    carteiraInfo, notFound, loading: carregando, productList, allProductRows, calendario, periodo,
-    periodoPorCategoria, carteiraRows, detailRows, resumo, cdiRecords, ibovespaData, allCustodiaForCategoria,
+    carteiraInfo, notFound, loading, productList, allProductRows, calendario, periodo,
+    periodoPorCategoria, carteiraRows, cdiRecords, allCustodiaForCategoria,
   } = useCarteiraInvestimentos();
 
-  const chartData = useMemo(() => {
-    if (!carteiraInfo?.data_inicio || carteiraRows.length === 0) return [];
-
-    const cdiSeries = buildCdiSeries(cdiRecords, carteiraInfo.data_inicio, carteiraInfo.data_calculo ?? undefined);
-
-    const map = new Map<string, any>();
-    for (const p of cdiSeries) {
-      map.set(p.data, { data: p.data, label: p.label, cdi_acumulado: p.cdi_acumulado });
-    }
-
-    for (const r of carteiraRows) {
-      // So dia util no grafico: o motor de carteira emite linha todo dia do calendario, e
-      // fim de semana virava ponto repetido.
-      if (!r.diaUtil) continue;
-      if (r.liquido <= 0 && r.liquido2 <= 0) continue;
-      const label = new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR");
-      const existing = map.get(r.data) || { data: r.data, label };
-      existing.carteira_acumulado = parseFloat((r.rentAcumuladaPct * 100).toFixed(4));
-      map.set(r.data, existing);
-    }
-
-    const ibov = buildIbovespaSeries(ibovespaData, carteiraInfo.data_inicio, carteiraInfo.data_calculo ?? undefined);
-    for (const [data, valor] of ibov) {
-      const label = new Date(data + "T00:00:00").toLocaleDateString("pt-BR");
-      const existing = map.get(data) || { data, label };
-      existing.ibovespa_acumulado = valor;
-      map.set(data, existing);
-    }
-
-    return Array.from(map.values()).sort((a: any, b: any) => a.data.localeCompare(b.data));
-  }, [carteiraRows, cdiRecords, ibovespaData, carteiraInfo]);
-
-  /** Evolução do patrimônio (líquido) até a data de referência. */
-  const patrimonioChartData = useMemo(
-    () => serieDePatrimonio(carteiraRows, dataReferenciaISO),
-    [carteiraRows, dataReferenciaISO],
-  );
-
-  /** Cada grupo passa pelo mesmo motor de carteira, para a rentabilidade da
-   *  linha ser comparável com a do card (time-weighted, não ganho/capital). */
-  const alocacaoCategoria = useMemo(() => {
+  /** Cada carteira passa pelo mesmo motor, para a rentabilidade da linha ser comparável com a do card. */
+  const porCarteira = useMemo(() => {
     if (!carteiraInfo?.data_inicio || !carteiraInfo?.data_calculo || calendario.length === 0) return [];
 
     const gruposIdx = new Map<string, number[]>();
@@ -100,49 +62,12 @@ export const CarteiraVisaoGeral = () => {
       extras: Array.from(extrasMap, ([nome, patrimonio]) => ({ nome, patrimonio })),
       // Cada categoria é uma carteira e termina no fim dela, não no da carteira de Investimentos.
       periodoPorGrupo: periodoPorCategoria,
+      manterEncerrados: true,
     });
   }, [productList, allProductRows, allCustodiaForCategoria, calendario, cdiRecords, carteiraInfo, dataReferenciaISO,
     periodoPorCategoria]);
 
-  const fmtDate = (d: string | null) =>
-    d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
-
-  const renderStatusMessage = () => {
-    if (!carteiraInfo) return null;
-    if (carteiraInfo.status === "Ativa") {
-      return (
-        <p className="text-sm text-muted-foreground mt-1">
-          Período de Análise: De {fmtDate(carteiraInfo.data_inicio)} a {fmtDate(carteiraInfo.data_calculo)}
-          <LinguetaDeData data={periodo.lingueta} dataGlobal={periodo.dataGlobal} />
-        </p>
-      );
-    }
-    if (carteiraInfo.status === "Não Iniciada") {
-      return (
-        <p className="text-sm text-muted-foreground mt-1">
-          Data selecionada anterior ao início dos seus investimentos. Início em {fmtDate(carteiraInfo.data_inicio)}
-        </p>
-      );
-    }
-    if (carteiraInfo.status === "Encerrada") {
-      return (
-        <p className="text-sm text-muted-foreground mt-1">
-          Carteira Encerrada em {fmtDate(carteiraInfo.data_calculo)}
-        </p>
-      );
-    }
-    return null;
-  };
-
-  if (carregando) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <p className="text-muted-foreground">Carregando...</p>
-      </div>
-    );
-  }
-
-  if (notFound) {
+  if (!loading && notFound) {
     return (
       <div className="space-y-6">
         <div>
@@ -161,72 +86,37 @@ export const CarteiraVisaoGeral = () => {
     );
   }
 
-  const showContent = carteiraInfo?.status === "Ativa" || carteiraInfo?.status === "Encerrada";
-  const dataLabel = fmtDate(carteiraInfo?.data_calculo ?? null);
-
-  const summaryCards = [
-    { label: "Patrimônio", value: fmtBrlValue(resumo.patrimonio) },
-    { label: "Ganho Financeiro", value: fmtBrlValue(resumo.ganho) },
-    { label: "Rentabilidade", value: fmtPctValue(resumo.rent) },
-    { label: "CDI Acumulado", value: fmtPctValue(resumo.cdiAcum) },
-    { label: "% do CDI", value: fmtPctValue(resumo.sobreCdi) },
-  ];
+  const linhas: LinhaCarteira[] = porCarteira.map((l) => ({
+    chave: l.nome,
+    nome: l.nome,
+    custodiante: "",
+    patrimonio: l.patrimonio,
+    ganho: l.ganhoFinanceiro,
+    rentabilidade: l.rentabilidade,
+    ativo: l.patrimonio > 0.005,
+    lingueta: l.lingueta ?? null,
+  }));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold text-foreground">Carteira de Investimentos</h1>
-        {renderStatusMessage()}
-      </div>
-
-      {showContent && (
-        <>
-          {/* Summary Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            {summaryCards.map((item) => (
-              <div
-                key={item.label}
-                className="rounded-lg border border-border bg-card p-4 shadow-sm hover:shadow-md transition-shadow"
-              >
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  {item.label}
-                </p>
-                <p className="mt-2 text-lg font-bold text-foreground">{item.value}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Gráficos lado a lado: rentabilidade (metade) + patrimônio */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <HistoricoRentabilidadeChart
-              dados={chartData}
-              chaveSerie="carteira_acumulado"
-              rotuloSerie="Investimentos"
-            />
-
-            <PatrimonioChart dados={patrimonioChartData} />
-          </div>
-
-          {/* Tabela de rentabilidade: mesmo layout das demais lâminas, com anos anteriores */}
-          <RentabilidadeDetailTable rows={detailRows} tituloLabel="Investimentos" />
-
-          {/* O bloco por Instituicao saiu daqui e vive agora na Posicao Consolidada. */}
-          <AlocacaoBloco
-            titulo="Posição Consolidada por Categoria"
-            colunaLabel="Categoria"
-            linhas={alocacaoCategoria}
-            totalPatrimonio={alocacaoCategoria.reduce((s, l) => s + l.patrimonio, 0)}
-            totalGanho={resumo.ganho}
-            totalRent={resumo.rent}
-            totalCdi={resumo.cdiAcum}
-            totalSobreCdi={resumo.sobreCdi}
-            dataLabel={dataLabel}
-            linguetaTotal={periodo.lingueta}
-            dataGlobal={periodo.dataGlobal}
-          />
-        </>
-      )}
-    </div>
+    <CarteiraCategoriaView
+      titulo="Carteira de Investimentos"
+      labelSerie="Investimentos"
+      labelColuna="Carteira"
+      tituloTabela="Posição Consolidada por Carteira"
+      carteiraInfo={carteiraInfo}
+      periodo={periodo}
+      carteiraRows={carteiraRows}
+      allProductRows={allProductRows}
+      cdiRecords={cdiRecords}
+      linhas={linhas}
+      loading={loading}
+      mensagemVazio="Nenhuma carteira com posição na data selecionada."
+      mostrarCustodiante={false}
+      onClicarLinha={(chave) => {
+        const rota = ROTA_DA_CARTEIRA[chave];
+        if (rota) navigate(rota);
+      }}
+    />
   );
 };
 

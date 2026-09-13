@@ -41,6 +41,11 @@ interface Params {
    * do período (`src/lib/periodo.ts`) aplicada um nível acima.
    */
   periodoPorGrupo?: Map<string, PeriodoDaCarteira>;
+  /**
+   * Mantém o grupo que teve posição no período e terminou sem patrimônio. A lista de carteiras da
+   * carteira de Investimentos mostra a carteira encerrada, com o ganho dela; a alocação não precisa.
+   */
+  manterEncerrados?: boolean;
 }
 
 export function calcularAlocacaoPorGrupo({
@@ -53,8 +58,10 @@ export function calcularAlocacaoPorGrupo({
   dataReferencia,
   extras = [],
   periodoPorGrupo,
+  manterEncerrados = false,
 }: Params): GrupoMetricas[] {
   const linhas: GrupoMetricas[] = [];
+  const tiveramPosicao = new Set<string>();
 
   for (const [nome, indices] of gruposIdx) {
     const productRows = indices.map(i => allProductRows[i]).filter(Boolean);
@@ -82,6 +89,7 @@ export function calcularAlocacaoPorGrupo({
     // CDI do período em que o grupo teve posição — um grupo que começou depois
     // não deve ser comparado com o CDI da carteira inteira.
     const primeiraComPosicao = rows.find(r => r.liquido > 0 || r.liquido2 > 0);
+    if (primeiraComPosicao) tiveramPosicao.add(nome);
     const inicioGrupo = primeiraComPosicao ? primeiraComPosicao.data : dataInicio;
     const cdiSerie = buildCdiSeries(cdiRecords, inicioGrupo, fimDoGrupo);
     const cdiAcumulado = cdiSerie.length > 0 ? cdiSerie[cdiSerie.length - 1].cdi_acumulado : null;
@@ -119,6 +127,6 @@ export function calcularAlocacaoPorGrupo({
   const total = linhas.reduce((s, l) => s + l.patrimonio, 0);
   return linhas
     .map(l => ({ ...l, alocacao: total > 0 ? (l.patrimonio / total) * 100 : 0 }))
-    .filter(l => l.patrimonio > 0)
+    .filter(l => l.patrimonio > 0 || (manterEncerrados && tiveramPosicao.has(l.nome)))
     .sort((a, b) => b.patrimonio - a.patrimonio);
 }

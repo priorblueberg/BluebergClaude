@@ -96,8 +96,8 @@ const fmtPct = (v: number | null) =>
  * MESMO do dashboard (Patrimônio, Ganho Financeiro, Rentabilidade, CDI Acumulado, % do CDI);
  * gráfico de rentabilidade; tabela de rentabilidade por ano; histórico paginado.
  *
- * Abre na Posição Consolidada e na lâmina de Fundos de Investimentos, com os mesmos números
- * (a conta está em `lib/detalheDaPosicao`).
+ * Abre na Posição Consolidada e nas lâminas de Renda Fixa, Fundos, Moedas e Ações, com os mesmos
+ * números (a conta está em `lib/detalheDaPosicao`).
  *
  * A gaveta não fecha ao clicar fora dela: com ela aberta o cliente usa o header (cadastrar
  * transação, trocar a data), e a boleta, o calendário e os menus do header abrem em camadas

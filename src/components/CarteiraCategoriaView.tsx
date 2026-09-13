@@ -24,8 +24,9 @@ export interface LinhaCarteira {
   alerta?: ReactNode;
   custodiante: string;
   patrimonio: number;
-  ganho: number;
-  rentabilidade: number;
+  /** null quando a linha nao tem motor (so o valor em custodia). */
+  ganho: number | null;
+  rentabilidade: number | null;
   ativo: boolean;
   /** Fim do periodo do produto quando ele termina antes da data global (lingueta cinza). */
   lingueta?: string | null;
@@ -47,8 +48,13 @@ interface Props {
   loading: boolean;
   mensagemVazio: string;
   nota?: string;
-  /** Clique na linha: abre o detalhe da posição (a chave é o código de custódia). */
+  /**
+   * Clique na linha. Nas carteiras abre a gaveta da posição (a chave é o código de custódia); na de
+   * Investimentos abre o dashboard da carteira da linha.
+   */
   onClicarLinha?: (chave: string) => void;
+  /** false na lista de carteiras, que não tem custodiante. */
+  mostrarCustodiante?: boolean;
 }
 
 const fmtBrl = (v: number | null) =>
@@ -59,17 +65,18 @@ const fmtData = (d: string | null) =>
 
 
 /**
- * Lâmina de uma categoria com motor próprio (Fundos, Moedas).
+ * O modelo de dashboard de TODAS as carteiras (Daniel, 13/09/2026): Investimentos, Renda Fixa,
+ * Fundos, Moedas e Ações. Cards, rentabilidade contra o CDI, patrimônio, tabela mensal e a lista.
  *
- * Mesma estrutura da lâmina Investimentos: cards, rentabilidade contra o CDI,
- * patrimônio, tabela mensal e a lista de posições. Fica num componente só para
- * as categorias não virarem cópias da mesma tela, que foi como as telas do
- * projeto já divergiram antes.
+ * Nas carteiras a lista é de posições e o clique abre a gaveta de detalhes. Na de Investimentos a
+ * lista é das carteiras, com o total de cada uma, e o clique abre o dashboard dela.
+ *
+ * Fica num componente só para as telas não virarem cópias, que foi como elas já divergiram antes.
  */
 export default function CarteiraCategoriaView({
   titulo, labelSerie, labelColuna, tituloTabela,
   carteiraInfo, periodo, carteiraRows, allProductRows, cdiRecords, linhas, loading,
-  mensagemVazio, nota, onClicarLinha,
+  mensagemVazio, nota, onClicarLinha, mostrarCustodiante = true,
 }: Props) {
   const { dataReferenciaISO } = useDataReferencia();
   const [mostrarEncerrados, setMostrarEncerrados] = useState(true);
@@ -202,7 +209,7 @@ export default function CarteiraCategoriaView({
             <TableHeader>
               <TableRow>
                 <TableHead>{labelColuna}</TableHead>
-                <TableHead>Custodiante</TableHead>
+                {mostrarCustodiante && <TableHead>Custodiante</TableHead>}
                 <TableHead className="text-right">Patrimônio</TableHead>
                 <TableHead className="text-right">Ganho Financeiro</TableHead>
                 <TableHead className="text-right">Rentabilidade</TableHead>
@@ -223,7 +230,9 @@ export default function CarteiraCategoriaView({
                     </span>
                     {l.detalhe && <span className="block text-xs text-muted-foreground">{l.detalhe}</span>}
                   </TableCell>
-                  <TableCell className="max-w-[220px] truncate text-muted-foreground">{l.custodiante}</TableCell>
+                  {mostrarCustodiante && (
+                    <TableCell className="max-w-[220px] truncate text-muted-foreground">{l.custodiante}</TableCell>
+                  )}
                   <TableCell className="text-right">{fmtBrl(l.patrimonio)}</TableCell>
                   <TableCell className="text-right">{fmtBrl(l.ganho)}</TableCell>
                   <TableCell className="text-right">{fmtPct(l.rentabilidade)}</TableCell>
