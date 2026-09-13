@@ -14,10 +14,10 @@ interface EntidadeSelectProps {
   value: string;
   /** Recebe o id e o nome, porque a boleta monta o nome do ativo com eles. */
   onChange: (id: string, nome: string) => void;
-  /** Titulo do modal e texto do botao de cadastro, ex.: "Cadastrar Novo Emissor". */
-  tituloCadastro: string;
-  /** Rotulo do campo do modal, ex.: "Nome do Emissor". */
-  labelCadastro: string;
+  /** Titulo do modal e texto do botao de cadastro, ex.: "Cadastrar Nova Corretora". Emissor nao tem cadastro. */
+  tituloCadastro?: string;
+  /** Rotulo do campo do modal, ex.: "Nome da Corretora". */
+  labelCadastro?: string;
   placeholder?: string;
   disabled?: boolean;
   hasError?: boolean;
@@ -48,7 +48,10 @@ function baseQuery(tipo: TipoEntidade) {
  * Campo de pesquisa sobre as tabelas de dimensao do Blueberg (~1,6 mil nomes da
  * lista de instituicoes autorizadas do Banco Central + o que o proprio usuario
  * cadastrou). A busca e server-side: carregar a tabela inteira a cada abertura da
- * boleta seria desperdicio. Quando nao acha nada, oferece o cadastro.
+ * boleta seria desperdicio.
+ *
+ * Emissor (Daniel, 13/09/2026): a lista so aparece depois que o cliente digita, e nao ha cadastro de
+ * emissor novo. Instituicao continua abrindo com as da custodia e, sem resultado, oferece o cadastro.
  */
 export default function EntidadeSelect({
   tipo,
@@ -69,6 +72,9 @@ export default function EntidadeSelect({
   /** Instituicoes em que o cliente ja tem custodia (portfolio em uso). null = ainda nao lidas. */
   const [daCustodia, setDaCustodia] = useState<Entidade[] | null>(null);
   const mostrandoDaCustodia = tipo === "instituicao" && !search.trim() && !!daCustodia?.length;
+  /** Emissor nao sugere nada antes da digitacao. */
+  const aguardandoDigitacao = tipo === "emissor" && !search.trim();
+  const permiteCadastro = tipo !== "emissor" && !!tituloCadastro;
   const ref = useRef<HTMLDivElement>(null);
 
   // Resolve o rotulo do id ja selecionado (ex.: boleta carregada de uma custodia
@@ -123,6 +129,11 @@ export default function EntidadeSelect({
   // Busca com debounce enquanto o dropdown esta aberto.
   useEffect(() => {
     if (!open) return;
+    if (aguardandoDigitacao) {
+      setOptions([]);
+      setBuscando(false);
+      return;
+    }
     if (mostrandoDaCustodia) {
       setOptions(daCustodia!);
       setBuscando(false);
@@ -149,7 +160,7 @@ export default function EntidadeSelect({
       cancelado = true;
       clearTimeout(timer);
     };
-  }, [search, open, tipo, mostrandoDaCustodia, daCustodia]);
+  }, [search, open, tipo, mostrandoDaCustodia, daCustodia, aguardandoDigitacao]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -205,7 +216,7 @@ export default function EntidadeSelect({
         )}
       </div>
 
-      {open && (
+      {open && !aguardandoDigitacao && (
         <div className="absolute z-50 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-border bg-popover shadow-md">
           {buscando && (
             <div className="px-3 py-2 text-sm text-muted-foreground">Buscando...</div>
@@ -233,32 +244,36 @@ export default function EntidadeSelect({
 
           {!buscando && options.length === 0 && (
             <div className="px-3 py-2">
-              <p className="text-sm text-muted-foreground mb-2">Nenhum resultado encontrado</p>
-              <button
-                type="button"
-                onClick={() => {
-                  setModalOpen(true);
-                  setOpen(false);
-                }}
-                className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-              >
-                <PlusCircle className="h-3.5 w-3.5" />
-                {tituloCadastro}
-              </button>
+              <p className={`text-sm text-muted-foreground ${permiteCadastro ? "mb-2" : ""}`}>Nenhum resultado encontrado</p>
+              {permiteCadastro && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModalOpen(true);
+                    setOpen(false);
+                  }}
+                  className="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                >
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  {tituloCadastro}
+                </button>
+              )}
             </div>
           )}
         </div>
       )}
 
-      <CadastrarEntidadeModal
-        tipo={tipo}
-        open={modalOpen}
-        onOpenChange={setModalOpen}
-        nomeInicial={search}
-        titulo={tituloCadastro}
-        labelCampo={labelCadastro}
-        onCriado={(entidade) => handleSelect(entidade)}
-      />
+      {permiteCadastro && (
+        <CadastrarEntidadeModal
+          tipo={tipo}
+          open={modalOpen}
+          onOpenChange={setModalOpen}
+          nomeInicial={search}
+          titulo={tituloCadastro!}
+          labelCampo={labelCadastro ?? ""}
+          onCriado={(entidade) => handleSelect(entidade)}
+        />
+      )}
     </div>
   );
 }

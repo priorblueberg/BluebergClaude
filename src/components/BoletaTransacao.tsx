@@ -22,7 +22,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import EntidadeSelect from "@/components/EntidadeSelect";
 import FundoSelect from "@/components/FundoSelect";
-import TituloEmCustodiaSelect, { type TituloEmCustodia } from "@/components/TituloEmCustodiaSelect";
 import { MOEDAS } from "@/lib/catalogoDeMoedas";
 import AcaoSelect from "@/components/AcaoSelect";
 import { fetchAllRows } from "@/lib/fetchAllRows";
@@ -221,15 +220,12 @@ export default function BoletaTransacao({
   const [nomeAtivoEmEdicao, setNomeAtivoEmEdicao] = useState("");
   /** Codigo de custodia da movimentacao em edicao, para propagar o nome ao papel inteiro. */
   const [codigoCustodiaEmEdicao, setCodigoCustodiaEmEdicao] = useState<string | null>(null);
-  /** Titulo do cadastro compartilhado. Na aplicacao inicial fica vazio e e resolvido pelos termos digitados. */
-  const [tituloId, setTituloId] = useState("");
   /**
-   * "Aplicação Adicional" (Daniel, 13/09/2026). Marcada, o cliente escolhe um titulo que ja tem em
-   * custodia e os termos vem dele, travados. Desmarcada e aplicacao inicial: os termos sao digitados.
+   * Titulo do cadastro compartilhado. Na aplicacao fica vazio e e resolvido pelos termos digitados; o
+   * mesmo titulo na mesma corretora cai na custodia que ja existe. A "Aplicação Adicional" saiu em
+   * 13/09/2026 e volta de outra forma (Daniel).
    */
-  const [aplicacaoAdicional, setAplicacaoAdicional] = useState(false);
-  const [titulosEmCustodia, setTitulosEmCustodia] = useState<TituloEmCustodia[]>([]);
-  const [codigoAdicional, setCodigoAdicional] = useState("");
+  const [tituloId, setTituloId] = useState("");
   // Fundos
   const [fundos, setFundos] = useState<{ id: string; nome: string; cnpj: string }[]>([]);
   const [fundoId, setFundoId] = useState("");
@@ -376,19 +372,6 @@ export default function BoletaTransacao({
       return true;
     });
   }, [custodiaItems, data, dataEhDiaUtil, resgateDateError]);
-
-  /**
-   * Titulos que aceitam aplicacao adicional: ja aplicados, nao vencidos e nao encerrados na data da
-   * aplicacao. Sem data digitada, vale a data de hoje da ferramenta. Lista vazia esconde o check.
-   */
-  const titulosParaAdicional = useMemo(() => {
-    const ref = data || maxDataISO;
-    return titulosEmCustodia.filter((t) =>
-      (!data || t.data_inicio <= data)
-      && (!t.vencimento || t.vencimento > ref)
-      && (!t.resgate_total || t.resgate_total > ref));
-  }, [titulosEmCustodia, data, maxDataISO]);
-  const posicaoAdicional = titulosEmCustodia.find((t) => t.codigo_custodia === codigoAdicional) ?? null;
   // Etapa 1 do destravamento: a categoria escolhida já tem fluxo próprio na boleta?
   const categoriaImplementada = !categoriaSelecionada || CATEGORIAS_IMPLEMENTADAS.includes(categoriaSelecionada.nome);
 
@@ -534,47 +517,6 @@ export default function BoletaTransacao({
         if (data) setCustodiaItems(data as CustodiaItem[]);
       });
   }, [isResgate, ehSaidaRF, categoriaId, user]);
-
-  // Titulos do produto que o cliente tem em custodia, para a "Aplicação Adicional". Os termos vem do
-  // cadastro do titulo; as colunas da custodia so cobrem papel antigo sem titulo vinculado.
-  useEffect(() => {
-    if (!isRendaFixa || !isAplicacao || isPoupanca || isEditing || !produtoId || !user) {
-      setTitulosEmCustodia([]);
-      return;
-    }
-    let vivo = true;
-    supabase
-      .from("custodia")
-      .select("codigo_custodia, nome, titulo_id, data_inicio, vencimento, resgate_total, modalidade, indexador, taxa, pagamento, preco_unitario, instituicao_id, emissor_id, instituicoes(nome), emissores(nome), cadastro_de_titulos(modalidade, indexador, taxa, vencimento, pagamento, preco_emissao)")
-      .eq("user_id", user.id)
-      .eq("produto_id", produtoId)
-      .not("codigo_custodia", "is", null)
-      .order("nome")
-      .then(({ data: linhas }) => {
-        if (!vivo) return;
-        setTitulosEmCustodia(((linhas ?? []) as any[]).map((c) => {
-          const t = c.cadastro_de_titulos;
-          return {
-            codigo_custodia: String(c.codigo_custodia),
-            nome: c.nome ?? "",
-            titulo_id: c.titulo_id ?? null,
-            data_inicio: c.data_inicio,
-            vencimento: t?.vencimento ?? c.vencimento ?? null,
-            resgate_total: c.resgate_total ?? null,
-            modalidade: t?.modalidade ?? c.modalidade ?? "",
-            indexador: t?.indexador ?? c.indexador ?? null,
-            taxa: t?.taxa != null ? Number(t.taxa) : c.taxa != null ? Number(c.taxa) : null,
-            pagamento: t?.pagamento ?? c.pagamento ?? "No Vencimento",
-            preco_emissao: t?.preco_emissao != null ? Number(t.preco_emissao) : c.preco_unitario != null ? Number(c.preco_unitario) : null,
-            instituicao_id: c.instituicao_id ?? null,
-            instituicao_nome: c.instituicoes?.nome ?? null,
-            emissor_id: c.emissor_id ?? null,
-            emissor_nome: c.emissores?.nome ?? null,
-          };
-        }));
-      });
-    return () => { vivo = false; };
-  }, [isRendaFixa, isAplicacao, isPoupanca, isEditing, produtoId, user]);
 
   // Auto-fill fields when custodia item selected
   useEffect(() => {
@@ -968,7 +910,7 @@ export default function BoletaTransacao({
    * 102% do CDI com vencimento em 31/12/2029, quem define isso foi o banco - o cliente so
    * decide quando e quanto aplicar.
    */
-  const travarTermosDoPapel = (isEditing && isRendaFixa && isAplicacao) || (!isEditing && aplicacaoAdicional);
+  const travarTermosDoPapel = isEditing && isRendaFixa && isAplicacao;
   const showResgateFields = showTipoMovimentacao && isRendaFixa && isResgate && !isEditing;
   const showFundoFields = isFundo && !!tipoMovimentacao;
 
@@ -1156,42 +1098,9 @@ export default function BoletaTransacao({
   const showAcaoFields = isAcao && !!tipoMovimentacao;
   const showPoupancaFields = isPoupanca && isAplicacao;
 
-  /** Limpa os termos do papel: os que vieram de um titulo em custodia ou os que seriam trocados por ele. */
-  const limparTermosDoTitulo = () => {
-    setCodigoAdicional("");
-    setTituloId("");
-    setInstituicaoId(""); setInstituicaoNome("");
-    setEmissorId(""); setEmissorNome("");
-    setModalidade(""); setIndexador(""); setTaxa("");
-    setVencimento(""); setPagamento("No Vencimento");
-    setPrecoUnitario("1.000,00");
-  };
-
-  const selecionarTituloEmCustodia = (t: TituloEmCustodia) => {
-    // O cadastro grava "Mista" + indice; a boleta mostra "Pós Fixado" + "CDI+" ou "IPCA+".
-    const posFixado = t.modalidade === "Mista" || t.modalidade === "Pós Fixado" || t.modalidade === "Pos Fixado";
-    setCodigoAdicional(t.codigo_custodia);
-    setTituloId(t.titulo_id ?? "");
-    setInstituicaoId(t.instituicao_id ?? ""); setInstituicaoNome(t.instituicao_nome ?? "");
-    setEmissorId(t.emissor_id ?? ""); setEmissorNome(t.emissor_nome ?? "");
-    setModalidade(posFixado ? "Pós Fixado" : t.modalidade);
-    setIndexador(t.modalidade === "Mista" ? (t.indexador === "IPCA" ? "IPCA+" : "CDI+") : posFixado ? (t.indexador ?? "CDI") : "");
-    setTaxa(t.taxa != null ? String(t.taxa).replace(".", ",") : "");
-    setVencimento(t.vencimento ?? "");
-    setPagamento(t.pagamento || "No Vencimento");
-    if (t.preco_emissao) setPrecoUnitario(formatCurrency(Math.round(t.preco_emissao * 100).toString()));
-    setValidationErrors((prev) => {
-      const n = new Set(prev);
-      for (const k of ["tituloId", "instituicaoId", "emissorId", "modalidade", "indexador", "taxa", "vencimento", "pagamento"]) n.delete(k);
-      return n;
-    });
-  };
-
   const resetForm = () => {
     setCategoriaId("");
     setTituloId("");
-    setAplicacaoAdicional(false);
-    setCodigoAdicional("");
     setProdutoId("");
     setTipoMovimentacao("");
     setData("");
@@ -1821,8 +1730,6 @@ Confirma que o preço está certo?`,
         categoriaId, tipoMovimentacao, produtoId, valor, data, precoUnitario,
         instituicaoId, emissorId, modalidade, taxa, pagamento, vencimento,
       };
-      // Aplicação Adicional: o titulo em custodia e obrigatorio, porque os termos vem dele.
-      if (!isEditing && aplicacaoAdicional && !codigoAdicional) requiredFields.tituloId = "";
       if (isPosFixado) {
         requiredFields.indexador = indexador;
       }
@@ -1849,19 +1756,6 @@ Confirma que o preço está certo?`,
       toast.error("O vencimento deve ser posterior à Data de Transação.");
       return;
     }
-
-    // A data pode ter mudado depois de escolher o titulo.
-    if (!isEditing && aplicacaoAdicional && posicaoAdicional) {
-      if (data < posicaoAdicional.data_inicio) {
-        toast.error(`A aplicação adicional não pode ser anterior à aplicação inicial do título, em ${fmtData(posicaoAdicional.data_inicio)}.`);
-        return;
-      }
-      if (posicaoAdicional.resgate_total && posicaoAdicional.resgate_total <= data) {
-        toast.error(`Este título foi encerrado em ${fmtData(posicaoAdicional.resgate_total)}.`);
-        return;
-      }
-    }
-
     // Validate business day AFTER required fields check
     if (!isPoupanca) {
       const { data: diaUtil } = await supabase
@@ -1890,10 +1784,7 @@ Confirma que o preço está certo?`,
       if (isPoupanca) {
         nomeAtivo = `Poupança ${instituicaoNome}`.trim();
       } else if (isRendaFixa) {
-        // Na adicional o nome e o da posicao: e o mesmo papel, e as linhas nao ganham dois nomes.
-        nomeAtivo = !isEditing && aplicacaoAdicional && posicaoAdicional?.nome
-          ? posicaoAdicional.nome
-          : buildNomeAtivo(produtoNome, emissorNome, modalidade, taxa, vencimento, indexador);
+        nomeAtivo = buildNomeAtivo(produtoNome, emissorNome, modalidade, taxa, vencimento, indexador);
       } else {
         nomeAtivo = null;
       }
@@ -1962,10 +1853,7 @@ Confirma que o preço está certo?`,
         let codigoCustodia: string;
         let tipoFinal = tipoMovimentacao;
 
-        if (aplicacaoAdicional && posicaoAdicional) {
-          // Aplicação Adicional: vai direto para a posicao escolhida.
-          codigoCustodia = posicaoAdicional.codigo_custodia;
-        } else if (nomeAtivo) {
+        if (nomeAtivo) {
           // O nome do ativo NAO carrega o custodiante, entao o mesmo titulo
           // comprado em duas corretoras caia na mesma posicao. A instituicao
           // entra na busca para as duas ficarem separadas.
@@ -2202,7 +2090,6 @@ Confirma que o preço está certo?`,
                 setTipoMovimentacao("");
                 setProdutoId("");
                 setSelectedCustodiaId("");
-                if (aplicacaoAdicional) { setAplicacaoAdicional(false); limparTermosDoTitulo(); }
               }}
               placeholder="Selecione uma categoria"
               disabled={isEditing}
@@ -2221,7 +2108,6 @@ Confirma que o preço está certo?`,
                   setTipoMovimentacao(v);
                   // Don't reset produtoId for Poupança (auto-selected, single product)
                   if (!isPoupanca) setProdutoId("");
-                  if (aplicacaoAdicional) { setAplicacaoAdicional(false); limparTermosDoTitulo(); }
                   setSelectedCustodiaId("");
                   setValor("");
                   setSaldoDisponivel(null);
@@ -2532,11 +2418,7 @@ Confirma que o preço está certo?`,
             <Field label="Produto" required>
               <NativeSelect
                 value={produtoId}
-                onChange={(v) => {
-                  setProdutoId(v);
-                  // Os termos travados eram de um titulo do produto anterior.
-                  if (aplicacaoAdicional) { setAplicacaoAdicional(false); limparTermosDoTitulo(); }
-                }}
+                onChange={setProdutoId}
                 placeholder="Selecione"
                 disabled={isEditing}
                 options={produtos.map((p) => ({
@@ -2545,35 +2427,6 @@ Confirma que o preço está certo?`,
                 }))}
               />
             </Field>
-
-            {/* Aplicação Adicional (Daniel, 13/09/2026): so aparece se o cliente ja tem titulo deste
-                produto em custodia. Desmarcada e aplicacao inicial, e os termos sao digitados abaixo. */}
-            {!!produtoId && !isEditing && (aplicacaoAdicional || titulosParaAdicional.length > 0) && (
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="aplicacao-adicional-rf"
-                  checked={aplicacaoAdicional}
-                  onCheckedChange={(c) => {
-                    setAplicacaoAdicional(!!c);
-                    limparTermosDoTitulo();
-                  }}
-                />
-                <label htmlFor="aplicacao-adicional-rf" className="cursor-pointer text-sm font-medium text-foreground">
-                  Aplicação Adicional
-                </label>
-              </div>
-            )}
-
-            {!!produtoId && !isEditing && aplicacaoAdicional && (
-              <Field label="Título" required>
-                <TituloEmCustodiaSelect
-                  titulos={titulosParaAdicional}
-                  selecionado={posicaoAdicional}
-                  onSelecionar={selecionarTituloEmCustodia}
-                  hasError={validationErrors.has("tituloId")}
-                />
-              </Field>
-            )}
 
             {showAplicacaoFields && (
               <>
@@ -2655,7 +2508,6 @@ Confirma que o preço está certo?`,
                       labelCadastro="Nome da Corretora"
                       placeholder="Pesquisar corretora..."
                       hasError={validationErrors.has("instituicaoId")}
-                      disabled={!isEditing && aplicacaoAdicional}
                     />
                   </Field>
 
@@ -2664,8 +2516,6 @@ Confirma que o preço está certo?`,
                       tipo="emissor"
                       value={emissorId}
                       onChange={(id, nome) => { setEmissorId(id); setEmissorNome(nome); setValidationErrors((prev) => { const n = new Set(prev); n.delete("emissorId"); return n; }); }}
-                      tituloCadastro="Cadastrar Novo Emissor"
-                      labelCadastro="Nome do Emissor"
                       placeholder="Pesquisar emissor..."
                       hasError={validationErrors.has("emissorId")}
                       disabled={travarTermosDoPapel}
