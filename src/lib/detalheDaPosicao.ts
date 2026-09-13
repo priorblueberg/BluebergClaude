@@ -264,6 +264,41 @@ export function montarGraficoETabela(e: {
   };
 }
 
+/**
+ * % do CDI de uma posição: a rentabilidade dela sobre o CDI do início ao fim do período, a mesma conta
+ * da gaveta. Com todas as casas; quem exibe arredonda.
+ */
+export function percentualDoCdiDaPosicao(
+  rentabilidadePct: number,
+  inicio: string,
+  fim: string,
+  cdiRecords: CdiRecord[],
+): number | null {
+  const serie = buildCdiSeries(cdiRecords, inicio, fim);
+  const cdi = serie.length ? serie[serie.length - 1].cdi_acumulado : null;
+  return cdi != null && cdi > 0 ? (rentabilidadePct / cdi) * 100 : null;
+}
+
+/** % do CDI de cada linha de uma lâmina de carteira, pelo código de custódia (Daniel, 13/09/2026). */
+export function percentualDoCdiPorCodigo(
+  lista: {
+    rentabilidade: number;
+    fim?: string | null;
+    analysisProduct: { codigo_custodia: string | number; data_inicio: string };
+  }[],
+  cdiRecords: CdiRecord[],
+  dataGlobal: string,
+): Map<string, number | null> {
+  const mapa = new Map<string, number | null>();
+  for (const item of lista) {
+    mapa.set(
+      String(item.analysisProduct.codigo_custodia),
+      percentualDoCdiDaPosicao(item.rentabilidade, item.analysisProduct.data_inicio, item.fim ?? dataGlobal, cdiRecords),
+    );
+  }
+  return mapa;
+}
+
 /** O cadastro da posição que a gaveta usa: o tipo, a data de início e os termos. */
 export interface CadastroDaPosicao {
   codigo_custodia: string;

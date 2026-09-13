@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { percentualDoCdiPorCodigo } from "@/lib/detalheDaPosicao";
 import { useCarteiraFundos } from "@/hooks/useCarteiraFundos";
 import CarteiraCategoriaView, { type LinhaCarteira } from "@/components/CarteiraCategoriaView";
 import PosicaoDetalheDialog from "@/components/PosicaoDetalheDialog";
@@ -15,8 +16,15 @@ export default function CarteiraFundosPage() {
   const [codigoAberto, setCodigoAberto] = useState<string | null>(null);
   const { detalhe } = useDetalheDeFundo(codigoAberto);
 
+  // A mesma conta do % do CDI da gaveta: a rentabilidade do fundo sobre o CDI do periodo dele.
+  const sobreCdi = useMemo(
+    () => percentualDoCdiPorCodigo(productList, cdiRecords, periodo?.dataGlobal ?? dataReferenciaISO),
+    [productList, cdiRecords, periodo, dataReferenciaISO],
+  );
+
   const linhas: LinhaCarteira[] = productList.filter((p) => p.existiuNaJanela !== false).map((p) => ({
     chave: String(p.analysisProduct.codigo_custodia),
+    sobreCdi: sobreCdi.get(String(p.analysisProduct.codigo_custodia)) ?? null,
     nome: p.nome,
     detalhe: null,
     // Fundo sem cota da CVM: "!" ao lado do nome, com encerrar ou migrar (Daniel, 12/09/2026).

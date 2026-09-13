@@ -93,7 +93,7 @@ const fmtPct = (v: number | null) =>
 /**
  * Detalhes da posição, na gaveta lateral (modelo do Gorila, com os ajustes do Daniel em
  * 11/09/2026): começa pelo nome do ativo com a última cota divulgada logo abaixo; o resumo é o
- * MESMO do dashboard (Patrimônio, Ganho Financeiro, Rentabilidade, CDI Acumulado, % do CDI);
+ * MESMO do dashboard (Patrimônio, Ganho Financeiro, Rentabilidade, % do CDI);
  * gráfico de rentabilidade; tabela de rentabilidade por ano; histórico paginado.
  *
  * Abre na Posição Consolidada e nas lâminas de Renda Fixa, Fundos, Moedas e Ações, com os mesmos
@@ -218,7 +218,6 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
     { rotulo: "Patrimônio", valor: fmtBrl(data.valorAtualizado) },
     { rotulo: "Ganho Financeiro", valor: fmtBrl(data.pnl) },
     { rotulo: "Rentabilidade", valor: fmtPct(data.rentabilidadePct) },
-    { rotulo: "CDI Acumulado", valor: fmtPct(data.cdiAcumuladoPct) },
     { rotulo: "% do CDI", valor: fmtPct(sobreCdi) },
   ];
 
@@ -283,7 +282,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
             </div>
 
             {/* Resumo: os cartoes do dashboard */}
-            <div className="grid grid-cols-5 gap-3">
+            <div className="grid grid-cols-4 gap-3">
               {resumo.map((item) => (
                 <div key={item.rotulo} className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-sm">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.rotulo}</p>

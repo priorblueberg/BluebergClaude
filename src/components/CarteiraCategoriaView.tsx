@@ -27,6 +27,8 @@ export interface LinhaCarteira {
   /** null quando a linha nao tem motor (so o valor em custodia). */
   ganho: number | null;
   rentabilidade: number | null;
+  /** % do CDI no período da linha, com todas as casas. */
+  sobreCdi?: number | null;
   ativo: boolean;
   /** Fim do periodo do produto quando ele termina antes da data global (lingueta cinza). */
   lingueta?: string | null;
@@ -159,7 +161,7 @@ export default function CarteiraCategoriaView({
     { label: "Patrimônio", value: fmtBrl(resumo.patrimonio) },
     { label: "Ganho Financeiro", value: fmtBrl(resumo.ganho) },
     { label: "Rentabilidade", value: fmtPct(resumo.rent) },
-    { label: "CDI Acumulado", value: fmtPct(resumo.cdiAcum) },
+    // Sem o card "CDI Acumulado" (Daniel, 13/09/2026): o % do CDI ja compara com ele.
     { label: "% do CDI", value: fmtPct(resumo.sobreCdi) },
   ];
 
@@ -173,7 +175,7 @@ export default function CarteiraCategoriaView({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((c) => (
           <div key={c.label} className="rounded-lg border border-border bg-card p-4 shadow-sm">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{c.label}</p>
@@ -213,6 +215,7 @@ export default function CarteiraCategoriaView({
                 <TableHead className="text-right">Patrimônio</TableHead>
                 <TableHead className="text-right">Ganho Financeiro</TableHead>
                 <TableHead className="text-right">Rentabilidade</TableHead>
+                <TableHead className="text-right">% do CDI</TableHead>
                 <TableHead className="text-center">Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -236,6 +239,7 @@ export default function CarteiraCategoriaView({
                   <TableCell className="text-right">{fmtBrl(l.patrimonio)}</TableCell>
                   <TableCell className="text-right">{fmtBrl(l.ganho)}</TableCell>
                   <TableCell className="text-right">{fmtPct(l.rentabilidade)}</TableCell>
+                  <TableCell className="text-right">{fmtPct(l.sobreCdi ?? null)}</TableCell>
                   <TableCell className="whitespace-nowrap text-center">
                     <Badge variant={l.ativo ? "default" : "secondary"}>{l.ativo ? "Ativo" : "Encerrado"}</Badge>
                     <LinguetaDeData data={l.lingueta} dataGlobal={periodo?.dataGlobal} />

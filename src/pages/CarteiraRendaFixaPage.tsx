@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { percentualDoCdiPorCodigo } from "@/lib/detalheDaPosicao";
 import { useCarteiraRF } from "@/hooks/useCarteiraRF";
 import CarteiraCategoriaView, { type LinhaCarteira } from "@/components/CarteiraCategoriaView";
 import PosicaoDetalheDialog from "@/components/PosicaoDetalheDialog";
@@ -20,6 +21,11 @@ export default function CarteiraRendaFixaPage() {
     dataGlobal: periodo?.dataGlobal ?? dataReferenciaISO,
   });
 
+  const sobreCdi = useMemo(
+    () => percentualDoCdiPorCodigo(productList, cdiRecords, periodo?.dataGlobal ?? dataReferenciaISO),
+    [productList, cdiRecords, periodo, dataReferenciaISO],
+  );
+
   const linhas: LinhaCarteira[] = productList.filter((p) => p.existiuNaJanela !== false).map((p) => ({
     chave: String(p.analysisProduct.codigo_custodia),
     nome: p.nome,
@@ -28,6 +34,7 @@ export default function CarteiraRendaFixaPage() {
     patrimonio: p.valorAtualizado,
     ganho: p.ganhoFinanceiro,
     rentabilidade: p.rentabilidade,
+    sobreCdi: sobreCdi.get(String(p.analysisProduct.codigo_custodia)) ?? null,
     ativo: p.ativo,
     lingueta: p.lingueta,
   }));

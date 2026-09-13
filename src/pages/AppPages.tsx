@@ -93,6 +93,7 @@ export const CarteiraVisaoGeral = () => {
     patrimonio: l.patrimonio,
     ganho: l.ganhoFinanceiro,
     rentabilidade: l.rentabilidade,
+    sobreCdi: l.sobreCdi,
     ativo: l.patrimonio > 0.005,
     lingueta: l.lingueta ?? null,
   }));
