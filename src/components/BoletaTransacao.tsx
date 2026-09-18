@@ -1042,6 +1042,7 @@ export default function BoletaTransacao({
   const preenchidoRef = useRef(false);
   useEffect(() => {
     if (!preenchimento || preenchidoRef.current || categorias.length === 0) return;
+    if (preenchimento.tipo !== "encerrar_fundo") return;
     const categoriaFundos = categorias.find((c) => c.nome === "Fundos de Investimentos");
     if (!categoriaFundos) return;
     preenchidoRef.current = true;
@@ -1051,6 +1052,59 @@ export default function BoletaTransacao({
     setData(preenchimento.data);
     setFecharPosicaoFundo(true);
   }, [preenchimento, categorias]);
+
+  /**
+   * "Nova operação" no detalhe da posição (Daniel, 18/09/2026): a boleta abre apontada para o
+   * ativo que está sendo consultado, porque a negociação é dele - compra adicional ou venda.
+   *
+   * Categoria, ativo e instituição saem da propria `custodia`, e nao de campos trazidos pela
+   * tela: assim a boleta nunca abre com dado diferente do que esta gravado. O tipo fica em
+   * branco de proposito; comprar e vender sao caminhos opostos e escolher por quem abriu seria
+   * arriscar uma venda lancada como compra.
+   */
+  useEffect(() => {
+    if (!preenchimento || preenchidoRef.current || categorias.length === 0 || !user) return;
+    if (preenchimento.tipo !== "negociar_posicao") return;
+    let vivo = true;
+    (async () => {
+      const { data: pos } = await supabase
+        .from("custodia")
+        .select("categoria_id, acao_id, instituicao_id")
+        .eq("codigo_custodia", preenchimento.codigoCustodia)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!vivo || !pos) return;
+      preenchidoRef.current = true;
+      setCategoriaId(pos.categoria_id);
+
+      if (pos.acao_id) {
+        const { data: acao } = await supabase
+          .from("cadastro_de_acoes")
+          .select("id, ticker, nome, deslistado_em")
+          .eq("id", pos.acao_id)
+          .maybeSingle();
+        if (vivo && acao) {
+          setAcaoId(acao.id);
+          setAcaoTicker(acao.ticker);
+          setAcaoNome(acao.nome);
+          setAcaoDeslistadoEm(acao.deslistado_em ?? null);
+        }
+      }
+
+      if (pos.instituicao_id) {
+        const { data: inst } = await supabase
+          .from("instituicoes")
+          .select("id, nome")
+          .eq("id", pos.instituicao_id)
+          .maybeSingle();
+        if (vivo && inst) {
+          setInstituicaoId(inst.id);
+          setInstituicaoNome(inst.nome);
+        }
+      }
+    })();
+    return () => { vivo = false; };
+  }, [preenchimento, categorias, user]);
 
   /**
    * Validacao da data de fundo, embaixo do campo (pedido do Daniel, 11/09/2026): data invalida, antes

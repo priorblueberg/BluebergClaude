@@ -25,13 +25,25 @@ import type { AlertaSemCota } from "@/lib/alertaDeFundo";
  */
 
 /** Boleta aberta ja preenchida por outra tela. */
-export type PreenchimentoDaBoleta = {
-  /** "!" do fundo sem cota: resgate com "Fechar Posição" na data da ultima cota. */
-  tipo: "encerrar_fundo";
-  fundoId: string;
-  codigoCustodia: string;
-  data: string;
-};
+export type PreenchimentoDaBoleta =
+  | {
+      /** "!" do fundo sem cota: resgate com "Fechar Posição" na data da ultima cota. */
+      tipo: "encerrar_fundo";
+      fundoId: string;
+      codigoCustodia: string;
+      data: string;
+    }
+  | {
+      /**
+       * "Nova operação" no detalhe da posição (Daniel, 18/09/2026): a boleta abre já apontada
+       * para o ativo em custódia, porque a negociação é dele. Só o código da posição vai daqui;
+       * categoria, ativo e instituição a boleta lê da própria `custodia`, para não depender de
+       * campos propagados por telas diferentes e não divergir do que está gravado.
+       * O tipo (Compra ou Venda) fica em branco: quem abre é que escolhe.
+       */
+      tipo: "negociar_posicao";
+      codigoCustodia: string;
+    };
 
 interface BoletaContextType {
   /** Abre a boleta. Com `editId`, em modo de edicao daquela movimentacao; com `preenchimento`, ja preenchida. */

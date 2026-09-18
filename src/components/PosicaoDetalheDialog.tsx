@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useBoleta } from "@/contexts/BoletaContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Pencil, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -30,6 +30,8 @@ interface Movimentacao {
   tipo_movimentacao: string;
   valor: number;
   preco_unitario: number | null;
+  /** Quantidade negociada. Em renda variável é a coluna que o extrato mostra. */
+  quantidade: number | null;
   origem: string;
 }
 
@@ -87,6 +89,9 @@ const fmtBrl = (v: number | null) =>
 const fmtPreco = (v: number | null) =>
   v == null ? "—" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 2, maximumFractionDigits: 8 });
 const fmtData = (d: string | null) => (d ? new Date(d + "T12:00:00").toLocaleDateString("pt-BR") : "—");
+/** Quantidade sem casas quando é inteira (ações), com até 8 quando é fracionada. */
+const fmtQtd = (v: number | null) =>
+  v == null ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 8 });
 const fmtPct = (v: number | null) =>
   v == null ? "—" : `${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 
@@ -107,6 +112,8 @@ const fmtPct = (v: number | null) =>
  */
 export default function PosicaoDetalheDialog({ open, onClose, data, userId, dataReferenciaISO, onDataChanged }: Props) {
   const { abrirBoleta } = useBoleta();
+  /** Ação é o único tipo com quantidade no extrato e com boleta de compra e venda. */
+  const ehRendaVariavel = data.tipo === "acao";
   const [movs, setMovs] = useState<Movimentacao[]>([]);
   const [loading, setLoading] = useState(false);
   const [deleteId, setDeleteId] = useState<Movimentacao | null>(null);
@@ -126,7 +133,7 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
     setLoading(true);
     const { data: rows } = await supabase
       .from("movimentacoes")
-      .select("id, data, tipo_movimentacao, valor, preco_unitario, origem, created_at")
+      .select("id, data, tipo_movimentacao, valor, quantidade, preco_unitario, origem, created_at")
       .eq("codigo_custodia", data.codigoCustodia)
       .eq("user_id", userId)
       .order("data", { ascending: false })
@@ -312,7 +319,25 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
 
             {/* Historico */}
             <section className="space-y-2">
-              <h6 className="text-sm font-bold text-foreground">Histórico</h6>
+              {/*
+                Em renda variável o histórico ganha a quantidade e um botão de nova operação
+                (Daniel, 18/09/2026): quem está olhando a posição e resolve comprar mais ou
+                vender não deveria sair da tela e procurar o ativo de novo na boleta.
+              */}
+              <div className="flex items-center justify-between gap-2">
+                <h6 className="text-sm font-bold text-foreground">Histórico</h6>
+                {ehRendaVariavel && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 gap-1 text-xs"
+                    onClick={() => abrirBoleta(null, { tipo: "negociar_posicao", codigoCustodia: data.codigoCustodia })}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Nova Operação
+                  </Button>
+                )}
+              </div>
               {loading ? (
                 <p className="text-sm text-muted-foreground py-4">Carregando...</p>
               ) : movs.length === 0 ? (
@@ -325,7 +350,9 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                         <TableRow>
                           <TableHead className="text-xs">Data</TableHead>
                           <TableHead className="text-xs">Tipo</TableHead>
-                          <TableHead className="text-xs text-right">Valor da Cota</TableHead>
+                          {ehRendaVariavel && <TableHead className="text-xs text-right">Quantidade</TableHead>}
+                          {/* "Valor da Cota" é o vocabulário de fundo; em ação o que existe é preço. */}
+                          <TableHead className="text-xs text-right">{ehRendaVariavel ? "Preço" : "Valor da Cota"}</TableHead>
                           <TableHead className="text-xs text-right">Valor total</TableHead>
                           <TableHead className="w-[72px]" />
                         </TableRow>
@@ -337,6 +364,9 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                             <TableRow key={m.id}>
                               <TableCell className="whitespace-nowrap text-sm">{fmtData(m.data)}</TableCell>
                               <TableCell className="whitespace-nowrap text-sm">{m.tipo_movimentacao}</TableCell>
+                              {ehRendaVariavel && (
+                                <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtQtd(m.quantidade)}</TableCell>
+                              )}
                               <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtPreco(m.preco_unitario)}</TableCell>
                               <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtBrl(m.valor)}</TableCell>
                               <TableCell className="text-right">
