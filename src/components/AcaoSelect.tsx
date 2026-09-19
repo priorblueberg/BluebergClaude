@@ -213,7 +213,6 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
             <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum papel encontrado.</p>
           )}
           {!buscando && sugestoes.map((a) => {
-            const jaTem = carregadas.some((c) => c.ticker === a.ticker);
             return (
               <button
                 key={a.id}
@@ -229,11 +228,12 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
                     deslistado
                   </span>
                 )}
-                {carregandoPapel === a.ticker ? (
+                {/* So o estado de carga aparece. O "carregar" do lado do nome saiu em 19/09/2026
+                    (Daniel): ele dizia respeito a como a ferramenta trabalha por dentro, nao a
+                    escolha que quem esta boletando tem de fazer - o clique e o mesmo nos dois casos. */}
+                {carregandoPapel === a.ticker && (
                   <span className="ml-auto shrink-0 text-xs text-muted-foreground">carregando...</span>
-                ) : !jaTem ? (
-                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">carregar</span>
-                ) : null}
+                )}
               </button>
             );
           })}
