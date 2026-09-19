@@ -44,25 +44,6 @@ export function ultimoAte(serie: { data: string; valor: number }[], ate: string)
   return achado;
 }
 
-/**
- * Ultimo valor investido com posicao viva na janela, ou null.
- *
- * Serve de base para o dividend yield de uma posicao ja encerrada: depois da venda o custo e zero,
- * mas o provento do periodo veio do capital que estava ali antes dela.
- */
-export function ultimoCustoComPosicao(
-  linhas: { data: string; valorInvestido: number }[],
-  inicio: string,
-  fim: string,
-): number | null {
-  let achado: number | null = null;
-  for (const l of linhas) {
-    if (l.data < inicio || l.data > fim) continue;
-    if (l.valorInvestido > 0) achado = l.valorInvestido;
-  }
-  return achado;
-}
-
 /** Dados da posicao com preco e quantidade. Preco medio como no Gorila: valor investido / quantidade. */
 export function dadosDaPosicao(
   valorInvestido: number,
@@ -399,16 +380,6 @@ export function montarDetalheDaPosicao(
      *
      * Posição zerada não tem base para a conta, e vira travessão.
      */
-    dividendYield: (() => {
-      if (row.proventos == null) return null;
-      // Posicao encerrada tem valor investido ZERO hoje e mesmo assim recebeu provento enquanto
-      // existiu. A base e o ultimo custo com posicao viva no periodo - o capital que gerou aquele
-      // provento -, e nao o zero de depois da venda.
-      const base = row.dados.valorInvestido && row.dados.valorInvestido > 0
-        ? row.dados.valorInvestido
-        : ultimoCustoComPosicao(row.linhas, inicio, fim);
-      return base != null && base > 0 ? (row.proventos / base) * 100 : null;
-    })(),
     instituicao: row.custodiante || null,
     dataFim: fim,
     // Posicao de fundo encerrada: a linha ja termina no encerramento (`useCarteiraFundos`).

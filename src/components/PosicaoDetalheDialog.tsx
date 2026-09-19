@@ -52,9 +52,8 @@ export interface PosicaoDetalheData {
   valorInvestido?: number | null;
   quantidade?: number | null;
   precoMedio?: number | null;
+  /** Proventos recebidos no período, em reais. */
   proventos?: number | null;
-  /** Provento do período sobre o valor investido, em %. */
-  dividendYield?: number | null;
   /** Dia do encerramento da posição de fundo, quando encerrada: substitui a última cota. */
   encerradaEm?: string | null;
   /** Fundo sem cota da CVM: "!" ao lado do nome, com encerrar ou migrar. */
@@ -350,7 +349,10 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                   { rotulo: "Valor Investido", valor: fmtBrl(data.valorInvestido ?? null) },
                   { rotulo: "Quantidade", valor: fmtQtd(data.quantidade ?? null) },
                   { rotulo: "Preço Médio", valor: fmtPreco(data.precoMedio ?? null) },
-                  { rotulo: "Dividend Yield", valor: fmtPct(data.dividendYield ?? null) },
+                  // Provento em REAIS, e nao o dividend yield (Daniel, 19/09/2026): o yield sobre
+                  // a janela de analise nao e anualizado, entao nao se compara nem com o CDI nem
+                  // com outro papel - mede sem informar. O valor recebido e fato.
+                  { rotulo: "Proventos", valor: fmtBrl(data.proventos ?? null) },
                 ].map((item) => (
                   <div key={item.rotulo} className="min-w-0">
                     <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
