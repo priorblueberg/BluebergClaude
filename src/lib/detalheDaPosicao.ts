@@ -315,8 +315,14 @@ export interface CadastroDaPosicao {
   pagamento: string | null;
   emissor_nome: string | null;
   vencimento: string | null;
-  /** Razao social da empresa, em acao: vem do `cadastro_de_acoes`, nao da tabela de emissores. */
-  acaoNome?: string | null;
+  /**
+   * Razao social da empresa, em acao: vem do `cadastro_de_acoes`, nao da tabela de emissores.
+   *
+   * OBRIGATORIO, aceitando `null`, pela mesma razao dos campos de `LinhaDaPosicao`: quando era
+   * opcional, a gaveta aberta pela Posicao Consolidada mostrava o codigo do ativo sem a razao
+   * social e nada avisava - aquele caminho monta o cadastro por outra consulta.
+   */
+  acaoNome: string | null;
 }
 
 /**
@@ -382,7 +388,7 @@ export function montarDetalheDaPosicao(
     // Em acao o `emissor_nome` do cadastro e a razao social da empresa (`useCarteiraAcoes` grava
     // `nomeEmpresa` ali). Ela vai abaixo do codigo do ativo (Daniel, 19/09/2026), e nao na linha
     // de termos de renda fixa, que a acao nao tem.
-    razaoSocial: tipo === "acao" ? p.acaoNome ?? null : null,
+    razaoSocial: tipo === "acao" ? p.acaoNome : null,
     valorInvestido: row.dados.valorInvestido,
     quantidade: row.dados.quantidade,
     precoMedio: row.dados.precoMedio,

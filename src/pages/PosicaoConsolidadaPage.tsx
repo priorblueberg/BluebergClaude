@@ -56,6 +56,8 @@ interface CustodiaProduct {
   moeda: string | null;
   acao_id: string | null;
   fundoCnpj: string | null;
+  /** Razao social da empresa, em acao. Obrigatoria: ver `CadastroDaPosicao`. */
+  acaoNome: string | null;
 }
 
 /**
@@ -102,7 +104,7 @@ export default function PosicaoConsolidadaPage() {
     (async () => {
       const { data } = await supabase
         .from("custodia")
-        .select("id, codigo_custodia, nome, data_inicio, taxa, modalidade, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, moeda, acao_id, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(cnpj_classe)")
+        .select("id, codigo_custodia, nome, data_inicio, taxa, modalidade, preco_unitario, valor_investido, resgate_total, pagamento, vencimento, indexador, categoria_id, produto_id, instituicao_id, emissor_id, fundo_id, moeda, acao_id, categorias(nome), produtos(nome), instituicoes(nome), emissores(nome), cadastro_de_fundos(cnpj_classe), cadastro_de_acoes(nome)")
         .eq("user_id", user.id);
       if (!vivo) return;
       const mapa = new Map<string, CustodiaProduct>();
@@ -132,6 +134,7 @@ export default function PosicaoConsolidadaPage() {
           moeda: r.moeda ?? null,
           acao_id: r.acao_id ?? null,
           fundoCnpj: r.cadastro_de_fundos?.cnpj_classe ?? null,
+          acaoNome: r.cadastro_de_acoes?.nome ?? null,
         });
       }
       _cachedCustodias = mapa;
