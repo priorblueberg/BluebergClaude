@@ -92,6 +92,9 @@ export function useDetalheDaLamina({
       fim: item.fim ?? null,
       alertaSemCota: item.alertaSemCota ?? null,
       linhas: allProductRows[i] ?? [],
+      // Sem isto o dividend yield da acao fica sempre "—": a linha e montada campo a campo aqui,
+      // e o que nao e copiado nao chega na gaveta.
+      proventos: item.proventos ?? null,
     }, { calendario, cdiRecords, ibovespa, dataGlobal });
   }, [codigo, cadastro, productList, allProductRows, calendario, cdiRecords, ibovespa, dataGlobal]);
 }
