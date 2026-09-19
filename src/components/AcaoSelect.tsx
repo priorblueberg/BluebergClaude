@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export interface AcaoEscolhida {
   id: string;
@@ -28,17 +29,15 @@ const MAX_SUGESTOES = 15;
 /**
  * Escolha do papel.
  *
- * Duas listas, e a diferenca entre elas e o desenho inteiro:
+ * Um campo so, o de busca. Ele varre o CATALOGO inteiro da B3 (~2.332 papeis, mantido a mao no
+ * banco) por ticker OU por nome, e escolher um papel que ainda nao foi carregado dispara a carga
+ * sob demanda. Escolhido, o proprio campo passa a mostrar o papel.
  *
- * - O `select` mostra so os papeis JA CARREGADOS (`sincronizar_cotacoes`), que sao poucos e ja
- *   tem serie de preco.
- * - A busca varre o CATALOGO inteiro da B3 (~2.332 papeis, atualizado semanalmente pelo
- *   mantido a mao no banco), por ticker OU por nome. Escolher um papel que ainda nao foi carregado
- *   dispara a carga sob demanda.
- *
- * Ate 08/09/2026 havia uma lista so, e ela era o cadastro inteiro num `select`. Com 4 papeis
- * funcionava; com 2.332 viraria um dropdown inutilizavel. E buscar por nome nao existia - era
- * preciso saber o ticker de cor.
+ * Ate 08/09/2026 a lista era o cadastro inteiro num `select`. Com 4 papeis funcionava; com 2.332
+ * viraria um dropdown inutilizavel, e buscar por nome nao existia - era preciso saber o ticker de
+ * cor. Entre 08/09 e 19/09/2026 conviveram os dois, o `select` dos papeis ja carregados e a busca.
+ * O `select` saiu em 19/09 a pedido do Daniel, e com ele saiu de brinde a barra de rolagem
+ * horizontal da boleta: `select` nao encolhe abaixo da opcao mais larga.
  *
  * O cadastro nao e digitado: o nome vem da fonte. E a mesma decisao do CNPJ nos emissores e nos
  * fundos - quando o nome vem da fonte, a grafia deixa de depender de quem digitou, e duas
@@ -50,6 +49,14 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
   const [sugestoes, setSugestoes] = useState<AcaoEscolhida[]>([]);
   const [buscando, setBuscando] = useState(false);
   const [carregandoPapel, setCarregandoPapel] = useState("");
+  /**
+   * Papel escolhido, guardado aqui tambem.
+   *
+   * A lista `carregadas` so traz os papeis com `sincronizar_cotacoes`, e entre o clique na
+   * sugestao e a releitura da lista existe uma janela em que o campo ficaria em branco - e um
+   * papel preenchido por fora (o "Nova Operação" do detalhe da posicao) pode nem estar nela.
+   */
+  const [ultimaEscolhida, setUltimaEscolhida] = useState<AcaoEscolhida | null>(null);
 
   const recarregarLista = async () => {
     const { data } = await supabase
@@ -63,6 +70,19 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
   };
 
   useEffect(() => { recarregarLista(); }, []);
+
+  // Papel preenchido por fora (o "Nova Operação" do detalhe da posicao) que nao esta na lista
+  // carregada: busca o cadastro dele, senao o campo ficaria em branco com um papel escolhido.
+  useEffect(() => {
+    if (!value) return;
+    if (carregadas.some((a) => a.id === value)) return;
+    if (ultimaEscolhida?.id === value) return;
+    let vivo = true;
+    supabase.from("cadastro_de_acoes")
+      .select("id, ticker, nome, deslistado_em").eq("id", value).maybeSingle()
+      .then(({ data }) => { if (vivo && data) setUltimaEscolhida(data as AcaoEscolhida); });
+    return () => { vivo = false; };
+  }, [value, carregadas, ultimaEscolhida]);
 
   // Busca no catalogo, com espera. Sem ela, cada tecla digitada vira uma consulta.
   useEffect(() => {
@@ -101,6 +121,7 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
     // Ja carregado: so selecionar, sem pagar a carga de novo.
     if (carregadas.some((c) => c.ticker === a.ticker)) {
       onChange(a.id, a.ticker, a.nome, a.deslistado_em ?? null);
+      setUltimaEscolhida(a);
       setTermo(""); setSugestoes([]);
       return;
     }
@@ -128,6 +149,7 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
       if (!novo) throw new Error("o papel foi carregado mas não apareceu na lista");
 
       onChange(novo.id, novo.ticker, novo.nome, novo.deslistado_em ?? null);
+      setUltimaEscolhida(novo);
       setTermo(""); setSugestoes([]);
       toast.success(`${novo.ticker} carregada: ${item.cotacoes_no_banco} pregões e ${item.proventos_no_banco} proventos.`);
     } catch (e) {
@@ -137,85 +159,85 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
     }
   };
 
-  const selecionada = carregadas.find((a) => a.id === value);
+  const selecionada =
+    carregadas.find((a) => a.id === value)
+    ?? (ultimaEscolhida && ultimaEscolhida.id === value ? ultimaEscolhida : null);
+  const rotuloDaSelecao = selecionada ? `${selecionada.ticker} - ${selecionada.nome}` : "";
+
+  // Campo travado (edicao): so o papel, sem busca.
+  if (disabled) {
+    return <Input readOnly tabIndex={-1} className="bg-muted/50" value={rotuloDaSelecao} />;
+  }
 
   return (
     <div className="flex flex-col gap-2">
-      <select
-        className={`h-10 rounded-md border bg-background px-3 text-sm ${hasError ? "border-destructive" : "border-input"}`}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => {
-          const a = carregadas.find((x) => x.id === e.target.value);
-          onChange(a?.id ?? "", a?.ticker ?? "", a?.nome ?? "", a?.deslistado_em ?? null);
-        }}
-      >
-        <option value="">{carregadas.length ? "Selecione a ação" : "Nenhum papel carregado ainda"}</option>
-        {carregadas.map((a) => (
-          <option key={a.id} value={a.id}>{a.ticker} — {a.nome}</option>
-        ))}
-      </select>
+      {/*
+        Um campo so, o de busca (Daniel, 19/09/2026). Antes havia tambem um `select` com os papeis
+        ja carregados, e ele era a barra de rolagem horizontal da boleta: `select` nao encolhe
+        abaixo da opcao mais larga, e as opcoes sao "TICKER - Razao Social".
 
-      {!disabled && (
-        <>
-          <div className="relative">
-            <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={termo}
-              onChange={(e) => setTermo(e.target.value)}
-              placeholder="Buscar por ticker ou nome (ex.: PETR4 ou Petrobras)"
-              className="h-9 pl-7"
-            />
-          </div>
-
-          {termo.trim().length >= MIN_BUSCA && (
-            <div className="max-h-56 overflow-y-auto rounded-md border border-input">
-              {buscando && <p className="px-3 py-2 text-xs text-muted-foreground">Buscando...</p>}
-              {!buscando && sugestoes.length === 0 && (
-                <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum papel encontrado.</p>
-              )}
-              {!buscando && sugestoes.map((a) => {
-                const jaTem = carregadas.some((c) => c.ticker === a.ticker);
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => escolher(a)}
-                    disabled={!!carregandoPapel}
-                    className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-50"
-                  >
-                    <span className="font-medium">{a.ticker}</span>
-                    <span className="truncate text-xs text-muted-foreground">{a.nome}</span>
-                    {a.deslistado_em && (
-                      <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-900">
-                        deslistado
-                      </span>
-                    )}
-                    {carregandoPapel === a.ticker ? (
-                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">carregando...</span>
-                    ) : !jaTem ? (
-                      <span className="ml-auto shrink-0 text-xs text-muted-foreground">carregar</span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
+        Escolhido o papel, o proprio campo passa a mostra-lo - sem isso, com o `select` fora, nao
+        sobraria nenhuma confirmacao visual do que foi escolhido. Com papel escolhido o campo fica
+        so de leitura e o "x" limpa: digitar por cima do rotulo daria texto embaralhado, porque o
+        navegador devolve o rotulo inteiro mais a tecla.
+      */}
+      <div className="relative min-w-0">
+        <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={selecionada ? rotuloDaSelecao : termo}
+          readOnly={!!selecionada}
+          onChange={(e) => setTermo(e.target.value)}
+          placeholder="Buscar por ticker ou nome (ex.: PETR4 ou Petrobras)"
+          className={cn(
+            "h-10 w-full min-w-0 pl-7",
+            selecionada ? "pr-9" : "",
+            hasError ? "border-destructive" : "",
           )}
-        </>
-      )}
+        />
+        {selecionada && (
+          <button
+            type="button"
+            aria-label="Trocar de papel"
+            onClick={() => { onChange("", "", "", null); setUltimaEscolhida(null); setTermo(""); }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
 
-      {selecionada && <p className="text-xs text-muted-foreground">{selecionada.nome}</p>}
-      {selecionada?.deslistado_em && (
-        <p className="text-xs text-amber-700">
-          Papel deslistado. Só é possível lançar operação até o último dia em que ele foi
-          negociado.
-        </p>
-      )}
-      {!disabled && (
-        <p className="text-xs text-muted-foreground">
-          Na primeira vez que um papel é usado, a série de preços e os proventos são buscados na
-          fonte — leva alguns segundos. Depois ele fica na lista acima.
-        </p>
+      {!selecionada && termo.trim().length >= MIN_BUSCA && (
+        <div className="max-h-56 overflow-y-auto rounded-md border border-input">
+          {buscando && <p className="px-3 py-2 text-xs text-muted-foreground">Buscando...</p>}
+          {!buscando && sugestoes.length === 0 && (
+            <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum papel encontrado.</p>
+          )}
+          {!buscando && sugestoes.map((a) => {
+            const jaTem = carregadas.some((c) => c.ticker === a.ticker);
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => escolher(a)}
+                disabled={!!carregandoPapel}
+                className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-50"
+              >
+                <span className="shrink-0 font-medium">{a.ticker}</span>
+                <span className="min-w-0 truncate text-xs text-muted-foreground">{a.nome}</span>
+                {a.deslistado_em && (
+                  <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-900">
+                    deslistado
+                  </span>
+                )}
+                {carregandoPapel === a.ticker ? (
+                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">carregando...</span>
+                ) : !jaTem ? (
+                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">carregar</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );

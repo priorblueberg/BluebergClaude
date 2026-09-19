@@ -249,7 +249,6 @@ export default function BoletaTransacao({
   const [acaoNome, setAcaoNome] = useState("");
   /** Preenchido só quando o papel escolhido saiu da bolsa. Ver `tetoDoPapel`. */
   const [acaoDeslistadoEm, setAcaoDeslistadoEm] = useState<string | null>(null);
-  const [custosOp, setCustosOp] = useState("");
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
 
   // Derived
@@ -1339,7 +1338,6 @@ export default function BoletaTransacao({
       // certa é a da nota de corretagem, que é também a do GorilaVIEW: quantidade e preço, com
       // o total calculado.
       const precoEfetivo = parseCurrencyToNumber(valor);
-      const custosNum = custosOp ? parseCurrencyToNumber(custosOp) : 0;
       const qtdOperacao = parseQuantidade(qtdCotas)!;
       const valorNum = precoEfetivo * qtdOperacao;
 
@@ -1422,7 +1420,9 @@ Confirma que o preço está certo?`,
           valor: valorNum,
           quantidade: qtdOperacao,
           preco_unitario: precoEfetivo,
-          custos_operacao: custosNum || null,
+          // Custo de operacao ficou para outro MVP (Daniel, 19/09/2026): o campo saiu da boleta e
+          // a coluna deixa de ser escrita. O historico ja gravado continua onde esta.
+          custos_operacao: null,
           user_id: user.id,
           origem: "manual",
         }).select("id").single();
@@ -1434,7 +1434,7 @@ Confirma que o preço está certo?`,
         toast.success("Operação cadastrada com sucesso!");
         resetForm();
         setAcaoId(""); setAcaoTicker(""); setAcaoNome("");
-        setQtdCotas(""); setCustosOp("");
+        setQtdCotas("");
       } catch (err: any) {
         toast.error("Erro ao cadastrar operação de ações.");
         console.error(err);
@@ -2320,7 +2320,11 @@ Confirma que o preço está certo?`,
               </Field>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            {/* A data fica na coluna da esquerda e a direita fica vazia de proposito: e para la que
+                a mensagem embaixo do campo avanca quando e longa, sem esticar a boleta. O campo de
+                custos ocupava essa coluna e saiu em 19/09/2026 - custo de operacao e assunto de
+                outro MVP (Daniel). */}
+            <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
               <Field label="Data da Transação" required>
                 {/* Calendario de 02/01/2023 ate o teto de calculo, sem fim de semana. O feriado e o
                     papel deslistado nao dao para bloquear no calendario, e viram mensagem. */}
@@ -2340,17 +2344,9 @@ Confirma que o preço está certo?`,
                   }
                 />
               </Field>
-              <Field label="Custos da Operação (R$)">
-                <Input
-                  value={custosOp}
-                  onChange={(e) => setCustosOp(formatCurrency(e.target.value))}
-                  placeholder="Corretagem e emolumentos"
-                  inputMode="numeric"
-                />
-              </Field>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
               <Field label="Preço por Ação (R$)" required>
                 <Input
                   value={valor}
@@ -2370,7 +2366,9 @@ Confirma que o preço está certo?`,
                 {/* Saldo da posicao na data, na altura da linha de mensagem da data ao lado:
                     aparecer nao muda a altura da boleta. So na venda, que e quem tem teto. */}
                 {ehVendaDeAcao && (
-                  <p className="mt-1 h-4 whitespace-nowrap text-xs leading-4 text-muted-foreground">
+                  // `truncate` e nao `whitespace-nowrap`: esta linha esta na coluna da DIREITA, e o
+                  // que passar dela vaza para fora da boleta e vira barra de rolagem horizontal.
+                  <p className="mt-1 h-4 truncate text-xs leading-4 text-muted-foreground">
                     {!acaoId || !instituicaoId || !data
                       ? ""
                       : saldoAcao === undefined
@@ -2394,11 +2392,6 @@ Confirma que o preço está certo?`,
                   </strong>
                 </>
               ) : ""}
-            </p>
-
-            <p className="text-xs text-muted-foreground">
-              Quantidade e preço unitário, como na nota de corretagem: o total sai da multiplicação
-              dos dois. Dividendos e JCP entram sozinhos, pela data-ex - não precisam ser lançados.
             </p>
 
             {/* Linha do aviso de obrigatorio vazio; ela existe sempre, vazia ou nao, para os

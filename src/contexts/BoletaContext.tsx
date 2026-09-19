@@ -78,7 +78,9 @@ export function BoletaProvider({ children }: { children: ReactNode }) {
           A boleta e alta (renda fixa tem onze campos) e o modal nao pode empurrar o rodape
           para fora da tela: o corpo rola por dentro.
         */}
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        {/* `overflow-x-hidden`: a mensagem embaixo da data avanca de proposito sobre o espaco
+            vazio do campo vizinho, e o que passar disso e defeito, nao recurso. */}
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>{editId ? "Editar Transação" : "Nova Transação"}</DialogTitle>
             <DialogDescription>
