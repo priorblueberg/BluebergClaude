@@ -330,6 +330,8 @@ export interface LinhaDaPosicao {
   fim: string | null;
   alertaSemCota: AlertaSemCota | null;
   linhas: DailyRow[];
+  /** Proventos recebidos no período (ações). É o mesmo número da coluna da lâmina. */
+  proventos?: number | null;
 }
 
 /**
@@ -359,7 +361,29 @@ export function montarDetalheDaPosicao(
     tipo,
     nome: row.nome,
     cnpj: p.fundoCnpj ?? null,
+    // Em acao o `emissor_nome` do cadastro e a razao social da empresa (`useCarteiraAcoes` grava
+    // `nomeEmpresa` ali). Ela vai abaixo do codigo do ativo (Daniel, 19/09/2026), e nao na linha
+    // de termos de renda fixa, que a acao nao tem.
+    razaoSocial: tipo === "acao" ? p.emissor_nome : null,
+    valorInvestido: row.dados.valorInvestido,
+    quantidade: row.dados.quantidade,
+    precoMedio: row.dados.precoMedio,
+    proventos: row.proventos ?? null,
+    /**
+     * Dividend yield DA POSIÇÃO: provento recebido no período sobre o valor investido.
+     *
+     * Não é o DY de mercado do papel (provento por ação dos últimos 12 meses sobre a cotação):
+     * aquele fala do ativo, este fala do dinheiro do cliente, e é o que combina com os outros três
+     * números ao lado - valor investido, quantidade e preço médio são todos da posição.
+     *
+     * Posição zerada não tem base para a conta, e vira travessão.
+     */
+    dividendYield:
+      row.proventos != null && row.dados.valorInvestido != null && row.dados.valorInvestido > 0
+        ? (row.proventos / row.dados.valorInvestido) * 100
+        : null,
     instituicao: row.custodiante || null,
+    dataFim: fim,
     // Posicao de fundo encerrada: a linha ja termina no encerramento (`useCarteiraFundos`).
     encerradaEm: tipo === "fundo" && !row.ativo ? row.fim ?? null : null,
     alertaSemCota: row.alertaSemCota,

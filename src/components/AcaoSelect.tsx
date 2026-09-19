@@ -176,12 +176,19 @@ export default function AcaoSelect({ value, onChange, disabled, hasError, emCust
 
   const modoCustodia = emCustodia !== undefined;
   const termoBusca = termo.trim().toLowerCase();
-  // Na venda a lista aparece inteira antes de digitar, e digitar so filtra.
+  /**
+   * A lista SO aparece depois de digitar, na venda como na compra (Daniel, 19/09/2026).
+   *
+   * A primeira versao abria a custodia inteira embaixo do campo, no molde do resgate de fundo. Não
+   * escala: quem tem muito papel nao ve a lista caber, e a boleta vira uma parede. A diferenca
+   * entre venda e compra passa a ser so ONDE se busca - na custodia ou no catalogo da B3 -, nao
+   * COMO.
+   */
   const daCustodia = (emCustodia ?? []).filter(
-    (a) => !termoBusca || a.ticker.toLowerCase().includes(termoBusca) || a.nome.toLowerCase().includes(termoBusca),
+    (a) => a.ticker.toLowerCase().includes(termoBusca) || a.nome.toLowerCase().includes(termoBusca),
   );
   const lista = modoCustodia ? daCustodia : sugestoes;
-  const mostrarLista = !selecionada && (modoCustodia ? emCustodia !== null : termoBusca.length >= MIN_BUSCA);
+  const mostrarLista = !selecionada && termoBusca.length >= MIN_BUSCA;
   const rotuloDaSelecao = selecionada ? `${selecionada.ticker} - ${selecionada.nome}` : "";
 
   // Campo travado (edicao): so o papel, sem busca.
@@ -190,7 +197,10 @@ export default function AcaoSelect({ value, onChange, disabled, hasError, emCust
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    // `relative`: a lista de resultados flutua POR CIMA do que vem abaixo dela. No fluxo, como
+    // estava ate 19/09/2026, ela empurrava os campos seguintes e - como o dialog e centralizado na
+    // vertical - a boleta inteira subia e descia a cada busca. Mesmo desenho do EntidadeSelect.
+    <div className="relative">
       {/*
         Um campo so, o de busca (Daniel, 19/09/2026). Antes havia tambem um `select` com os papeis
         ja carregados, e ele era a barra de rolagem horizontal da boleta: `select` nao encolhe
@@ -214,7 +224,7 @@ export default function AcaoSelect({ value, onChange, disabled, hasError, emCust
                 ? "Buscando os papéis em custódia..."
                 : emCustodia.length === 0
                   ? "Nenhum papel em custódia neste portfólio"
-                  : "Selecione o papel em custódia"
+                  : "Buscar entre os papéis em custódia"
           }
           disabled={modoCustodia && (emCustodia === null || emCustodia.length === 0)}
           className={cn(
@@ -235,8 +245,8 @@ export default function AcaoSelect({ value, onChange, disabled, hasError, emCust
         )}
       </div>
 
-      {mostrarLista && (emCustodia?.length !== 0) && (
-        <div className="max-h-56 overflow-y-auto rounded-md border border-input">
+      {mostrarLista && (
+        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-y-auto rounded-md border border-border bg-popover shadow-md">
           {buscando && <p className="px-3 py-2 text-xs text-muted-foreground">Buscando...</p>}
           {!buscando && lista.length === 0 && (
             <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum papel encontrado.</p>
@@ -248,7 +258,7 @@ export default function AcaoSelect({ value, onChange, disabled, hasError, emCust
                 type="button"
                 onClick={() => escolher(a)}
                 disabled={!!carregandoPapel}
-                className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-50"
+                className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
               >
                 <span className="shrink-0 font-medium">{a.ticker}</span>
                 <span className="min-w-0 truncate text-xs text-muted-foreground">{a.nome}</span>

@@ -78,9 +78,17 @@ export function BoletaProvider({ children }: { children: ReactNode }) {
           A boleta e alta (renda fixa tem onze campos) e o modal nao pode empurrar o rodape
           para fora da tela: o corpo rola por dentro.
         */}
-        {/* `overflow-x-hidden`: a mensagem embaixo da data avanca de proposito sobre o espaco
-            vazio do campo vizinho, e o que passar disso e defeito, nao recurso. */}
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        {/*
+          `overflow-x-hidden`: a mensagem embaixo da data avanca de proposito sobre o espaco
+          vazio do campo vizinho, e o que passar disso e defeito, nao recurso.
+
+          `top-[6vh] translate-y-0`: a boleta fica ANCORADA no topo em vez de centralizada na
+          vertical. Centralizada, qualquer mudanca de altura - um campo que aparece, um aviso, a
+          lista da busca - mexe a boleta inteira para cima ou para baixo, e o campo que o usuario
+          estava olhando sai de baixo do cursor (Daniel, 19/09/2026). Ancorada, o que cresce cresce
+          para baixo e o resto fica onde esta.
+        */}
+        <DialogContent className="top-[6vh] translate-y-0 max-w-2xl max-h-[88vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>{editId ? "Editar Transação" : "Nova Transação"}</DialogTitle>
             <DialogDescription>

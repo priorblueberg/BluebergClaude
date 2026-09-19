@@ -77,6 +77,8 @@ export interface ProductListItem {
   emissor_nome: string;
   /** Fundo sem cota da CVM: o "!" ao lado do nome, com encerrar ou migrar. */
   alertaSemCota?: AlertaSemCota | null;
+  /** Proventos recebidos no periodo (acoes): alimentam o dividend yield da gaveta. */
+  proventos?: number | null;
   analysisProduct: AnalysisCustodiaProduct;
 }
 

@@ -13,7 +13,8 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { HistoricoRentabilidadeChart, type PontoRentabilidade } from "@/components/HistoricoRentabilidadeChart";
-import RentabilidadeDetailTable, { type DetailRow } from "@/components/RentabilidadeDetailTable";
+import { type DetailRow } from "@/components/RentabilidadeDetailTable";
+import RentabilidadePorAnoTable from "@/components/RentabilidadePorAnoTable";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
 import {
   textoConfirmacaoDeExclusao, AVISO_EXCLUSAO_ATIVO, AVISO_EXCLUSAO_MOVIMENTACAO, TITULO_CONFIRMACAO_DE_EXCLUSAO,
@@ -43,6 +44,17 @@ export interface PosicaoDetalheData {
   cnpj: string | null;
   /** Instituição (custodiante) da posição: a primeira informação abaixo do nome. */
   instituicao?: string | null;
+  /** Razão social da empresa, em ação: vai abaixo do código do ativo. */
+  razaoSocial?: string | null;
+  /** Fim do período de análise da posição (a linha "Período de Análise"). */
+  dataFim?: string | null;
+  /** Dados da posição mostrados abaixo do resumo, em renda variável. */
+  valorInvestido?: number | null;
+  quantidade?: number | null;
+  precoMedio?: number | null;
+  proventos?: number | null;
+  /** Provento do período sobre o valor investido, em %. */
+  dividendYield?: number | null;
   /** Dia do encerramento da posição de fundo, quando encerrada: substitui a última cota. */
   encerradaEm?: string | null;
   /** Fundo sem cota da CVM: "!" ao lado do nome, com encerrar ou migrar. */
@@ -214,8 +226,11 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
     setDeleteId(null);
   }
 
-  const temPreco = data.tipo === "fundo" || data.tipo === "moeda" || data.tipo === "acao";
-  const rotuloDoPreco = data.tipo === "moeda" ? "Última cotação divulgada" : data.tipo === "acao" ? "Último preço" : "Última cota divulgada";
+  // Acao NAO mostra o ultimo preco (Daniel, 19/09/2026): a gaveta dela ja tem o extrato com preco
+  // por operacao, e o preco de fechamento do dia nao diz nada sobre a posicao. Fundo e moeda
+  // seguem mostrando, porque ali a cota e a cotacao sao a unica referencia de valor na tela.
+  const temPreco = data.tipo === "fundo" || data.tipo === "moeda";
+  const rotuloDoPreco = data.tipo === "moeda" ? "Última cotação divulgada" : "Última cota divulgada";
   const sobreCdi = data.cdiAcumuladoPct != null && data.cdiAcumuladoPct > 0
     ? (data.rentabilidadePct / data.cdiAcumuladoPct) * 100
     : null;
@@ -249,43 +264,69 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
           <SheetDescription className="sr-only">{data.nome}</SheetDescription>
 
           <div className="space-y-5 px-6 py-5">
-            {/* Nome; abaixo dele, primeiro a instituicao e, ao lado, a ultima cota ou o encerramento
-                da posicao de fundo (Daniel, 12/09/2026). */}
-            <div className="space-y-1 pr-8">
-              <h4 className="text-base font-bold text-foreground break-words">
-                {data.nome}
-                {data.cnpj ? ` - ${formatarCnpj(data.cnpj)}` : ""}
-                {data.alertaSemCota && (
-                  <span className="ml-2 inline-flex align-middle">
-                    <AlertaFundoSemCota alerta={data.alertaSemCota} />
-                  </span>
+            {/*
+              Cabecalho. Em acao (Daniel, 19/09/2026): o codigo do ativo, a razao social embaixo
+              dele e o periodo de analise - nada de custodiante, emissor, indexador, taxa,
+              pagamento e vencimento, que sao termos de renda fixa e vinham todos vazios. O botao
+              "Nova Operação" sobe para o canto superior direito, ao lado do X de fechar.
+            */}
+            <div className="flex items-start justify-between gap-3 pr-8">
+              <div className="min-w-0 space-y-1">
+                <h4 className="text-base font-bold text-foreground break-words">
+                  {data.nome}
+                  {data.cnpj ? ` - ${formatarCnpj(data.cnpj)}` : ""}
+                  {data.alertaSemCota && (
+                    <span className="ml-2 inline-flex align-middle">
+                      <AlertaFundoSemCota alerta={data.alertaSemCota} />
+                    </span>
+                  )}
+                </h4>
+                {ehRendaVariavel && data.razaoSocial && (
+                  <p className="text-sm text-muted-foreground break-words">{data.razaoSocial}</p>
                 )}
-              </h4>
-              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-                {data.instituicao && <p className="font-semibold text-foreground">{data.instituicao}</p>}
-                {data.tipo === "fundo" && data.encerradaEm ? (
-                  <p>
-                    Fundo encerrado em{" "}
-                    <span className="font-semibold text-foreground tabular-nums">{fmtData(data.encerradaEm)}</span>
-                  </p>
-                ) : temPreco ? (
-                  <Info
-                    rotulo={`${rotuloDoPreco}${data.dataUltimoPreco ? ` (${fmtData(data.dataUltimoPreco)})` : ""}`}
-                    valor={fmtPreco(data.ultimoPreco)}
-                  />
-                ) : (
-                  <>
-                    <Info rotulo="Emissor" valor={data.emissor ?? "—"} />
-                    <Info rotulo="Indexador" valor={data.indexador ?? "—"} />
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                  {!ehRendaVariavel && data.instituicao && (
+                    <p className="font-semibold text-foreground">{data.instituicao}</p>
+                  )}
+                  {ehRendaVariavel ? null : data.tipo === "fundo" && data.encerradaEm ? (
+                    <p>
+                      Fundo encerrado em{" "}
+                      <span className="font-semibold text-foreground tabular-nums">{fmtData(data.encerradaEm)}</span>
+                    </p>
+                  ) : temPreco ? (
                     <Info
-                      rotulo="Taxa"
-                      valor={data.taxa != null ? `${data.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "—"}
+                      rotulo={`${rotuloDoPreco}${data.dataUltimoPreco ? ` (${fmtData(data.dataUltimoPreco)})` : ""}`}
+                      valor={fmtPreco(data.ultimoPreco)}
                     />
-                    <Info rotulo="Pagamento" valor={data.pagamento ?? "—"} />
-                    <Info rotulo="Vencimento" valor={fmtData(data.vencimento)} />
-                  </>
-                )}
+                  ) : (
+                    <>
+                      <Info rotulo="Emissor" valor={data.emissor ?? "—"} />
+                      <Info rotulo="Indexador" valor={data.indexador ?? "—"} />
+                      <Info
+                        rotulo="Taxa"
+                        valor={data.taxa != null ? `${data.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}%` : "—"}
+                      />
+                      <Info rotulo="Pagamento" valor={data.pagamento ?? "—"} />
+                      <Info rotulo="Vencimento" valor={fmtData(data.vencimento)} />
+                    </>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Período de Análise: de {fmtData(data.dataInicio)} a {fmtData(data.dataFim ?? null)}
+                </p>
               </div>
+
+              {ehRendaVariavel && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 shrink-0 gap-1 text-xs"
+                  onClick={() => abrirBoleta(null, { tipo: "negociar_posicao", codigoCustodia: data.codigoCustodia })}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Nova Operação
+                </Button>
+              )}
             </div>
 
             {/* Resumo: os cartoes do dashboard */}
@@ -298,6 +339,31 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
               ))}
             </div>
 
+            {/*
+              Dados da posicao, abaixo do resumo, so em renda variavel (Daniel, 19/09/2026).
+              Ficam numa faixa e nao em cartoes: sao a composicao da posicao, nao resultado, e
+              repetir o peso visual dos quatro cartoes acima tiraria a hierarquia deles.
+            */}
+            {ehRendaVariavel && (
+              <div className="grid grid-cols-4 gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+                {[
+                  { rotulo: "Valor Investido", valor: fmtBrl(data.valorInvestido ?? null) },
+                  { rotulo: "Quantidade", valor: fmtQtd(data.quantidade ?? null) },
+                  { rotulo: "Preço Médio", valor: fmtPreco(data.precoMedio ?? null) },
+                  { rotulo: "Dividend Yield", valor: fmtPct(data.dividendYield ?? null) },
+                ].map((item) => (
+                  <div key={item.rotulo} className="min-w-0">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {item.rotulo}
+                    </p>
+                    <p className="mt-0.5 truncate text-sm font-semibold text-foreground tabular-nums">
+                      {item.valor}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Grafico */}
             {data.grafico.length > 1 && (
               <HistoricoRentabilidadeChart
@@ -307,54 +373,40 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
               />
             )}
 
-            {/* Tabela de rentabilidade: o mesmo elemento das lâminas, só com Rentabilidade e % do CDI */}
+            {/* Uma linha de rentabilidade por ano, sem o "% do CDI" (Daniel, 19/09/2026). */}
             {data.tabelaRentabilidade.length > 0 && (
-              <RentabilidadeDetailTable
-                rows={data.tabelaRentabilidade}
-                tituloLabel={data.nome}
-                linhas={["rentabilidade", "percentualCdi"]}
-                compacto
-              />
+              <RentabilidadePorAnoTable rows={data.tabelaRentabilidade} />
             )}
 
             {/* Historico */}
             <section className="space-y-2">
-              {/*
-                Em renda variável o histórico ganha a quantidade e um botão de nova operação
-                (Daniel, 18/09/2026): quem está olhando a posição e resolve comprar mais ou
-                vender não deveria sair da tela e procurar o ativo de novo na boleta.
-              */}
-              <div className="flex items-center justify-between gap-2">
-                <h6 className="text-sm font-bold text-foreground">Histórico</h6>
-                {ehRendaVariavel && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 gap-1 text-xs"
-                    onClick={() => abrirBoleta(null, { tipo: "negociar_posicao", codigoCustodia: data.codigoCustodia })}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Nova Operação
-                  </Button>
-                )}
-              </div>
+              {/* O botao "Nova Operação" mora no canto superior direito da gaveta (Daniel,
+                  19/09/2026); aqui ficou so o titulo. */}
+              <h6 className="text-sm font-bold text-foreground">Histórico</h6>
               {loading ? (
                 <p className="text-sm text-muted-foreground py-4">Carregando...</p>
               ) : movs.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-4">Nenhuma movimentação.</p>
               ) : (
                 <>
+                  {/*
+                    `table-fixed` com largura por coluna (Daniel, 19/09/2026): sem isso o navegador
+                    distribui pelo conteudo, e a largura de cada coluna mudava de pagina para
+                    pagina conforme o maior numero da vez - a tabela parecia desalinhada porque
+                    ela literalmente se remontava a cada troca de pagina. Data e Tipo a esquerda,
+                    os tres numericos a direita e com a mesma largura, e os botoes no fim.
+                  */}
                   <div className="rounded-md border border-border">
-                    <Table>
+                    <Table className="table-fixed">
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="text-xs">Data</TableHead>
-                          <TableHead className="text-xs">Tipo</TableHead>
+                          <TableHead className="w-[96px] text-xs">Data</TableHead>
+                          <TableHead className="w-[132px] text-xs">Tipo</TableHead>
                           {ehRendaVariavel && <TableHead className="text-xs text-right">Quantidade</TableHead>}
                           {/* "Valor da Cota" é o vocabulário de fundo; em ação o que existe é preço. */}
                           <TableHead className="text-xs text-right">{ehRendaVariavel ? "Preço" : "Valor da Cota"}</TableHead>
                           <TableHead className="text-xs text-right">Valor total</TableHead>
-                          <TableHead className="w-[72px]" />
+                          <TableHead className="w-[76px]" />
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -362,14 +414,14 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                           const isAuto = m.origem === "automatico";
                           return (
                             <TableRow key={m.id}>
-                              <TableCell className="whitespace-nowrap text-sm">{fmtData(m.data)}</TableCell>
-                              <TableCell className="whitespace-nowrap text-sm">{m.tipo_movimentacao}</TableCell>
+                              <TableCell className="w-[96px] whitespace-nowrap text-sm tabular-nums">{fmtData(m.data)}</TableCell>
+                              <TableCell className="w-[132px] truncate text-sm">{m.tipo_movimentacao}</TableCell>
                               {ehRendaVariavel && (
-                                <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtQtd(m.quantidade)}</TableCell>
+                                <TableCell className="truncate text-sm text-right tabular-nums">{fmtQtd(m.quantidade)}</TableCell>
                               )}
-                              <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtPreco(m.preco_unitario)}</TableCell>
-                              <TableCell className="whitespace-nowrap text-sm text-right tabular-nums">{fmtBrl(m.valor)}</TableCell>
-                              <TableCell className="text-right">
+                              <TableCell className="truncate text-sm text-right tabular-nums">{fmtPreco(m.preco_unitario)}</TableCell>
+                              <TableCell className="truncate text-sm text-right tabular-nums">{fmtBrl(m.valor)}</TableCell>
+                              <TableCell className="w-[76px] text-right">
                                 {!isAuto && (
                                   <div className="flex justify-end gap-1">
                                     {/* Migracao nao se edita: exclui-se o par e migra-se de novo. */}

@@ -13,11 +13,18 @@ function AppLayoutInner() {
   const location = useLocation();
   const isCarteira = location.pathname.startsWith("/carteira");
 
+  /*
+    Header fixo (Daniel, 19/09/2026). Ate aqui a coluna era `min-h-screen` e o `overflow-y-auto` do
+    `main` nunca entrava em acao: sem altura limitada, quem rolava era a pagina inteira, e o header
+    subia junto. Com `h-screen` e `overflow-hidden` na coluna, o `main` vira o unico elemento que
+    rola - header e abas ficam parados, e a gaveta de detalhes, que e posicionada a 56px do topo,
+    encosta neles em qualquer posicao da rolagem.
+  */
   return (
-    <div className="flex min-h-screen w-full">
+    <div className="flex h-screen w-full overflow-hidden">
       <AppSidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
       <div
-        className="flex flex-1 flex-col min-h-screen"
+        className="flex h-screen min-w-0 flex-1 flex-col overflow-hidden"
         style={{
           marginLeft: collapsed ? 56 : 220,
           transition: "margin-left 120ms linear",

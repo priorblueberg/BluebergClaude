@@ -258,6 +258,8 @@ export function useCarteiraAcoes() {
           existiuNaJanela: m.existiuNaJanela,
           fim: fimPapel,
           lingueta,
+          // O mesmo numero da coluna de proventos da lamina, para a gaveta nao contar diferente.
+          proventos: proventosJanela,
           // Ultimo preco: o da ultima barra negociada ate o fim do periodo do papel.
           dados: dadosDaPosicao(
             ult?.valorInvestido ?? 0,

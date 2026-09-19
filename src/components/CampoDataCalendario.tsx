@@ -40,7 +40,6 @@ export default function CampoDataCalendario({
   min,
   max,
   mensagem,
-  informacao,
   destacarErro,
   disabled,
 }: {
@@ -53,8 +52,6 @@ export default function CampoDataCalendario({
   max?: string | null;
   /** Mensagem de validação vinda da boleta, mostrada embaixo do campo. */
   mensagem?: string | null;
-  /** Informação neutra (não é erro), na mesma linha da mensagem, quando não há erro. */
-  informacao?: string | null;
   /** Borda vermelha sem mensagem: campo obrigatório vazio ao cadastrar. */
   destacarErro?: boolean;
   disabled?: boolean;
@@ -129,15 +126,16 @@ export default function CampoDataCalendario({
       </div>
       {/* A linha da mensagem existe sempre, vazia ou não: se ela só entrasse com o erro, a boleta
           inteira desceria uma linha. Sem quebra de linha pelo mesmo motivo; a mais longa avança
-          sobre o espaço vazio embaixo do campo vizinho. O erro, em vermelho, tem prioridade sobre a
-          informação, em cinza (o valor da cota, nas saídas de fundo). */}
+          sobre o espaço vazio embaixo do campo vizinho. Ela é só para ERRO: a linha de informação
+          que existiu aqui - valor da cota no fundo, fechamento do dia em ação - saiu em
+          19/09/2026, a pedido do Daniel. */}
       <p
         className={cn(
           "mt-1 h-4 whitespace-nowrap text-xs leading-4",
           erro ? "font-medium text-destructive" : "text-muted-foreground",
         )}
       >
-        {erro ?? informacao}
+        {erro}
       </p>
     </div>
   );

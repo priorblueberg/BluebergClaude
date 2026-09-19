@@ -1196,27 +1196,6 @@ export default function BoletaTransacao({
    * levou fundo e renda fixa para a validacao no proprio campo. Aqui ela entra.
    */
 
-  // Fechamento do papel na data: informacao em cinza embaixo do campo, como a cota no fundo.
-  // `preco: null` e dia util sem fechamento na base; a boleta mostra, mas nao impede.
-  const [fechamentoDoDia, setFechamentoDoDia] = useState<{ data: string; preco: number | null } | null>(null);
-  useEffect(() => {
-    if (!isAcao || !acaoTicker || !data) {
-      setFechamentoDoDia(null);
-      return;
-    }
-    let vivo = true;
-    (async () => {
-      const { data: row } = await supabase
-        .from("cotacoes_acoes")
-        .select("fechamento")
-        .eq("ticker", acaoTicker)
-        .eq("data", data)
-        .maybeSingle();
-      if (vivo) setFechamentoDoDia({ data, preco: row ? Number((row as any).fechamento) : null });
-    })();
-    return () => { vivo = false; };
-  }, [isAcao, acaoTicker, data]);
-
   // Saldo em acoes da posicao na data, mostrado ANTES de gravar - como fundo e moeda ja faziam.
   // Ate 19/09/2026 a venda maior que o saldo so era barrada depois do clique em Cadastrar.
   // `undefined` = carregando, `null` = nao ha posicao desse papel nessa instituicao.
@@ -2454,13 +2433,6 @@ Confirma que o preço está certo?`,
                   max={janelaAcao.max}
                   mensagem={mensagemDataAcao}
                   destacarErro={erroDataObrigatoria}
-                  // O fechamento do dia e so informacao, em cinza, como o valor da cota no fundo.
-                  // Ele e a referencia da trava de casa decimal, entao ver antes de digitar ajuda.
-                  informacao={
-                    data && !mensagemDataAcao && fechamentoDoDia?.data === data && fechamentoDoDia.preco != null
-                      ? `Fechamento do dia: ${fmtBrlDisplay(fechamentoDoDia.preco)}`
-                      : null
-                  }
                 />
               </Field>
             </div>
@@ -2671,12 +2643,6 @@ Confirma que o preço está certo?`,
                   max={janelaFundo.max}
                   mensagem={mensagemDataFundo}
                   destacarErro={erroDataObrigatoria}
-                  // A cota e so informacao, em cinza, na linha embaixo da data (Daniel, 12/09/2026).
-                  informacao={
-                    data && !mensagemDataFundo && cotaOp?.cota != null
-                      ? `Valor da cota: ${cotaOp.cota.toLocaleString("pt-BR", { minimumFractionDigits: 8, maximumFractionDigits: 8 })}`
-                      : null
-                  }
                 />
               </Field>
               <Field label="Valor" required>

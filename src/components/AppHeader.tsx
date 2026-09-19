@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from "react";
-import { useBoleta } from "@/contexts/BoletaContext";
 import { format, parse, isValid, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { CalendarIcon, Check, ChevronDown, Layers, Plus } from "lucide-react";
+import { CalendarIcon, Check, ChevronDown, Layers } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/hooks/useAuth";
@@ -31,7 +30,6 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
   const inputRef = useRef<HTMLInputElement>(null);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
-  const { abrirBoleta } = useBoleta();
   const { portfolios, ativo: portfolioAtivo, ativar: ativarPortfolio } = usePortfolios();
 
   const isStagedSameAsApplied = format(stagedDate, "yyyy-MM-dd") === format(dataReferencia, "yyyy-MM-dd");
@@ -182,15 +180,6 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
         </div>
 
         <div className={`flex items-center gap-4${disableControls ? " pointer-events-none opacity-40" : ""}`}>
-          <button
-            onClick={() => abrirBoleta()}
-            className="flex items-center gap-1 rounded-md border border-primary px-2 py-1 text-xs text-primary hover:bg-primary hover:text-primary-foreground bg-background"
-            style={{ transition: "all 120ms linear" }}
-          >
-            <Plus size={14} strokeWidth={1.5} />
-            <span>Cadastrar Transação</span>
-          </button>
-
           <div className="flex items-center gap-2 text-xs">
             <span className="text-muted-foreground">Posição em:</span>
             <div className="flex items-center gap-1 rounded-md border border-border px-2 py-1 bg-background">

@@ -13,8 +13,10 @@ import {
   ChevronsLeft,
   ChevronsRight,
   CalendarClock,
+  Plus,
 } from "lucide-react";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { useBoleta } from "@/contexts/BoletaContext";
 
 interface MenuItem {
   title: string;
@@ -46,6 +48,7 @@ export function AppSidebar({
 }) {
   const location = useLocation();
   const isAdmin = useIsAdmin();
+  const { abrirBoleta } = useBoleta();
   const isActive = (url: string) =>
     url === "/carteira" ? location.pathname.startsWith("/carteira") : location.pathname === url;
 
@@ -98,6 +101,30 @@ export function AppSidebar({
             </Link>
           );
         })}
+
+        {/*
+          "Cadastrar Transação" era um botao no header e virou a ultima opcao do menu (Daniel,
+          19/09/2026). E uma acao, nao uma rota: por isso um <button> com a mesma altura, o mesmo
+          espacamento e as mesmas cores dos itens de navegacao, e nunca com a marca de ativo.
+        */}
+        <button
+          type="button"
+          onClick={() => abrirBoleta()}
+          title={collapsed ? "Cadastrar Transação" : undefined}
+          className="group relative flex h-9 w-full items-center gap-3 px-3 text-xs font-medium transition-colors"
+        >
+          <Plus
+            size={18}
+            strokeWidth={1.5}
+            className="shrink-0 text-[hsl(210,25%,60%)] group-hover:text-white"
+            style={{ transition: "color 120ms linear" }}
+          />
+          {!collapsed && (
+            <span className="truncate text-[hsl(210,25%,60%)] group-hover:text-white">
+              Cadastrar Transação
+            </span>
+          )}
+        </button>
       </nav>
 
       <div className="border-t border-[hsl(213,40%,28%)]">
