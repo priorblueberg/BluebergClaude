@@ -398,6 +398,73 @@ export async function saldoDeAcaoNaData(
 }
 
 /**
+ * Papeis com alguma posicao no portfolio em uso: a lista de uma VENDA.
+ *
+ * Mesma ideia do `fundosComPosicao`: o papel vem antes da data na boleta, entao a lista nao pode
+ * depender do saldo num dia - o saldo aparece depois, embaixo da quantidade.
+ */
+export async function acoesComPosicao(
+  userId: string,
+): Promise<{ id: string; ticker: string; nome: string; deslistado_em: string | null }[]> {
+  const linhas = await fetchAllRows<{ acao_id: string | null }>((de, ate) =>
+    supabase.from("movimentacoes").select("acao_id").eq("user_id", userId)
+      .not("acao_id", "is", null).range(de, ate),
+  );
+  const ids = [...new Set(linhas.map((m) => m.acao_id).filter((id): id is string => !!id))];
+  if (ids.length === 0) return [];
+
+  const { data } = await supabase
+    .from("cadastro_de_acoes")
+    .select("id, ticker, nome, deslistado_em")
+    .in("id", ids)
+    .order("ticker");
+  return ((data || []) as any[]).map((a) => ({
+    id: a.id, ticker: a.ticker, nome: a.nome, deslistado_em: a.deslistado_em ?? null,
+  }));
+}
+
+/**
+ * Posicoes de um papel, uma por instituicao, no molde do `posicoesDoFundo`.
+ *
+ * A instituicao de cada posicao e a da PRIMEIRA movimentacao dela: e ela que define de quem e a
+ * custodia, e movimentacao posterior nao muda isso.
+ */
+export async function posicoesDaAcao(
+  userId: string,
+  acaoId: string,
+): Promise<{ codigo: string; instituicaoId: string | null; instituicaoNome: string }[]> {
+  const { data } = await supabase
+    .from("movimentacoes")
+    .select("codigo_custodia, instituicao_id, data, created_at")
+    .eq("user_id", userId)
+    .eq("acao_id", acaoId)
+    .not("codigo_custodia", "is", null)
+    .order("data")
+    .order("created_at");
+
+  const primeiraPorCodigo = new Map<string, string | null>();
+  for (const m of (data || []) as any[]) {
+    const k = String(m.codigo_custodia);
+    if (!primeiraPorCodigo.has(k)) primeiraPorCodigo.set(k, m.instituicao_id ?? null);
+  }
+
+  const ids = [...new Set([...primeiraPorCodigo.values()].filter((id): id is string => !!id))];
+  const nomes = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: insts } = await supabase.from("instituicoes").select("id, nome").in("id", ids);
+    for (const i of (insts || []) as any[]) nomes.set(i.id, i.nome ?? "");
+  }
+
+  return [...primeiraPorCodigo.entries()]
+    .map(([codigo, instituicaoId]) => ({
+      codigo,
+      instituicaoId,
+      instituicaoNome: instituicaoId ? nomes.get(instituicaoId) ?? "" : "",
+    }))
+    .sort((a, b) => a.instituicaoNome.localeCompare(b.instituicaoNome, "pt-BR"));
+}
+
+/**
  * Fundos com alguma posicao no portfolio em uso: a lista de um resgate. O fundo vem antes da data
  * na boleta, entao a lista nao pode depender do saldo num dia; o saldo aparece depois, abaixo do
  * valor.

@@ -19,6 +19,14 @@ interface Props {
   disabled?: boolean;
   /** Borda vermelha: campo obrigatorio vazio ao cadastrar, como nos demais seletores da boleta. */
   hasError?: boolean;
+  /**
+   * So estes papeis, sem ir ao catalogo: a lista de uma VENDA.
+   *
+   * `undefined` e a compra, que busca o catalogo inteiro da B3. Um array (mesmo vazio) e a venda,
+   * e ai o campo filtra localmente o que esta em custodia - como o resgate de fundo, que so
+   * oferece fundo com posicao. `null` enquanto a lista ainda nao chegou.
+   */
+  emCustodia?: AcaoEscolhida[] | null;
 }
 
 /** Espera o usuario parar de digitar antes de consultar o catalogo. */
@@ -43,7 +51,7 @@ const MAX_SUGESTOES = 15;
  * fundos - quando o nome vem da fonte, a grafia deixa de depender de quem digitou, e duas
  * grafias nao viram dois ativos.
  */
-export default function AcaoSelect({ value, onChange, disabled, hasError }: Props) {
+export default function AcaoSelect({ value, onChange, disabled, hasError, emCustodia }: Props) {
   const [carregadas, setCarregadas] = useState<AcaoEscolhida[]>([]);
   const [termo, setTermo] = useState("");
   const [sugestoes, setSugestoes] = useState<AcaoEscolhida[]>([]);
@@ -86,6 +94,8 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
 
   // Busca no catalogo, com espera. Sem ela, cada tecla digitada vira uma consulta.
   useEffect(() => {
+    // No modo custodia (venda) a lista ja esta na mao: nada de consultar o catalogo.
+    if (emCustodia !== undefined) { setSugestoes([]); setBuscando(false); return; }
     const q = termo.trim();
     if (q.length < MIN_BUSCA) { setSugestoes([]); setBuscando(false); return; }
 
@@ -115,11 +125,11 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
     }, ESPERA_MS);
 
     return () => { vivo = false; clearTimeout(t); };
-  }, [termo]);
+  }, [termo, emCustodia]);
 
   const escolher = async (a: AcaoEscolhida) => {
-    // Ja carregado: so selecionar, sem pagar a carga de novo.
-    if (carregadas.some((c) => c.ticker === a.ticker)) {
+    // Ja carregado, ou papel em custodia (que por definicao ja tem serie): so selecionar.
+    if (emCustodia !== undefined || carregadas.some((c) => c.ticker === a.ticker)) {
       onChange(a.id, a.ticker, a.nome, a.deslistado_em ?? null);
       setUltimaEscolhida(a);
       setTermo(""); setSugestoes([]);
@@ -161,7 +171,17 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
 
   const selecionada =
     carregadas.find((a) => a.id === value)
+    ?? emCustodia?.find((a) => a.id === value)
     ?? (ultimaEscolhida && ultimaEscolhida.id === value ? ultimaEscolhida : null);
+
+  const modoCustodia = emCustodia !== undefined;
+  const termoBusca = termo.trim().toLowerCase();
+  // Na venda a lista aparece inteira antes de digitar, e digitar so filtra.
+  const daCustodia = (emCustodia ?? []).filter(
+    (a) => !termoBusca || a.ticker.toLowerCase().includes(termoBusca) || a.nome.toLowerCase().includes(termoBusca),
+  );
+  const lista = modoCustodia ? daCustodia : sugestoes;
+  const mostrarLista = !selecionada && (modoCustodia ? emCustodia !== null : termoBusca.length >= MIN_BUSCA);
   const rotuloDaSelecao = selecionada ? `${selecionada.ticker} - ${selecionada.nome}` : "";
 
   // Campo travado (edicao): so o papel, sem busca.
@@ -187,7 +207,16 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
           value={selecionada ? rotuloDaSelecao : termo}
           readOnly={!!selecionada}
           onChange={(e) => setTermo(e.target.value)}
-          placeholder="Buscar por ticker ou nome (ex.: PETR4 ou Petrobras)"
+          placeholder={
+            !modoCustodia
+              ? "Buscar por ticker ou nome (ex.: PETR4 ou Petrobras)"
+              : emCustodia === null
+                ? "Buscando os papéis em custódia..."
+                : emCustodia.length === 0
+                  ? "Nenhum papel em custódia neste portfólio"
+                  : "Selecione o papel em custódia"
+          }
+          disabled={modoCustodia && (emCustodia === null || emCustodia.length === 0)}
           className={cn(
             "h-10 w-full min-w-0 pl-7",
             selecionada ? "pr-9" : "",
@@ -206,13 +235,13 @@ export default function AcaoSelect({ value, onChange, disabled, hasError }: Prop
         )}
       </div>
 
-      {!selecionada && termo.trim().length >= MIN_BUSCA && (
+      {mostrarLista && (emCustodia?.length !== 0) && (
         <div className="max-h-56 overflow-y-auto rounded-md border border-input">
           {buscando && <p className="px-3 py-2 text-xs text-muted-foreground">Buscando...</p>}
-          {!buscando && sugestoes.length === 0 && (
+          {!buscando && lista.length === 0 && (
             <p className="px-3 py-2 text-xs text-muted-foreground">Nenhum papel encontrado.</p>
           )}
-          {!buscando && sugestoes.map((a) => {
+          {!buscando && lista.map((a) => {
             return (
               <button
                 key={a.id}

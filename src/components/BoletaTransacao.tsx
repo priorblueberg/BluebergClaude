@@ -28,7 +28,7 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, saldoDeAcaoNaData, codigoDaPosicaoDeAcao, fmtData, fundosComPosicao, limitesDaSerieDoFundo, posicoesDoFundo, saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, saldoDeAcaoNaData, codigoDaPosicaoDeAcao, acoesComPosicao, posicoesDaAcao, fmtData, fundosComPosicao, limitesDaSerieDoFundo, posicoesDoFundo, saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
 import { janelaDoCalendarioDoFundo, mensagemDaDataDoFundo, type LimitesDoFundo } from "@/lib/validacaoDataFundo";
 import { janelaDoCalendarioDaAcao, mensagemDaDataDaAcao } from "@/lib/validacaoDataAcao";
 import CampoDataCalendario from "@/components/CampoDataCalendario";
@@ -1128,6 +1128,68 @@ export default function BoletaTransacao({
   });
 
   /**
+   * A VENDA de acao, no molde das saidas dos outros produtos (Daniel, 19/09/2026).
+   *
+   * Ate aqui a venda era a compra com outro rotulo: a busca oferecia os ~2.332 papeis do catalogo
+   * da B3 e a corretora era busca livre. Renda fixa so oferece titulo em custodia na data, fundo
+   * so fundo com posicao, moeda so moeda com saldo - a acao ficou de fora.
+   */
+  const ehVendaDeAcao = isAcao && tipoMovimentacao === "Venda";
+
+  /**
+   * "Fechar Posição" na venda, como no resgate de fundo e no de renda fixa. Marcado, a quantidade
+   * e o saldo exato do dia e nao se digita.
+   *
+   * Diferenca proposital em relacao ao fundo: la o tipo vira "Resgate Total", aqui continua
+   * "Venda". O "Resgate Total" existe porque o resgate de fundo e digitado em reais e deixa
+   * residuo de fracao de cota; em acao a quantidade e exata, e o encerramento da posicao ja vem do
+   * SALDO calculado no `useCarteiraAcoes`, nao do cadastro. Inventar um tipo novo so para acao
+   * mudaria o que a tela de Movimentacoes mostra sem resolver nada.
+   */
+  const [fecharPosicaoAcao, setFecharPosicaoAcao] = useState(false);
+
+  // Papeis com posicao no portfolio: a lista da venda. `null` enquanto carrega.
+  const [acoesEmCustodia, setAcoesEmCustodia] = useState<
+    { id: string; ticker: string; nome: string; deslistado_em: string | null }[] | null
+  >(null);
+  useEffect(() => {
+    if (!user || !isAcao || !ehVendaDeAcao) {
+      setAcoesEmCustodia(null);
+      return;
+    }
+    let vivo = true;
+    setAcoesEmCustodia(null);
+    acoesComPosicao(user.id).then((l) => { if (vivo) setAcoesEmCustodia(l); });
+    return () => { vivo = false; };
+  }, [user, isAcao, ehVendaDeAcao]);
+
+  // Posicoes do papel escolhido, uma por instituicao. `undefined` enquanto carrega.
+  const [posicoesAcao, setPosicoesAcao] = useState<
+    { codigo: string; instituicaoId: string | null; instituicaoNome: string }[] | undefined
+  >(undefined);
+  useEffect(() => {
+    if (!user || !isAcao || !ehVendaDeAcao || !acaoId || isEditing) {
+      setPosicoesAcao(undefined);
+      return;
+    }
+    let vivo = true;
+    setPosicoesAcao(undefined);
+    posicoesDaAcao(user.id, acaoId).then((ps) => {
+      if (!vivo) return;
+      setPosicoesAcao(ps);
+      // Posicao unica: a instituicao e ela, sem perguntar. Varias: o usuario escolhe qual.
+      if (ps.length === 1) {
+        setInstituicaoId(ps[0].instituicaoId ?? "");
+        setInstituicaoNome(ps[0].instituicaoNome);
+      } else {
+        setInstituicaoId("");
+        setInstituicaoNome("");
+      }
+    });
+    return () => { vivo = false; };
+  }, [user, isAcao, ehVendaDeAcao, acaoId, isEditing]);
+
+  /**
    * A data da acao, embaixo do campo, no mesmo molde do fundo (Daniel, 19/09/2026).
    *
    * A boleta de renda variavel e de 07/09/2026 e ficou de fora da refatoracao de 11 a 13/09, que
@@ -1171,7 +1233,33 @@ export default function BoletaTransacao({
     return () => { vivo = false; };
   }, [isAcao, user, acaoId, instituicaoId, data, editId]);
 
-  const ehVendaDeAcao = isAcao && tipoMovimentacao === "Venda";
+  // Trocou de Compra para Venda com um papel que nao esta em custodia: o papel sai, como a moeda
+  // sai quando deixa de existir na data. Ficar com ele selecionado levaria a boleta a um estado
+  // que a lista da venda nem oferece.
+  useEffect(() => {
+    if (!ehVendaDeAcao || isEditing || !acaoId || !acoesEmCustodia) return;
+    if (acoesEmCustodia.some((a) => a.id === acaoId)) return;
+    setAcaoId(""); setAcaoTicker(""); setAcaoNome(""); setAcaoDeslistadoEm(null);
+    setInstituicaoId(""); setInstituicaoNome("");
+  }, [ehVendaDeAcao, isEditing, acaoId, acoesEmCustodia]);
+
+  // O "Fechar Posição" solta sozinho quando deixa de fazer sentido, e acompanha o saldo que chega
+  // depois de marcado (trocar a data muda o saldo).
+  useEffect(() => {
+    if (!ehVendaDeAcao) {
+      if (fecharPosicaoAcao) setFecharPosicaoAcao(false);
+      return;
+    }
+    if (!fecharPosicaoAcao) return;
+    if (saldoAcao == null || saldoAcao <= 1e-8) {
+      setFecharPosicaoAcao(false);
+      setQtdCotas("");
+      return;
+    }
+    const exato = saldoAcao.toLocaleString("pt-BR", { useGrouping: false, maximumFractionDigits: 8 });
+    if (qtdCotas !== exato) setQtdCotas(exato);
+  }, [ehVendaDeAcao, fecharPosicaoAcao, saldoAcao, qtdCotas]);
+
   const janelaAcao = janelaDoCalendarioDaAcao(DATA_MINIMA_CARTEIRA, maxDataISO);
   const mensagemDataAcao = !isAcao ? null : mensagemDaDataDaAcao({
     data,
@@ -1237,6 +1325,7 @@ export default function BoletaTransacao({
     setResgateCalendarOpen(false);
     // Gravou e a boleta voltou ao zero: o vinculo com a posicao de origem tambem acaba.
     setAcaoDaPosicao(null);
+    setFecharPosicaoAcao(false);
     if (isEditing) {
       onFechar?.();
     }
@@ -1338,7 +1427,9 @@ export default function BoletaTransacao({
       // certa é a da nota de corretagem, que é também a do GorilaVIEW: quantidade e preço, com
       // o total calculado.
       const precoEfetivo = parseCurrencyToNumber(valor);
-      const qtdOperacao = parseQuantidade(qtdCotas)!;
+      // Com "Fechar Posição" a quantidade e o saldo em memoria, nao o texto do campo: formatar e
+      // reinterpretar um numero com oito casas e jeito de deixar residuo para tras.
+      const qtdOperacao = fecharPosicaoAcao && saldoAcao != null ? saldoAcao : parseQuantidade(qtdCotas)!;
       const valorNum = precoEfetivo * qtdOperacao;
 
       // Trava contra erro de casa decimal. Não barra: AVISA e pede confirmação. Preço de
@@ -2143,9 +2234,16 @@ Confirma que o preço está certo?`,
    * posicao existente e abrir uma segunda posicao sem perceber.
    *
    * Trocar o papel solta o campo: a instituicao so e "a da posicao" enquanto o papel for o dela.
+   *
+   * Na VENDA vale sempre, como no fundo desde 04ad293: com uma posicao so a instituicao e ela; com
+   * mais de uma, o campo vira a escolha de QUAL posicao esta sendo vendida.
    */
   const instituicaoDaPosicaoAcao =
-    isAcao && (isEditing || (!!acaoDaPosicao && acaoId === acaoDaPosicao));
+    isAcao && (
+      isEditing
+      || (!!acaoDaPosicao && acaoId === acaoDaPosicao)
+      || (ehVendaDeAcao && !!acaoId && (posicoesAcao === undefined || posicoesAcao.length === 1))
+    );
 
   const campoFundo = (
     <Field label="Fundo" required>
@@ -2289,6 +2387,8 @@ Confirma que o preço está certo?`,
                 value={acaoId}
                 disabled={isEditing}
                 hasError={erroAcaoObrigatoria}
+                // Na venda, so o que esta em custodia; na compra, o catalogo inteiro da B3.
+                emCustodia={ehVendaDeAcao ? acoesEmCustodia : undefined}
                 onChange={(id, ticker, nome, deslistadoEm) => {
                   setAcaoId(id); setAcaoTicker(ticker); setAcaoNome(nome);
                   setAcaoDeslistadoEm(deslistadoEm ?? null);
@@ -2304,6 +2404,25 @@ Confirma que o preço está certo?`,
                   className="bg-muted/50"
                   value={instituicaoNome}
                   placeholder={!isEditing && !instituicaoNome ? "Buscando a instituição da posição..." : ""}
+                />
+              </Field>
+            ) : ehVendaDeAcao && !!acaoId && posicoesAcao && posicoesAcao.length > 1 ? (
+              // Mesmo papel em mais de uma corretora: o campo deixa de ser busca e vira a escolha
+              // de QUAL posicao esta sendo vendida, como no resgate de fundo.
+              <Field label="Instituição (custodiante)" required>
+                <NativeSelect
+                  value={instituicaoId}
+                  onChange={(id) => {
+                    const pos = posicoesAcao.find((x) => (x.instituicaoId ?? "") === id);
+                    setInstituicaoId(id);
+                    setInstituicaoNome(pos?.instituicaoNome ?? "");
+                  }}
+                  placeholder="Selecione a instituição"
+                  hasError={erroInstituicaoObrigatoria}
+                  options={posicoesAcao.map((p) => ({
+                    value: p.instituicaoId ?? "",
+                    label: p.instituicaoNome || `Posição ${p.codigo}`,
+                  }))}
                 />
               </Field>
             ) : (
@@ -2361,7 +2480,12 @@ Confirma que o preço está certo?`,
                   value={qtdCotas}
                   onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
                   placeholder="Ex.: 100"
-                  className={cn(erroQtdObrigatoria ? "border-destructive" : "")}
+                  // Com "Fechar Posição" marcado a quantidade e o saldo e nao se digita.
+                  readOnly={fecharPosicaoAcao}
+                  className={cn(
+                    erroQtdObrigatoria ? "border-destructive" : "",
+                    fecharPosicaoAcao ? "bg-muted/50" : "",
+                  )}
                 />
                 {/* Saldo da posicao na data, na altura da linha de mensagem da data ao lado:
                     aparecer nao muda a altura da boleta. So na venda, que e quem tem teto. */}
@@ -2380,6 +2504,30 @@ Confirma que o preço está certo?`,
                 )}
               </Field>
             </div>
+
+            {/* Fechar Posição, so na venda: leva o saldo exato do dia, como no resgate de fundo e
+                no de renda fixa. O tipo segue "Venda" - ver o comentario do estado. */}
+            {ehVendaDeAcao && (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="fechar-posicao-acao"
+                  checked={fecharPosicaoAcao}
+                  disabled={saldoAcao == null || saldoAcao <= 1e-8}
+                  onCheckedChange={(c) => {
+                    const marcado = !!c;
+                    setFecharPosicaoAcao(marcado);
+                    setQtdCotas(
+                      marcado && saldoAcao != null
+                        ? saldoAcao.toLocaleString("pt-BR", { useGrouping: false, maximumFractionDigits: 8 })
+                        : "",
+                    );
+                  }}
+                />
+                <label htmlFor="fechar-posicao-acao" className="cursor-pointer text-sm font-medium text-foreground">
+                  Fechar Posição
+                </label>
+              </div>
+            )}
 
             {/* Total calculado, como na boleta do GorilaVIEW. Mostrar o produto na tela e o
                 que torna visivel um erro de casa decimal ANTES de gravar. */}
