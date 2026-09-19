@@ -28,8 +28,9 @@ import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
 import { parseQuantidade } from "@/lib/numeroBR";
-import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, fmtData, fundosComPosicao, limitesDaSerieDoFundo, posicoesDoFundo, saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
+import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, saldoDeAcaoNaData, codigoDaPosicaoDeAcao, fmtData, fundosComPosicao, limitesDaSerieDoFundo, posicoesDoFundo, saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
 import { janelaDoCalendarioDoFundo, mensagemDaDataDoFundo, type LimitesDoFundo } from "@/lib/validacaoDataFundo";
+import { janelaDoCalendarioDaAcao, mensagemDaDataDaAcao } from "@/lib/validacaoDataAcao";
 import CampoDataCalendario from "@/components/CampoDataCalendario";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -464,16 +465,17 @@ export default function BoletaTransacao({
   }, [isFundo, fundoId]);
 
   // Feriado so o calendario do banco sabe; fim de semana a validacao ja pega sem ir ao banco.
-  const [diaUtilFundo, setDiaUtilFundo] = useState<{ data: string; util: boolean } | null>(null);
+  // Serve fundo e acao: os dois mostram a mensagem embaixo do campo de data.
+  const [diaUtilDaData, setDiaUtilDaData] = useState<{ data: string; util: boolean } | null>(null);
   useEffect(() => {
-    if (!isFundo || !data) {
-      setDiaUtilFundo(null);
+    if (!(isFundo || isAcao) || !data) {
+      setDiaUtilDaData(null);
       return;
     }
     let vivo = true;
-    ehDiaUtil(data).then((util) => { if (vivo) setDiaUtilFundo({ data, util }); });
+    ehDiaUtil(data).then((util) => { if (vivo) setDiaUtilDaData({ data, util }); });
     return () => { vivo = false; };
-  }, [isFundo, data]);
+  }, [isFundo, isAcao, data]);
 
   // Load produtos when categoria changes (for Aplicação flow)
   useEffect(() => {
@@ -1040,6 +1042,8 @@ export default function BoletaTransacao({
   // Aberta pelo "!" do fundo sem cota (Daniel, 12/09/2026): resgate da posicao com "Fechar Posição"
   // na data da ultima cota. O valor vem do efeito acima, quando o saldo e a cota chegam.
   const preenchidoRef = useRef(false);
+  /** Papel que veio da posicao no "Nova Operação": trocar de papel solta a instituicao. */
+  const [acaoDaPosicao, setAcaoDaPosicao] = useState<string | null>(null);
   useEffect(() => {
     if (!preenchimento || preenchidoRef.current || categorias.length === 0) return;
     if (preenchimento.tipo !== "encerrar_fundo") return;
@@ -1088,6 +1092,7 @@ export default function BoletaTransacao({
           setAcaoTicker(acao.ticker);
           setAcaoNome(acao.nome);
           setAcaoDeslistadoEm(acao.deslistado_em ?? null);
+          setAcaoDaPosicao(acao.id);
         }
       }
 
@@ -1116,11 +1121,69 @@ export default function BoletaTransacao({
     data,
     piso: DATA_MINIMA_CARTEIRA,
     limites: limitesFundo,
-    diaUtil: diaUtilFundo && diaUtilFundo.data === data ? diaUtilFundo.util : undefined,
+    diaUtil: diaUtilDaData && diaUtilDaData.data === data ? diaUtilDaData.util : undefined,
     cotaNaData: cotaOp && cotaOp.dataCotizacao === data ? cotaOp.cota : undefined,
     ehSaida,
     // Sem posicao escolhida (fundo em mais de uma instituicao) ainda nao ha o que dizer sobre custodia.
     saldoNaData: !ehSaida || comSaldo == null || !codigoPosicaoFundo ? undefined : saldoDaSaida,
+  });
+
+  /**
+   * A data da acao, embaixo do campo, no mesmo molde do fundo (Daniel, 19/09/2026).
+   *
+   * A boleta de renda variavel e de 07/09/2026 e ficou de fora da refatoracao de 11 a 13/09, que
+   * levou fundo e renda fixa para a validacao no proprio campo. Aqui ela entra.
+   */
+
+  // Fechamento do papel na data: informacao em cinza embaixo do campo, como a cota no fundo.
+  // `preco: null` e dia util sem fechamento na base; a boleta mostra, mas nao impede.
+  const [fechamentoDoDia, setFechamentoDoDia] = useState<{ data: string; preco: number | null } | null>(null);
+  useEffect(() => {
+    if (!isAcao || !acaoTicker || !data) {
+      setFechamentoDoDia(null);
+      return;
+    }
+    let vivo = true;
+    (async () => {
+      const { data: row } = await supabase
+        .from("cotacoes_acoes")
+        .select("fechamento")
+        .eq("ticker", acaoTicker)
+        .eq("data", data)
+        .maybeSingle();
+      if (vivo) setFechamentoDoDia({ data, preco: row ? Number((row as any).fechamento) : null });
+    })();
+    return () => { vivo = false; };
+  }, [isAcao, acaoTicker, data]);
+
+  // Saldo em acoes da posicao na data, mostrado ANTES de gravar - como fundo e moeda ja faziam.
+  // Ate 19/09/2026 a venda maior que o saldo so era barrada depois do clique em Cadastrar.
+  // `undefined` = carregando, `null` = nao ha posicao desse papel nessa instituicao.
+  const [saldoAcao, setSaldoAcao] = useState<number | null | undefined>(undefined);
+  useEffect(() => {
+    if (!isAcao || !user || !acaoId || !instituicaoId || !data) {
+      setSaldoAcao(undefined);
+      return;
+    }
+    let vivo = true;
+    setSaldoAcao(undefined);
+    saldoDeAcaoNaData(user.id, acaoId, instituicaoId, data, editId)
+      .then((q) => { if (vivo) setSaldoAcao(q); });
+    return () => { vivo = false; };
+  }, [isAcao, user, acaoId, instituicaoId, data, editId]);
+
+  const ehVendaDeAcao = isAcao && tipoMovimentacao === "Venda";
+  const janelaAcao = janelaDoCalendarioDaAcao(DATA_MINIMA_CARTEIRA, maxDataISO);
+  const mensagemDataAcao = !isAcao ? null : mensagemDaDataDaAcao({
+    data,
+    piso: DATA_MINIMA_CARTEIRA,
+    // O teto geral e o do papel entram separados: assim o papel deslistado explica a deslistagem,
+    // e nao "fechamento nao divulgado".
+    teto: maxDataGeral,
+    ultimoPregaoDoPapel: tetoDoPapel,
+    diaUtil: diaUtilDaData && diaUtilDaData.data === data ? diaUtilDaData.util : undefined,
+    ehVenda: ehVendaDeAcao,
+    saldoNaData: saldoAcao,
   });
 
   // Mudou a data numa venda de moeda: a moeda escolhida pode nao existir na nova data, entao sai.
@@ -1173,6 +1236,8 @@ export default function BoletaTransacao({
     setFecharPosicao(false);
     setFecharPosicaoFundo(false);
     setResgateCalendarOpen(false);
+    // Gravou e a boleta voltou ao zero: o vinculo com a posicao de origem tambem acaba.
+    setAcaoDaPosicao(null);
     if (isEditing) {
       onFechar?.();
     }
@@ -1242,16 +1307,27 @@ export default function BoletaTransacao({
       if (parseQuantidade(qtdCotas) == null) faltando.add("qtdCotas");
       if (!instituicaoId) faltando.add("instituicaoId");
       if (faltando.size > 0) {
+        // Borda vermelha nos campos e o aviso na linha reservada, como no fundo. Sem toast: o
+        // erro fica onde ele aconteceu (Daniel, 11/09/2026, estendido a renda variavel em 19/09).
         setValidationErrors(faltando);
-        toast.error("Preencha todos os campos obrigatórios.");
         return;
       }
       setValidationErrors(new Set());
 
+      // A data errada ja se explica embaixo do campo. Aqui so impede a gravacao.
+      if (mensagemDataAcao) {
+        setValidationErrors(new Set(["data"]));
+        return;
+      }
       const foraJanela = foraDaJanela(data, maxDataISO);
-      if (foraJanela) { toast.error(foraJanela); return; }
+      if (foraJanela) {
+        setValidationErrors(new Set(["data"]));
+        return;
+      }
+      // O feriado que o efeito ainda nao tinha lido: confirma no banco e devolve para a mensagem.
       if (!(await ehDiaUtil(data))) {
-        toast.error("A data da operação deve ser um dia útil.");
+        setDiaUtilDaData({ data, util: false });
+        setValidationErrors(new Set(["data"]));
         return;
       }
 
@@ -1298,22 +1374,15 @@ Confirma que o preço está certo?`,
 
       setSubmitting(true);
       try {
-        // Mesmo papel na mesma instituição é a mesma posição.
-        const { data: existentes } = await supabase
-          .from("movimentacoes")
-          .select("codigo_custodia")
-          .eq("user_id", user.id)
-          .eq("acao_id", acaoId)
-          .eq("instituicao_id", instituicaoId)
-          .not("codigo_custodia", "is", null)
-          .limit(1);
-
-        const codigoCustodia = existentes && existentes.length > 0
-          ? String(existentes[0].codigo_custodia)
-          : await proximoCodigoCustodia();
+        // Mesmo papel na mesma instituição é a mesma posição. A mesma busca que o campo de saldo
+        // usa, para a tela e a gravação nunca discordarem sobre qual posição é esta.
+        const codigoCustodia =
+          (await codigoDaPosicaoDeAcao(user.id, acaoId, instituicaoId)) ?? (await proximoCodigoCustodia());
 
         // Venda não pode passar do saldo: o motor aceita posição negativa e ela seguiria
-        // "rendendo", então o erro só apareceria semanas depois na carteira.
+        // "rendendo", então o erro só apareceria semanas depois na carteira. O campo de saldo já
+        // mostra o teto antes do clique; esta é a última barreira, contra a corrida entre o que a
+        // tela leu e o que foi lançado nesse meio-tempo.
         if (tipoMovimentacao === "Venda" && qtdOperacao != null) {
           const saldo = await saldoEmQuantidade(codigoCustodia, user.id, data, editId);
           if (qtdOperacao > saldo + 1e-8) {
@@ -1527,7 +1596,7 @@ Confirma que o preço está certo?`,
         return;
       }
       if (!(await ehDiaUtil(data))) {
-        setDiaUtilFundo({ data, util: false });
+        setDiaUtilDaData({ data, util: false });
         setValidationErrors(new Set(["data"]));
         return;
       }
@@ -2058,6 +2127,26 @@ Confirma que o preço está certo?`,
   const erroInstituicaoObrigatoria = validationErrors.has("instituicaoId") && !instituicaoId;
   const faltamObrigatoriosFundo = erroDataObrigatoria || erroValorObrigatorio || erroInstituicaoObrigatoria;
 
+  // Os mesmos derivados, do lado da acao. O `validationErrors` ja era preenchido no submit desde
+  // 07/09/2026, mas nada no JSX de renda variavel o lia: o estado existia e nao pintava nada.
+  const erroAcaoObrigatoria = validationErrors.has("acaoId") && !acaoId;
+  const erroQtdObrigatoria = validationErrors.has("qtdCotas") && parseQuantidade(qtdCotas) == null;
+  const faltamObrigatoriosAcao =
+    erroAcaoObrigatoria || erroDataObrigatoria || erroValorObrigatorio
+    || erroQtdObrigatoria || erroInstituicaoObrigatoria;
+
+  /**
+   * Instituicao so de leitura na acao, como no fundo desde 04ad293.
+   *
+   * Vale ao editar e quando a boleta foi aberta pelo "Nova Operação" do detalhe da posicao: ali a
+   * instituicao veio da propria custodia, e deixa-la editavel permitiria trocar a corretora de uma
+   * posicao existente e abrir uma segunda posicao sem perceber.
+   *
+   * Trocar o papel solta o campo: a instituicao so e "a da posicao" enquanto o papel for o dela.
+   */
+  const instituicaoDaPosicaoAcao =
+    isAcao && (isEditing || (!!acaoDaPosicao && acaoId === acaoDaPosicao));
+
   const campoFundo = (
     <Field label="Fundo" required>
       {ehSaida && fundosComPosicaoIds && fundosDisponiveis.length === 0 ? (
@@ -2188,21 +2277,75 @@ Confirma que o preço está certo?`,
           </Alert>
         )}
 
-        {/* ── Ações ── */}
+        {/* ── Renda Variável ──
+            Alinhada com fundo e renda fixa em 19/09/2026: ativo primeiro, instituição logo abaixo
+            dele, validação no próprio campo e o saldo antes de gravar. Preço e quantidade ficam
+            lado a lado porque o total sai da multiplicação dos dois, e ele aparece na linha
+            seguinte - é a ordem da nota de corretagem e a do GorilaVIEW. */}
         {showAcaoFields && (
           <>
+            <Field label="Ação" required>
+              <AcaoSelect
+                value={acaoId}
+                disabled={isEditing}
+                hasError={erroAcaoObrigatoria}
+                onChange={(id, ticker, nome, deslistadoEm) => {
+                  setAcaoId(id); setAcaoTicker(ticker); setAcaoNome(nome);
+                  setAcaoDeslistadoEm(deslistadoEm ?? null);
+                }}
+              />
+            </Field>
+
+            {instituicaoDaPosicaoAcao ? (
+              <Field label="Instituição (custodiante)">
+                <Input
+                  readOnly
+                  tabIndex={-1}
+                  className="bg-muted/50"
+                  value={instituicaoNome}
+                  placeholder={!isEditing && !instituicaoNome ? "Buscando a instituição da posição..." : ""}
+                />
+              </Field>
+            ) : (
+              <Field label="Instituição (custodiante)" required>
+                <EntidadeSelect
+                  tipo="instituicao"
+                  value={instituicaoId}
+                  onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); }}
+                  tituloCadastro="Cadastrar Nova Instituição"
+                  labelCadastro="Nome da Instituição"
+                  placeholder="Busque a corretora"
+                  hasError={erroInstituicaoObrigatoria}
+                />
+              </Field>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <Field label="Data da Transação" required>
-                <Input type="date" value={data} min={limitesData.min} max={limitesData.max} onChange={(e) => setData(e.target.value)} />
+                {/* Calendario de 02/01/2023 ate o teto de calculo, sem fim de semana. O feriado e o
+                    papel deslistado nao dao para bloquear no calendario, e viram mensagem. */}
+                <CampoDataCalendario
+                  value={data}
+                  onChange={setData}
+                  min={janelaAcao.min}
+                  max={janelaAcao.max}
+                  mensagem={mensagemDataAcao}
+                  destacarErro={erroDataObrigatoria}
+                  // O fechamento do dia e so informacao, em cinza, como o valor da cota no fundo.
+                  // Ele e a referencia da trava de casa decimal, entao ver antes de digitar ajuda.
+                  informacao={
+                    data && !mensagemDataAcao && fechamentoDoDia?.data === data && fechamentoDoDia.preco != null
+                      ? `Fechamento do dia: ${fmtBrlDisplay(fechamentoDoDia.preco)}`
+                      : null
+                  }
+                />
               </Field>
-              <Field label="Ação" required>
-                <AcaoSelect
-                  value={acaoId}
-                  disabled={isEditing}
-                  onChange={(id, ticker, nome, deslistadoEm) => {
-                    setAcaoId(id); setAcaoTicker(ticker); setAcaoNome(nome);
-                    setAcaoDeslistadoEm(deslistadoEm ?? null);
-                  }}
+              <Field label="Custos da Operação (R$)">
+                <Input
+                  value={custosOp}
+                  onChange={(e) => setCustosOp(formatCurrency(e.target.value))}
+                  placeholder="Corretagem e emolumentos"
+                  inputMode="numeric"
                 />
               </Field>
             </div>
@@ -2214,6 +2357,7 @@ Confirma que o preço está certo?`,
                   onChange={(e) => setValor(formatCurrency(e.target.value))}
                   placeholder="0,00"
                   inputMode="numeric"
+                  className={cn(erroValorObrigatorio ? "border-destructive" : "")}
                 />
               </Field>
               <Field label="Quantidade de Ações" required>
@@ -2221,47 +2365,46 @@ Confirma que o preço está certo?`,
                   value={qtdCotas}
                   onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
                   placeholder="Ex.: 100"
+                  className={cn(erroQtdObrigatoria ? "border-destructive" : "")}
                 />
+                {/* Saldo da posicao na data, na altura da linha de mensagem da data ao lado:
+                    aparecer nao muda a altura da boleta. So na venda, que e quem tem teto. */}
+                {ehVendaDeAcao && (
+                  <p className="mt-1 h-4 whitespace-nowrap text-xs leading-4 text-muted-foreground">
+                    {!acaoId || !instituicaoId || !data
+                      ? ""
+                      : saldoAcao === undefined
+                        ? "Calculando o saldo..."
+                        : saldoAcao == null
+                          ? ""
+                          : `Saldo em ${fmtData(data)}: ${saldoAcao.toLocaleString("pt-BR", { maximumFractionDigits: 8 })} ações`}
+                  </p>
+                )}
               </Field>
             </div>
 
             {/* Total calculado, como na boleta do GorilaVIEW. Mostrar o produto na tela e o
                 que torna visivel um erro de casa decimal ANTES de gravar. */}
-            {valor && parseQuantidade(qtdCotas) != null && (
-              <p className="text-sm text-muted-foreground">
-                Total da operação:{" "}
-                <strong className="text-foreground">
-                  {(parseCurrencyToNumber(valor) * (parseQuantidade(qtdCotas) ?? 0))
-                    .toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
-                </strong>
-              </p>
-            )}
-
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Custos da Operação (R$)">
-                <Input
-                  value={custosOp}
-                  onChange={(e) => setCustosOp(formatCurrency(e.target.value))}
-                  placeholder="Corretagem e emolumentos"
-                  inputMode="numeric"
-                />
-              </Field>
-              <Field label="Instituição (custodiante)" required>
-                <EntidadeSelect
-                  tipo="instituicao"
-                  value={instituicaoId}
-                  onChange={(id, nome) => { setInstituicaoId(id); setInstituicaoNome(nome); }}
-                  tituloCadastro="Cadastrar Nova Instituição"
-                  labelCadastro="Nome da Instituição"
-                  placeholder="Busque a corretora"
-                />
-              </Field>
-            </div>
+            <p className="h-5 text-sm leading-5 text-muted-foreground">
+              {valor && parseQuantidade(qtdCotas) != null ? (
+                <>
+                  Total da operação:{" "}
+                  <strong className="text-foreground">
+                    {fmtBrlDisplay(parseCurrencyToNumber(valor) * (parseQuantidade(qtdCotas) ?? 0))}
+                  </strong>
+                </>
+              ) : ""}
+            </p>
 
             <p className="text-xs text-muted-foreground">
-              A quantidade em branco é derivada pelo fechamento do dia. Informe a quantidade
-              quando quiser registrar o preço em que executou de fato. Dividendos e JCP entram
-              sozinhos, pela data-ex - não precisam ser lançados.
+              Quantidade e preço unitário, como na nota de corretagem: o total sai da multiplicação
+              dos dois. Dividendos e JCP entram sozinhos, pela data-ex - não precisam ser lançados.
+            </p>
+
+            {/* Linha do aviso de obrigatorio vazio; ela existe sempre, vazia ou nao, para os
+                botoes nao descerem quando o aviso aparece. */}
+            <p className="h-4 text-xs font-medium leading-4 text-destructive">
+              {faltamObrigatoriosAcao ? "Preencha os campos obrigatórios" : ""}
             </p>
 
             <div className="flex gap-3">

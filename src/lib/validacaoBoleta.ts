@@ -360,6 +360,44 @@ export async function saldoEmQuantidade(
 }
 
 /**
+ * Codigo de custodia da posicao de um papel numa instituicao, ou null se ela ainda nao existe.
+ *
+ * Mesmo papel na mesma instituicao e a mesma posicao - a regra que a gravacao ja usava, agora
+ * tambem no caminho que mostra o saldo ANTES de cadastrar.
+ */
+export async function codigoDaPosicaoDeAcao(
+  userId: string,
+  acaoId: string,
+  instituicaoId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("movimentacoes")
+    .select("codigo_custodia")
+    .eq("user_id", userId)
+    .eq("acao_id", acaoId)
+    .eq("instituicao_id", instituicaoId)
+    .not("codigo_custodia", "is", null)
+    .limit(1);
+  return data && data.length > 0 ? String(data[0].codigo_custodia) : null;
+}
+
+/**
+ * Saldo em acoes de um papel numa instituicao ate a data. `null` quando nao ha posicao nenhuma,
+ * para a boleta separar "nao tem custodia" de "tem custodia zerada".
+ */
+export async function saldoDeAcaoNaData(
+  userId: string,
+  acaoId: string,
+  instituicaoId: string,
+  ateDataISO: string,
+  ignorarId?: string | null,
+): Promise<number | null> {
+  const codigo = await codigoDaPosicaoDeAcao(userId, acaoId, instituicaoId);
+  if (!codigo) return null;
+  return saldoEmQuantidade(codigo, userId, ateDataISO, ignorarId);
+}
+
+/**
  * Fundos com alguma posicao no portfolio em uso: a lista de um resgate. O fundo vem antes da data
  * na boleta, entao a lista nao pode depender do saldo num dia; o saldo aparece depois, abaixo do
  * valor.

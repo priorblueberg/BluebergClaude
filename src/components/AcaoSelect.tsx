@@ -16,6 +16,8 @@ interface Props {
   value: string;
   onChange: (id: string, ticker: string, nome: string, deslistadoEm?: string | null) => void;
   disabled?: boolean;
+  /** Borda vermelha: campo obrigatorio vazio ao cadastrar, como nos demais seletores da boleta. */
+  hasError?: boolean;
 }
 
 /** Espera o usuario parar de digitar antes de consultar o catalogo. */
@@ -42,7 +44,7 @@ const MAX_SUGESTOES = 15;
  * fundos - quando o nome vem da fonte, a grafia deixa de depender de quem digitou, e duas
  * grafias nao viram dois ativos.
  */
-export default function AcaoSelect({ value, onChange, disabled }: Props) {
+export default function AcaoSelect({ value, onChange, disabled, hasError }: Props) {
   const [carregadas, setCarregadas] = useState<AcaoEscolhida[]>([]);
   const [termo, setTermo] = useState("");
   const [sugestoes, setSugestoes] = useState<AcaoEscolhida[]>([]);
@@ -140,7 +142,7 @@ export default function AcaoSelect({ value, onChange, disabled }: Props) {
   return (
     <div className="flex flex-col gap-2">
       <select
-        className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+        className={`h-10 rounded-md border bg-background px-3 text-sm ${hasError ? "border-destructive" : "border-input"}`}
         value={value}
         disabled={disabled}
         onChange={(e) => {
