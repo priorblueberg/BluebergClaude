@@ -46,7 +46,7 @@ export function useDetalheDaLamina({
     let vivo = true;
     supabase
       .from("custodia")
-      .select("codigo_custodia, data_inicio, categoria_id, fundo_id, moeda, acao_id, indexador, taxa, modalidade, pagamento, vencimento, categorias(nome), emissores(nome), cadastro_de_fundos(cnpj_classe)")
+      .select("codigo_custodia, data_inicio, categoria_id, fundo_id, moeda, acao_id, indexador, taxa, modalidade, pagamento, vencimento, categorias(nome), emissores(nome), cadastro_de_fundos(cnpj_classe), cadastro_de_acoes(nome)")
       .eq("user_id", user.id)
       .eq("codigo_custodia", codigo)
       .maybeSingle()
@@ -68,6 +68,9 @@ export function useDetalheDaLamina({
           pagamento: r.pagamento ?? null,
           emissor_nome: r.emissores?.nome ?? null,
           vencimento: r.vencimento ?? null,
+          // A razao social da acao vem do catalogo da B3, e nao da tabela de emissores, que so
+          // tem emissor de renda fixa e vinha sempre nula aqui.
+          acaoNome: r.cadastro_de_acoes?.nome ?? null,
         } : null);
       });
     return () => { vivo = false; };

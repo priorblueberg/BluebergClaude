@@ -44,6 +44,25 @@ export function ultimoAte(serie: { data: string; valor: number }[], ate: string)
   return achado;
 }
 
+/**
+ * Ultimo valor investido com posicao viva na janela, ou null.
+ *
+ * Serve de base para o dividend yield de uma posicao ja encerrada: depois da venda o custo e zero,
+ * mas o provento do periodo veio do capital que estava ali antes dela.
+ */
+export function ultimoCustoComPosicao(
+  linhas: { data: string; valorInvestido: number }[],
+  inicio: string,
+  fim: string,
+): number | null {
+  let achado: number | null = null;
+  for (const l of linhas) {
+    if (l.data < inicio || l.data > fim) continue;
+    if (l.valorInvestido > 0) achado = l.valorInvestido;
+  }
+  return achado;
+}
+
 /** Dados da posicao com preco e quantidade. Preco medio como no Gorila: valor investido / quantidade. */
 export function dadosDaPosicao(
   valorInvestido: number,
@@ -315,6 +334,8 @@ export interface CadastroDaPosicao {
   pagamento: string | null;
   emissor_nome: string | null;
   vencimento: string | null;
+  /** Razao social da empresa, em acao: vem do `cadastro_de_acoes`, nao da tabela de emissores. */
+  acaoNome?: string | null;
 }
 
 /** A linha da posição na lâmina: os números dela e as linhas diárias do motor. */
@@ -364,7 +385,7 @@ export function montarDetalheDaPosicao(
     // Em acao o `emissor_nome` do cadastro e a razao social da empresa (`useCarteiraAcoes` grava
     // `nomeEmpresa` ali). Ela vai abaixo do codigo do ativo (Daniel, 19/09/2026), e nao na linha
     // de termos de renda fixa, que a acao nao tem.
-    razaoSocial: tipo === "acao" ? p.emissor_nome : null,
+    razaoSocial: tipo === "acao" ? p.acaoNome ?? null : null,
     valorInvestido: row.dados.valorInvestido,
     quantidade: row.dados.quantidade,
     precoMedio: row.dados.precoMedio,
@@ -378,10 +399,16 @@ export function montarDetalheDaPosicao(
      *
      * Posição zerada não tem base para a conta, e vira travessão.
      */
-    dividendYield:
-      row.proventos != null && row.dados.valorInvestido != null && row.dados.valorInvestido > 0
-        ? (row.proventos / row.dados.valorInvestido) * 100
-        : null,
+    dividendYield: (() => {
+      if (row.proventos == null) return null;
+      // Posicao encerrada tem valor investido ZERO hoje e mesmo assim recebeu provento enquanto
+      // existiu. A base e o ultimo custo com posicao viva no periodo - o capital que gerou aquele
+      // provento -, e nao o zero de depois da venda.
+      const base = row.dados.valorInvestido && row.dados.valorInvestido > 0
+        ? row.dados.valorInvestido
+        : ultimoCustoComPosicao(row.linhas, inicio, fim);
+      return base != null && base > 0 ? (row.proventos / base) * 100 : null;
+    })(),
     instituicao: row.custodiante || null,
     dataFim: fim,
     // Posicao de fundo encerrada: a linha ja termina no encerramento (`useCarteiraFundos`).

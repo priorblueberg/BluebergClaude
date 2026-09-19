@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildCdiSeries } from "./cdiCalculations";
-import { dadosDaPosicao, montarGraficoETabela, serieDoProduto, tabelaDeRentabilidade, ultimoAte } from "./detalheDaPosicao";
+import { dadosDaPosicao, montarGraficoETabela, serieDoProduto, tabelaDeRentabilidade, ultimoAte, ultimoCustoComPosicao } from "./detalheDaPosicao";
 import { metricasDoProdutoNaJanela } from "./janelaDoProduto";
 import type { DailyRow } from "./rendaFixaEngine";
 
@@ -111,5 +111,24 @@ describe("série da gaveta", () => {
 
   it("para no fim do período do produto", () => {
     expect(serieDoProduto(linhas, calendario, "2026-09-07", "2026-09-08").map((p) => p.data)).toEqual(["2026-09-07", "2026-09-08"]);
+  });
+});
+
+describe("ultimoCustoComPosicao (base do dividend yield)", () => {
+  const linhas = [
+    { data: "2026-02-20", valorInvestido: 26130 },
+    { data: "2026-05-10", valorInvestido: 26130 },
+    { data: "2026-09-08", valorInvestido: 0 },
+    { data: "2026-09-09", valorInvestido: 0 },
+  ];
+
+  it("posição encerrada usa o último custo com posição viva", () => {
+    expect(ultimoCustoComPosicao(linhas, "2026-02-20", "2026-09-09")).toBe(26130);
+  });
+  it("ignora o que está fora da janela", () => {
+    expect(ultimoCustoComPosicao(linhas, "2026-09-08", "2026-09-09")).toBeNull();
+  });
+  it("sem linha nenhuma, null", () => {
+    expect(ultimoCustoComPosicao([], "2026-01-01", "2026-12-31")).toBeNull();
   });
 });
