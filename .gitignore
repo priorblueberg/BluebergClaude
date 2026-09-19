@@ -32,3 +32,5 @@ dist-ssr
 # que o `npm run checar` nao cobre) e o cache do supabase CLI.
 deno.lock
 supabase/.temp/
+.vercel
+.env*
