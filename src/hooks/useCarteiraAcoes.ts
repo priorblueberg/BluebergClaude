@@ -260,6 +260,9 @@ export function useCarteiraAcoes() {
           lingueta,
           // O mesmo numero da coluna de proventos da lamina, para a gaveta nao contar diferente.
           proventos: proventosJanela,
+          // So fundo tem o alerta de cota faltando; o campo e obrigatorio para a gaveta nao
+          // depender de ninguem lembrar de preenche-lo (ver `LinhaDaPosicao`).
+          alertaSemCota: null,
           // Ultimo preco: o da ultima barra negociada ate o fim do periodo do papel.
           dados: dadosDaPosicao(
             ult?.valorInvestido ?? 0,

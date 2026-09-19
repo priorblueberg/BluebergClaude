@@ -233,6 +233,8 @@ export function useCarteiraFundos() {
           existiuNaJanela: m.existiuNaJanela,
           fim: fimFundo,
           lingueta: linguetaDoFim(fimFundo, global, !encerrado),
+          // Fundo nao paga provento: o come-cotas entra como saida, nao como rendimento em caixa.
+          proventos: null,
           // Fundo sem cota da CVM: "!" ao lado do nome, com encerrar ou migrar (Daniel, 12/09/2026).
           alertaSemCota: (() => {
             const desde = encerrado ? null : fundoSemCotaDesde(calendario, ultimaDataAte(cotas, global), global);

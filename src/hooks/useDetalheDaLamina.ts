@@ -7,7 +7,7 @@ import type { ProductListItem } from "@/hooks/useCarteiraRF";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
 import type { CdiRecord } from "@/lib/cdiCalculations";
 import type { PosicaoDetalheData } from "@/components/PosicaoDetalheDialog";
-import { SEM_DADOS, montarDetalheDaPosicao, type CadastroDaPosicao } from "@/lib/detalheDaPosicao";
+import { montarDetalheDaPosicao, type CadastroDaPosicao } from "@/lib/detalheDaPosicao";
 
 /**
  * A gaveta de detalhes aberta pela lista de uma lâmina de carteira (Renda Fixa, Moedas, Ações).
@@ -81,20 +81,19 @@ export function useDetalheDaLamina({
     const i = productList.findIndex((p) => String(p.analysisProduct.codigo_custodia) === codigo);
     if (i < 0) return null;
     const item = productList[i];
-    return montarDetalheDaPosicao(cadastro, {
-      nome: item.nome,
-      valorAtualizado: item.valorAtualizado,
-      ganhoFinanceiro: item.ganhoFinanceiro,
-      rentabilidade: item.rentabilidade,
-      custodiante: item.custodiante,
-      ativo: item.ativo,
-      dados: item.dados ?? SEM_DADOS,
-      fim: item.fim ?? null,
-      alertaSemCota: item.alertaSemCota ?? null,
-      linhas: allProductRows[i] ?? [],
-      // Sem isto o dividend yield da acao fica sempre "—": a linha e montada campo a campo aqui,
-      // e o que nao e copiado nao chega na gaveta.
-      proventos: item.proventos ?? null,
-    }, { calendario, cdiRecords, ibovespa, dataGlobal });
+    /*
+      SPREAD, e nao copia campo a campo (ver o contrato em `LinhaDaPosicao`). Enquanto foi campo a
+      campo, todo campo novo da gaveta dependia de alguem lembrar desta linha - e duas vezes em
+      19/09/2026 ninguem lembrou. Agora o que existe nos dois tipos atravessa sozinho, e campo novo
+      que a lamina nao declarar vira erro de tipo AQUI, antes de virar tracinho na tela.
+
+      So `linhas` e montado a mao, porque nao vem do item: e a serie diaria do motor, que anda em
+      paralelo em `allProductRows`.
+    */
+    return montarDetalheDaPosicao(
+      cadastro,
+      { ...item, linhas: allProductRows[i] ?? [] },
+      { calendario, cdiRecords, ibovespa, dataGlobal },
+    );
   }, [codigo, cadastro, productList, allProductRows, calendario, cdiRecords, ibovespa, dataGlobal]);
 }

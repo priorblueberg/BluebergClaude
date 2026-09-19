@@ -228,6 +228,8 @@ export function useCarteiraMoedas() {
           existiuNaJanela: m.existiuNaJanela,
           fim: fimMoeda,
           lingueta,
+          proventos: null,
+          alertaSemCota: null,
           dados: dadosDaPosicao(
             ult?.valorInvestido ?? 0,
             encerrado ? 0 : (ult?.saldoMoeda ?? 0),

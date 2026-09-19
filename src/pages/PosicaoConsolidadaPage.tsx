@@ -9,7 +9,7 @@ import { useIbovespa } from "@/hooks/useIbovespa";
 import { useCarteiraInvestimentos } from "@/hooks/useCarteiraInvestimentos";
 import AlocacaoBloco from "@/components/AlocacaoBloco";
 import LinguetaDeData from "@/components/LinguetaDeData";
-import { SEM_DADOS, montarDetalheDaPosicao, type DadosDaPosicao } from "@/lib/detalheDaPosicao";
+import { SEM_DADOS, montarDetalheDaPosicao, type DadosDaPosicao, type LinhaDaPosicao } from "@/lib/detalheDaPosicao";
 import { fullSyncAfterDelete } from "@/lib/syncEngine";
 import { PaginaCabecalho, BarraDeFiltros, Contagem, TabelaCartao, LinhaMensagem } from "@/components/PaginaPadrao";
 import { Input } from "@/components/ui/input";
@@ -58,22 +58,14 @@ interface CustodiaProduct {
   fundoCnpj: string | null;
 }
 
-interface PosicaoRow {
-  nome: string;
-  valorAtualizado: number;
-  ganhoFinanceiro: number;
-  rentabilidade: number;
-  custodiante: string;
-  ativo: boolean;
+/**
+ * A linha da tabela. Estende `LinhaDaPosicao` de propósito: é essa mesma linha que vai para a
+ * gaveta, e herdar o tipo faz o compilador cobrar aqui todo campo novo que a gaveta passar a
+ * consumir, em vez de ele chegar vazio na tela (ver o contrato em `LinhaDaPosicao`).
+ */
+interface PosicaoRow extends LinhaDaPosicao {
   product: CustodiaProduct;
-  dados: DadosDaPosicao;
-  /** Fim do período do produto (`src/lib/periodo.ts`). */
-  fim: string | null;
   lingueta: string | null;
-  /** Linhas diárias do motor da posição: a série do gráfico da gaveta sai delas. */
-  linhas: DailyRow[];
-  /** Fundo sem cota da CVM: "!" ao lado do nome. */
-  alertaSemCota: AlertaSemCota | null;
 }
 
 // Cadastro das posições entre navegações: evita a tabela piscar vazia enquanto a busca volta.
@@ -161,20 +153,8 @@ export default function PosicaoConsolidadaPage() {
       if (item.existiuNaJanela === false) continue;
       const product = custodias.get(codigo);
       if (!product) continue;
-      lista.push({
-        nome: item.nome,
-        valorAtualizado: item.valorAtualizado,
-        ganhoFinanceiro: item.ganhoFinanceiro,
-        rentabilidade: item.rentabilidade,
-        custodiante: item.custodiante,
-        ativo: item.ativo,
-        product,
-        dados: item.dados ?? SEM_DADOS,
-        fim: item.fim ?? null,
-        lingueta: item.lingueta ?? null,
-        linhas,
-        alertaSemCota: item.alertaSemCota ?? null,
-      });
+      // Spread, e nao copia campo a campo: o que a lamina passa a produzir chega aqui sozinho.
+      lista.push({ ...item, product, linhas, lingueta: item.lingueta ?? null });
     }
     // Categoria ainda sem motor (ex.: Tesouro Direto): entra só com o valor investido.
     for (const product of custodias.values()) {
@@ -192,6 +172,7 @@ export default function PosicaoConsolidadaPage() {
         lingueta: null,
         linhas: [],
         alertaSemCota: null,
+        proventos: null,
       });
     }
     return lista;

@@ -56,6 +56,14 @@ interface CustodiaProduct {
   emissor_nome: string;
 }
 
+/**
+ * A linha de uma lamina de carteira.
+ *
+ * Os campos que a gaveta de detalhes consome sao OBRIGATORIOS de proposito, ainda que aceitem
+ * `null`: o `useDetalheDaLamina` monta a linha da gaveta com spread deste item, e campo opcional
+ * atravessaria o compilador como `undefined` e chegaria vazio na tela. Ver o contrato em
+ * `LinhaDaPosicao` (`src/lib/detalheDaPosicao.ts`).
+ */
 export interface ProductListItem {
   nome: string;
   valorAtualizado: number;
@@ -66,19 +74,19 @@ export interface ProductListItem {
   /** false quando o papel nao teve nenhum dia dentro da janela. Some da lista. */
   existiuNaJanela?: boolean;
   /** Fim do periodo do produto (`src/lib/periodo.ts`). */
-  fim?: string | null;
+  fim: string | null;
   /** Data da lingueta cinza quando o periodo termina antes da data global. */
   lingueta?: string | null;
   /** Valor investido, quantidade e ultimo preco no fim do periodo: o que a gaveta de detalhes mostra. */
-  dados?: DadosDaPosicao;
+  dados: DadosDaPosicao;
   custodiante: string;
   ativo: boolean;
   estrategia: string | null;
   emissor_nome: string;
   /** Fundo sem cota da CVM: o "!" ao lado do nome, com encerrar ou migrar. */
-  alertaSemCota?: AlertaSemCota | null;
-  /** Proventos recebidos no periodo (acoes): alimentam o dividend yield da gaveta. */
-  proventos?: number | null;
+  alertaSemCota: AlertaSemCota | null;
+  /** Proventos recebidos no periodo. `null` nos produtos que nao tem. */
+  proventos: number | null;
   analysisProduct: AnalysisCustodiaProduct;
 }
 
@@ -399,6 +407,10 @@ export function useCarteiraRF() {
           existiuNaJanela: m.existiuNaJanela,
           fim: fimTitulo,
           lingueta: linguetaDoFim(fimTitulo, global, !encerrado),
+          // Renda fixa nao tem provento em caixa (o cupom entra como juros pago) nem alerta de
+          // cota. Campos obrigatorios de proposito - ver o contrato em `LinhaDaPosicao`.
+          proventos: null,
+          alertaSemCota: null,
           dados: { ...SEM_DADOS, valorInvestido: rows.length ? rows[rows.length - 1].valorInvestido : product.valor_investido },
           custodiante: product.instituicao_nome,
           ativo: !encerrado,

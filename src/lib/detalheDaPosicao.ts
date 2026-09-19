@@ -319,7 +319,23 @@ export interface CadastroDaPosicao {
   acaoNome?: string | null;
 }
 
-/** A linha da posição na lâmina: os números dela e as linhas diárias do motor. */
+/**
+ * A linha da posição na lâmina: os números dela e as linhas diárias do motor.
+ *
+ * CONTRATO, e ele existe por causa de um erro repetido. Em 19/09/2026 dois campos novos chegaram
+ * vazios na gaveta - a razão social e os proventos - porque o `useDetalheDaLamina` copiava a linha
+ * CAMPO A CAMPO a partir do item da lâmina, e o que não era copiado simplesmente não chegava. Nem
+ * o `checar` nem os testes pegam isso: o tipo estava satisfeito e a função pura nem era chamada.
+ *
+ * Duas regras fecham essa porta:
+ *
+ * 1. O `useDetalheDaLamina` monta a linha com SPREAD do item da lâmina, e não campo a campo. Campo
+ *    que existe nos dois lados passa sozinho.
+ * 2. Campo daqui é OBRIGATÓRIO, aceitando `null` quando não se aplica ao produto. Opcional (`?`)
+ *    reabre o buraco: com `?`, o `undefined` de um campo que a lâmina não declarou passa no
+ *    compilador e vira tracinho na tela. Obrigatório vira erro de tipo no spread, que é o aviso
+ *    que faltou.
+ */
 export interface LinhaDaPosicao {
   nome: string;
   valorAtualizado: number;
@@ -332,8 +348,8 @@ export interface LinhaDaPosicao {
   fim: string | null;
   alertaSemCota: AlertaSemCota | null;
   linhas: DailyRow[];
-  /** Proventos recebidos no período (ações). É o mesmo número da coluna da lâmina. */
-  proventos?: number | null;
+  /** Proventos recebidos no período. `null` nos produtos que não têm. */
+  proventos: number | null;
 }
 
 /**
@@ -370,7 +386,7 @@ export function montarDetalheDaPosicao(
     valorInvestido: row.dados.valorInvestido,
     quantidade: row.dados.quantidade,
     precoMedio: row.dados.precoMedio,
-    proventos: row.proventos ?? null,
+    proventos: row.proventos,
     /**
      * Dividend yield DA POSIÇÃO: provento recebido no período sobre o valor investido.
      *
