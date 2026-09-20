@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
-import { calcularAcoesDiario, acoesRowsToDailyRows, type Provento, type EventoCorporativo } from "@/lib/acoesEngine";
+import { calcularAcoesDiario, acoesRowsToDailyRows, proventosRecebidos, type Provento, type EventoCorporativo, type ProventoRecebido } from "@/lib/acoesEngine";
 import { calcularCarteiraRendaFixa, CarteiraRFRow } from "@/lib/carteiraRendaFixaEngine";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import type { DailyRow } from "@/lib/rendaFixaEngine";
@@ -45,6 +45,19 @@ export interface PosicaoAcao {
   lingueta?: string | null;
 }
 
+/**
+ * Um provento recebido por uma posição, com o papel e o custodiante ao lado.
+ *
+ * A tela de Eventos lista isto. Sai daqui, e não de uma consulta própria dela, porque a
+ * quantidade na data-ex depende do motor: ela já vem ajustada por desdobramento e grupamento, e
+ * refazer essa conta numa segunda consulta seria criar uma segunda verdade.
+ */
+export interface ProventoDaPosicao extends ProventoRecebido {
+  ticker: string;
+  custodiante: string;
+  codigo_custodia: string;
+}
+
 let _acoesCachedVersion: number | null = null;
 let _acoesCached: {
   carteiraInfo: CarteiraInfo | null;
@@ -55,6 +68,7 @@ let _acoesCached: {
   cdiRecords: CdiRecord[];
   calendario: { data: string; dia_util: boolean }[];
   periodo: PeriodoDaCarteira | null;
+  proventosDasPosicoes: ProventoDaPosicao[];
 } | null = null;
 
 export function useCarteiraAcoes() {
@@ -64,6 +78,8 @@ export function useCarteiraAcoes() {
   const [carteiraRows, setCarteiraRows] = useState<CarteiraRFRow[]>(_acoesCached?.carteiraRows ?? []);
   const [allProductRows, setAllProductRows] = useState<DailyRow[][]>(_acoesCached?.allProductRows ?? []);
   const [posicoes, setPosicoes] = useState<PosicaoAcao[]>(_acoesCached?.posicoes ?? []);
+  const [proventosDasPosicoes, setProventosDasPosicoes] =
+    useState<ProventoDaPosicao[]>(_acoesCached?.proventosDasPosicoes ?? []);
   const [productList, setProductList] = useState<ProductListItem[]>(_acoesCached?.productList ?? []);
   const [cdiRecords, setCdiRecords] = useState<CdiRecord[]>(_acoesCached?.cdiRecords ?? []);
   const [periodo, setPeriodo] = useState<PeriodoDaCarteira | null>(_acoesCached?.periodo ?? null);
@@ -107,7 +123,7 @@ export function useCarteiraAcoes() {
         setCarteiraRows([]); setAllProductRows([]); setPosicoes([]); setProductList([]); setCdiRecords([]); setPeriodo(null); setCalendario([]);
         setLoading(false);
         _acoesCachedVersion = appliedVersion;
-        _acoesCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], posicoes: [], productList: [], cdiRecords: [], calendario: [], periodo: null };
+        _acoesCached = { carteiraInfo: (cartData as CarteiraInfo) ?? null, carteiraRows: [], allProductRows: [], posicoes: [], productList: [], cdiRecords: [], calendario: [], periodo: null, proventosDasPosicoes: [] };
       };
 
       if (posicoesCustodia.length === 0 || !cartData?.data_inicio || !cartData?.data_calculo) {
@@ -191,6 +207,7 @@ export function useCarteiraAcoes() {
       const prodRows: DailyRow[][] = [];
       const lista: PosicaoAcao[] = [];
       const pList: ProductListItem[] = [];
+      const proventosDeTodas: ProventoDaPosicao[] = [];
       const periodos: { fim: string | null; comPosicao: boolean }[] = [];
 
       for (const p of posicoesCustodia) {
@@ -249,6 +266,18 @@ export function useCarteiraAcoes() {
           existiuNaJanela: m.existiuNaJanela,
           lingueta,
         });
+
+        // Uma linha por parcela declarada, para a tela de Eventos. A quantidade vem das linhas
+        // do motor, ja em unidades de hoje.
+        for (const r of proventosRecebidos(rows, proventosPorTicker.get(p.ticker) || [], eventosPorTicker.get(p.ticker) || [])) {
+          if (r.data_ex < dataInicio || r.data_ex > fimDaLinha) continue;
+          proventosDeTodas.push({
+            ...r,
+            ticker: p.ticker,
+            custodiante: p.custodiante,
+            codigo_custodia: p.codigo_custodia,
+          });
+        }
 
         pList.push({
           nome: p.nome,
@@ -315,10 +344,12 @@ export function useCarteiraAcoes() {
       const calendarioBancario = calendario.map((c) => ({ data: c.data, dia_util: c.dia_util }));
       setCalendario(calendarioBancario);
       _acoesCachedVersion = appliedVersion;
-      _acoesCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi, calendario: calendarioBancario, periodo: per };
+      proventosDeTodas.sort((a, b) => b.data_ex.localeCompare(a.data_ex));
+      setProventosDasPosicoes(proventosDeTodas);
+      _acoesCached = { carteiraInfo: info, carteiraRows: result, allProductRows: prodRows, posicoes: lista, productList: pList, cdiRecords: mergedCdi, calendario: calendarioBancario, periodo: per, proventosDasPosicoes: proventosDeTodas };
       setLoading(false);
     })();
   }, [user, appliedVersion]);
 
-  return { carteiraInfo, carteiraRows, allProductRows, posicoes, productList, cdiRecords, calendario, periodo, loading };
+  return { carteiraInfo, carteiraRows, allProductRows, posicoes, productList, cdiRecords, calendario, periodo, proventosDasPosicoes, loading };
 }

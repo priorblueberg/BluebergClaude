@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useBoleta } from "@/contexts/BoletaContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import {
@@ -315,56 +318,87 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                 </p>
               </div>
 
+              {/*
+                A direcao e escolhida ANTES de abrir a boleta (Daniel, 20/09/2026). Ate 19/09 o
+                botao abria a boleta com o tipo em branco; perguntar aqui protege do mesmo jeito
+                contra uma venda lancada como compra, e poupa um passo la dentro.
+              */}
               {ehRendaVariavel && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 shrink-0 gap-1 text-xs"
-                  onClick={() => abrirBoleta(null, { tipo: "negociar_posicao", codigoCustodia: data.codigoCustodia })}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  Nova Operação
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1 text-xs">
+                      <Plus className="h-3.5 w-3.5" />
+                      Nova Operação
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-[8rem]">
+                    {(["Compra", "Venda"] as const).map((direcao) => (
+                      <DropdownMenuItem
+                        key={direcao}
+                        className="cursor-pointer text-sm"
+                        onClick={() =>
+                          abrirBoleta(null, {
+                            tipo: "negociar_posicao",
+                            codigoCustodia: data.codigoCustodia,
+                            direcao,
+                          })
+                        }
+                      >
+                        {direcao}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
             </div>
 
-            {/* Resumo: os cartoes do dashboard */}
-            <div className="grid grid-cols-4 gap-3">
-              {resumo.map((item) => (
-                <div key={item.rotulo} className="min-w-0 rounded-lg border border-border bg-card p-3 shadow-sm">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.rotulo}</p>
-                  <p className="mt-2 text-lg font-bold text-foreground tabular-nums">{item.valor}</p>
-                </div>
-              ))}
-            </div>
-
             {/*
-              Dados da posicao, abaixo do resumo, so em renda variavel (Daniel, 19/09/2026).
-              Ficam numa faixa e nao em cartoes: sao a composicao da posicao, nao resultado, e
-              repetir o peso visual dos quatro cartoes acima tiraria a hierarquia deles.
+              Painel unico (Daniel, 19/09/2026). Antes eram dois blocos: quatro cartoes soltos em
+              cima e uma faixa cinza embaixo. Virou um cartao branco so.
+
+              Sem linha vertical entre as colunas (Daniel, 20/09/2026): o alinhamento das colunas
+              ja separa, e o traco horizontal entre as duas filas basta para dizer que sao duas
+              naturezas de informacao.
+
+              A hierarquia continua: em cima o resultado, com numero grande; embaixo a composicao
+              da posicao, menor. Sao coisas diferentes e nao devem competir.
             */}
-            {ehRendaVariavel && (
-              <div className="grid grid-cols-4 gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
-                {[
-                  { rotulo: "Valor Investido", valor: fmtBrl(data.valorInvestido ?? null) },
-                  { rotulo: "Quantidade", valor: fmtQtd(data.quantidade ?? null) },
-                  { rotulo: "Preço Médio", valor: fmtPreco(data.precoMedio ?? null) },
-                  // Provento em REAIS, e nao o dividend yield (Daniel, 19/09/2026): o yield sobre
-                  // a janela de analise nao e anualizado, entao nao se compara nem com o CDI nem
-                  // com outro papel - mede sem informar. O valor recebido e fato.
-                  { rotulo: "Proventos", valor: fmtBrl(data.proventos ?? null) },
-                ].map((item) => (
-                  <div key={item.rotulo} className="min-w-0">
-                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                      {item.rotulo}
-                    </p>
-                    <p className="mt-0.5 truncate text-sm font-semibold text-foreground tabular-nums">
-                      {item.valor}
-                    </p>
+            <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+              <div className="grid grid-cols-4">
+                {resumo.map((item) => (
+                  <div key={item.rotulo} className="min-w-0 px-4 py-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{item.rotulo}</p>
+                    <p className="mt-2 truncate text-lg font-bold text-foreground tabular-nums">{item.valor}</p>
                   </div>
                 ))}
               </div>
-            )}
+
+              {ehRendaVariavel && (
+                <div className="grid grid-cols-4 border-t border-border">
+                  {[
+                    { rotulo: "Valor Investido", valor: fmtBrl(data.valorInvestido ?? null) },
+                    { rotulo: "Quantidade", valor: fmtQtd(data.quantidade ?? null) },
+                    // Duas casas, e nao as ate 8 do `fmtPreco` (Daniel, 19/09/2026): o preco
+                    // medio e uma media de precos pagos, e a oitava casa dela nao e informacao.
+                    { rotulo: "Preço Médio", valor: fmtBrl(data.precoMedio ?? null) },
+                    // Provento em REAIS, e nao o dividend yield (Daniel, 19/09/2026): o yield
+                    // sobre a janela de analise nao e anualizado, entao nao se compara nem com o
+                    // CDI nem com outro papel - mede sem informar. O valor recebido e fato.
+                    { rotulo: "Proventos", valor: fmtBrl(data.proventos ?? null) },
+                  ].map((item) => (
+                    <div key={item.rotulo} className="min-w-0 px-4 py-3">
+                      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {item.rotulo}
+                      </p>
+                      <p className="mt-1 truncate text-sm font-semibold text-foreground tabular-nums">
+                        {item.valor}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Grafico */}
             {data.grafico.length > 1 && (
@@ -398,7 +432,9 @@ export default function PosicaoDetalheDialog({ open, onClose, data, userId, data
                     ela literalmente se remontava a cada troca de pagina. Data e Tipo a esquerda,
                     os tres numericos a direita e com a mesma largura, e os botoes no fim.
                   */}
-                  <div className="rounded-md border border-border">
+                  {/* Fundo branco, como o painel de cima e a tabela de rentabilidade (Daniel,
+                      20/09/2026). `overflow-hidden` para o cabecalho nao vazar do canto arredondado. */}
+                  <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
                     <Table className="table-fixed">
                       <TableHeader>
                         <TableRow>

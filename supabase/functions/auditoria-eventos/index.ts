@@ -66,6 +66,25 @@ const CORS = {
 
 const PISO_SERIE = "2023-01-02";
 
+/**
+ * Grava a execucao em `invest.auditoria_execucoes` - o mesmo alarme da auditoria de proventos.
+ * Ver o comentario la para o porque; em resumo, o JSON de retorno era descartado em horas.
+ */
+async function gravarExecucao(
+  db: ReturnType<typeof clienteInvest>,
+  linha: { ok: boolean; alerta: boolean; resumo?: unknown; achados?: unknown; erro?: string },
+) {
+  const { error } = await db.from("auditoria_execucoes").insert({
+    funcao: "auditoria-eventos",
+    ok: linha.ok,
+    alerta: linha.alerta,
+    resumo: linha.resumo ?? null,
+    achados: linha.achados ?? null,
+    erro: linha.erro ?? null,
+  });
+  if (error) console.error("nao gravou a execucao da auditoria:", error.message);
+}
+
 function clienteInvest() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -223,17 +242,19 @@ Deno.serve(async (req) => {
       relatorio.push(linha);
     }
 
-    return responder({
-      ok: true,
-      resumo: {
-        papeis: relatorio.length,
-        sem_achado: relatorio.filter((x) => x.ok && !x.cobertura_parcial).length,
-        com_achado: relatorio.filter((x) => !x.ok).length,
-        cobertura_parcial: relatorio.filter((x) => x.cobertura_parcial).length,
-      },
-      relatorio,
-    });
+    const resumo = {
+      papeis: relatorio.length,
+      sem_achado: relatorio.filter((x) => x.ok && !x.cobertura_parcial).length,
+      com_achado: relatorio.filter((x) => !x.ok).length,
+      cobertura_parcial: relatorio.filter((x) => x.cobertura_parcial).length,
+    };
+
+    const achados = relatorio.filter((x) => !x.ok || x.cobertura_parcial);
+    await gravarExecucao(db, { ok: true, alerta: achados.length > 0, resumo, achados });
+
+    return responder({ ok: true, resumo, relatorio });
   } catch (e) {
+    await gravarExecucao(db, { ok: false, alerta: true, erro: String(e) });
     return responder({ ok: false, erro: String(e) }, 500);
   }
 });

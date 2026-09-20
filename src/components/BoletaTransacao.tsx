@@ -27,7 +27,7 @@ import AcaoSelect from "@/components/AcaoSelect";
 import { fetchAllRows } from "@/lib/fetchAllRows";
 import { calcularPoupancaDiario, buildPoupancaLotesFromMovs } from "@/lib/poupancaEngine";
 import { proximoCodigoCustodia } from "@/lib/codigoCustodia";
-import { parseQuantidade } from "@/lib/numeroBR";
+import { formatarQuantidadeBR, parseQuantidade, parseQuantidadeMascarada } from "@/lib/numeroBR";
 import { ehDiaUtil, foraDaJanela, DATA_MINIMA_CARTEIRA, cotacaoMoeda, cotaFundo, saldosNaData, dataCotizacaoFundo, saldoEmQuantidade, saldoDeAcaoNaData, codigoDaPosicaoDeAcao, acoesComPosicao, posicoesDaAcao, fmtData, fundosComPosicao, limitesDaSerieDoFundo, posicoesDoFundo, saidaSemSaldoNaPosicaoDeFundo } from "@/lib/validacaoBoleta";
 import { janelaDoCalendarioDoFundo, mensagemDaDataDoFundo, type LimitesDoFundo } from "@/lib/validacaoDataFundo";
 import { janelaDoCalendarioDaAcao, mensagemDaDataDaAcao } from "@/lib/validacaoDataAcao";
@@ -1079,6 +1079,7 @@ export default function BoletaTransacao({
       if (!vivo || !pos) return;
       preenchidoRef.current = true;
       setCategoriaId(pos.categoria_id);
+      setTipoMovimentacao(preenchimento.direcao);
 
       if (pos.acao_id) {
         const { data: acao } = await supabase
@@ -1168,7 +1169,11 @@ export default function BoletaTransacao({
     { codigo: string; instituicaoId: string | null; instituicaoNome: string }[] | undefined
   >(undefined);
   useEffect(() => {
-    if (!user || !isAcao || !ehVendaDeAcao || !acaoId || isEditing) {
+    // Aberta pelo "Nova Operação" da gaveta, a posicao ja e conhecida: a instituicao veio da
+    // custodia e fica travada. Sem esta guarda, um papel com posicao em duas corretoras teria a
+    // instituicao APAGADA aqui, logo depois de ter sido preenchida.
+    const posicaoJaConhecida = !!acaoDaPosicao && acaoDaPosicao === acaoId;
+    if (!user || !isAcao || !ehVendaDeAcao || !acaoId || isEditing || posicaoJaConhecida) {
       setPosicoesAcao(undefined);
       return;
     }
@@ -1187,7 +1192,7 @@ export default function BoletaTransacao({
       }
     });
     return () => { vivo = false; };
-  }, [user, isAcao, ehVendaDeAcao, acaoId, isEditing]);
+  }, [user, isAcao, ehVendaDeAcao, acaoId, isEditing, acaoDaPosicao]);
 
   /**
    * A data da acao, embaixo do campo, no mesmo molde do fundo (Daniel, 19/09/2026).
@@ -1235,7 +1240,7 @@ export default function BoletaTransacao({
       setQtdCotas("");
       return;
     }
-    const exato = saldoAcao.toLocaleString("pt-BR", { useGrouping: false, maximumFractionDigits: 8 });
+    const exato = saldoAcao.toLocaleString("pt-BR", { maximumFractionDigits: 8 });
     if (qtdCotas !== exato) setQtdCotas(exato);
   }, [ehVendaDeAcao, fecharPosicaoAcao, saldoAcao, qtdCotas]);
 
@@ -1371,7 +1376,7 @@ export default function BoletaTransacao({
       // A quantidade virou OBRIGATORIA quando o campo de valor passou a ser o PRECO UNITARIO:
       // nao ha como derivar quantidade de preco, e a combinacao quantidade x preco e a mesma
       // que o GorilaVIEW e a nota de corretagem usam.
-      if (parseQuantidade(qtdCotas) == null) faltando.add("qtdCotas");
+      if (parseQuantidadeMascarada(qtdCotas) == null) faltando.add("qtdCotas");
       if (!instituicaoId) faltando.add("instituicaoId");
       if (faltando.size > 0) {
         // Borda vermelha nos campos e o aviso na linha reservada, como no fundo. Sem toast: o
@@ -1408,7 +1413,7 @@ export default function BoletaTransacao({
       const precoEfetivo = parseCurrencyToNumber(valor);
       // Com "Fechar Posição" a quantidade e o saldo em memoria, nao o texto do campo: formatar e
       // reinterpretar um numero com oito casas e jeito de deixar residuo para tras.
-      const qtdOperacao = fecharPosicaoAcao && saldoAcao != null ? saldoAcao : parseQuantidade(qtdCotas)!;
+      const qtdOperacao = fecharPosicaoAcao && saldoAcao != null ? saldoAcao : parseQuantidadeMascarada(qtdCotas)!;
       const valorNum = precoEfetivo * qtdOperacao;
 
       // Trava contra erro de casa decimal. Não barra: AVISA e pede confirmação. Preço de
@@ -2200,7 +2205,7 @@ Confirma que o preço está certo?`,
   // Os mesmos derivados, do lado da acao. O `validationErrors` ja era preenchido no submit desde
   // 07/09/2026, mas nada no JSX de renda variavel o lia: o estado existia e nao pintava nada.
   const erroAcaoObrigatoria = validationErrors.has("acaoId") && !acaoId;
-  const erroQtdObrigatoria = validationErrors.has("qtdCotas") && parseQuantidade(qtdCotas) == null;
+  const erroQtdObrigatoria = validationErrors.has("qtdCotas") && parseQuantidadeMascarada(qtdCotas) == null;
   const faltamObrigatoriosAcao =
     erroAcaoObrigatoria || erroDataObrigatoria || erroValorObrigatorio
     || erroQtdObrigatoria || erroInstituicaoObrigatoria;
@@ -2450,8 +2455,10 @@ Confirma que o preço está certo?`,
               <Field label="Quantidade de Ações" required>
                 <Input
                   value={qtdCotas}
-                  onChange={(e) => setQtdCotas(e.target.value.replace(/[^\d,.]/g, ""))}
-                  placeholder="Ex.: 100"
+                  // Mascara pt-BR: ponto no milhar. Sem ela o campo aceitava ponto digitado a mao
+                  // e o `parseQuantidade` lia "1.300" como 1,3 acao, em silencio.
+                  onChange={(e) => setQtdCotas(formatarQuantidadeBR(e.target.value))}
+                  placeholder="Ex.: 1.300"
                   // Com "Fechar Posição" marcado a quantidade e o saldo e nao se digita.
                   readOnly={fecharPosicaoAcao}
                   className={cn(
@@ -2490,7 +2497,7 @@ Confirma que o preço está certo?`,
                     setFecharPosicaoAcao(marcado);
                     setQtdCotas(
                       marcado && saldoAcao != null
-                        ? saldoAcao.toLocaleString("pt-BR", { useGrouping: false, maximumFractionDigits: 8 })
+                        ? saldoAcao.toLocaleString("pt-BR", { maximumFractionDigits: 8 })
                         : "",
                     );
                   }}
@@ -2504,11 +2511,11 @@ Confirma que o preço está certo?`,
             {/* Total calculado, como na boleta do GorilaVIEW. Mostrar o produto na tela e o
                 que torna visivel um erro de casa decimal ANTES de gravar. */}
             <p className="h-5 text-sm leading-5 text-muted-foreground">
-              {valor && parseQuantidade(qtdCotas) != null ? (
+              {valor && parseQuantidadeMascarada(qtdCotas) != null ? (
                 <>
                   Total da operação:{" "}
                   <strong className="text-foreground">
-                    {fmtBrlDisplay(parseCurrencyToNumber(valor) * (parseQuantidade(qtdCotas) ?? 0))}
+                    {fmtBrlDisplay(parseCurrencyToNumber(valor) * (parseQuantidadeMascarada(qtdCotas) ?? 0))}
                   </strong>
                 </>
               ) : ""}

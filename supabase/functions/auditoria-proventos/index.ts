@@ -53,6 +53,30 @@ function clienteInvest() {
   );
 }
 
+/**
+ * Grava a execucao em `invest.auditoria_execucoes`.
+ *
+ * Ate 20/09/2026 esta auditoria so devolvia um JSON. Ele ia para o `net._http_response`, que o
+ * pg_net descarta em horas, entao o resultado era jogado fora: o log do cron dizia "succeeded"
+ * tanto na semana limpa quanto na semana com dez parcelas faltando. Detector sem alarme.
+ *
+ * Falhar ao gravar NAO derruba a auditoria: perder o registro e ruim, perder a rodada e pior.
+ */
+async function gravarExecucao(
+  db: ReturnType<typeof clienteInvest>,
+  linha: { ok: boolean; alerta: boolean; resumo?: unknown; achados?: unknown; erro?: string },
+) {
+  const { error } = await db.from("auditoria_execucoes").insert({
+    funcao: "auditoria-proventos",
+    ok: linha.ok,
+    alerta: linha.alerta,
+    resumo: linha.resumo ?? null,
+    achados: linha.achados ?? null,
+    erro: linha.erro ?? null,
+  });
+  if (error) console.error("nao gravou a execucao da auditoria:", error.message);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
@@ -155,19 +179,30 @@ Deno.serve(async (req) => {
       });
     }
 
-    return responder({
+    const resumo = {
+      papeis: relatorio.length,
+      completos: relatorio.filter((x) => x.coberto && x.ok).length,
+      com_parcela_faltando: relatorio.filter((x) => x.coberto && !x.ok).length,
+      // Nao entra em "completos" nem em "com falta": nao foi possivel olhar. Contar como
+      // completo seria transformar ausencia de informacao em aprovacao.
+      sem_cobertura_da_b3: relatorio.filter((x) => !x.coberto).length,
+    };
+
+    // Papel que pede acao: falta parcela, ou a B3 nao cobriu e por isso nao da para afirmar nada.
+    // Os completos nao entram - o alarme e para o que precisa de alguem, nao um espelho do JSON.
+    const achados = relatorio.filter((x) => !x.coberto || !x.ok);
+    await gravarExecucao(db, {
       ok: true,
-      resumo: {
-        papeis: relatorio.length,
-        completos: relatorio.filter((x) => x.coberto && x.ok).length,
-        com_parcela_faltando: relatorio.filter((x) => x.coberto && !x.ok).length,
-        // Nao entra em "completos" nem em "com falta": nao foi possivel olhar. Contar como
-        // completo seria transformar ausencia de informacao em aprovacao.
-        sem_cobertura_da_b3: relatorio.filter((x) => !x.coberto).length,
-      },
-      relatorio,
+      alerta: achados.length > 0,
+      resumo,
+      achados,
     });
+
+    return responder({ ok: true, resumo, relatorio });
   } catch (e) {
+    // A auditoria falhou, que e diferente de nao achar problema. Sem esta linha, a semana em que
+    // ela quebra fica indistinguivel da semana em que esta tudo certo.
+    await gravarExecucao(db, { ok: false, alerta: true, erro: String(e) });
     return responder({ ok: false, erro: String(e) }, 500);
   }
 });

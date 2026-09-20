@@ -7,3 +7,12 @@ verify_jwt = false
 # Chamada pelo pg_cron via pg_net, sem cabecalho de autorizacao.
 [functions.daily-fund-quotes-sync]
 verify_jwt = false
+
+# Auditorias semanais, chamadas pelo pg_cron via pg_net, sem cabecalho de autorizacao.
+# Faltavam aqui: em 20/09/2026 um deploy pela CLI religou o JWT da auditoria-proventos e o cron
+# passou a receber 401. Estavam com `verify_jwt = false` so no servidor, e o arquivo nao sabia.
+[functions.auditoria-proventos]
+verify_jwt = false
+
+[functions.auditoria-eventos]
+verify_jwt = false

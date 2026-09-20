@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { useEventos, type TipoEvento } from "@/hooks/useEventos";
+import { useEventos, type EventoRow, type TipoEvento } from "@/hooks/useEventos";
+import { useCarteiraAcoes } from "@/hooks/useCarteiraAcoes";
 import { PaginaCabecalho, TabelaCartao, LinhaMensagem, Contagem } from "@/components/PaginaPadrao";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import {
@@ -18,7 +19,20 @@ const fmtData = (s: string) => {
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
 /** Os tipos que contam como dinheiro recebido; resgate fica de fora do total. */
-const RECEBIDOS: TipoEvento[] = ["Pagamento de juros", "Vencimento"];
+const RECEBIDOS: TipoEvento[] = [
+  "Pagamento de juros", "Vencimento", "Dividendo", "JCP", "Rendimento",
+];
+
+/** Os três tipos de provento de renda variável, que somam no cartão "Proventos". */
+const PROVENTOS: TipoEvento[] = ["Dividendo", "JCP", "Rendimento"];
+
+/** O nome que a `proventos_acoes` usa, no vocabulário da tela. */
+const TIPO_DO_PROVENTO: Record<string, TipoEvento> = {
+  DIVIDENDO: "Dividendo",
+  JCP: "JCP",
+  RENDIMENTO: "Rendimento",
+  OUTRO: "Dividendo",
+};
 
 function Cartao({ rotulo, valor }: { rotulo: string; valor: string }) {
   return (
@@ -30,9 +44,33 @@ function Cartao({ rotulo, valor }: { rotulo: string; valor: string }) {
 }
 
 export default function EventosPage() {
-  const { eventos, vencimentos, loading } = useEventos();
+  const { eventos: eventosRF, vencimentos, loading } = useEventos();
+  // Renda variável vem do hook da carteira de ações, e não de uma consulta daqui: a quantidade
+  // na data-ex é a do motor, já ajustada por desdobramento (ver `proventosRecebidos`).
+  const { proventosDasPosicoes, loading: carregandoAcoes } = useCarteiraAcoes();
   const { dataReferenciaISO } = useDataReferencia();
   const [filtro, setFiltro] = useState<TipoEvento | "Todos">("Todos");
+
+  /**
+   * As duas fontes num histórico só, do mais recente para o mais antigo.
+   *
+   * A data de um provento é a DATA-EX, e não a do pagamento: é nela que o preço cai e que o
+   * direito nasce, é assim que o motor reconhece, e é assim que o Gorila lista. A data de
+   * pagamento vai numa coluna ao lado, porque é o que responde "quando cai na conta".
+   */
+  const eventos: EventoRow[] = useMemo(() => {
+    const deAcoes: EventoRow[] = proventosDasPosicoes.map((p) => ({
+      data: p.data_ex,
+      tipo: TIPO_DO_PROVENTO[p.tipo] ?? "Dividendo",
+      ativo: p.ticker,
+      valor: p.valor,
+      valorUnitario: p.valorUnitario,
+      quantidade: p.quantidade,
+      custodiante: p.custodiante,
+      dataPagamento: p.data_pagamento,
+    }));
+    return [...eventosRF, ...deAcoes].sort((a, b) => b.data.localeCompare(a.data));
+  }, [eventosRF, proventosDasPosicoes]);
 
   /**
    * Janela de 12 meses de CALENDARIO, terminando no mes corrente inteiro - a mesma do Gorila.
@@ -56,6 +94,7 @@ export default function EventosPage() {
 
     const juros = naJanela.filter((e) => e.tipo === "Pagamento de juros").reduce((s, e) => s + e.valor, 0);
     const vencidos = naJanela.filter((e) => e.tipo === "Vencimento").reduce((s, e) => s + e.valor, 0);
+    const proventos = naJanela.filter((e) => PROVENTOS.includes(e.tipo)).reduce((s, e) => s + e.valor, 0);
 
     // Soma por competência primeiro, e só depois monta as barras. Montar com zero e mutar
     // depois deixava o recharts desenhando o estado antigo: o eixo enxergava os valores
@@ -80,8 +119,8 @@ export default function EventosPage() {
     });
 
     const mesesComAlgo = barras.filter((b) => b.valor > 0).length;
-    const total = juros + vencidos;
-    return { juros, vencidos, total, media: mesesComAlgo ? total / mesesComAlgo : 0, barras };
+    const total = juros + vencidos + proventos;
+    return { juros, vencidos, proventos, total, media: mesesComAlgo ? total / mesesComAlgo : 0, barras };
   }, [eventos, dataReferenciaISO]);
 
   const tipos = useMemo(
@@ -97,10 +136,10 @@ export default function EventosPage() {
     <div className="space-y-6">
       <PaginaCabecalho
         titulo="Eventos"
-        subtitulo={`Renda fixa: cupom, vencimento e resgate até ${fmtData(dataReferenciaISO)}`}
+        subtitulo={`Cupom, vencimento e resgate de renda fixa, e provento de renda variável, até ${fmtData(dataReferenciaISO)}`}
       />
 
-      {loading ? (
+      {loading || carregandoAcoes ? (
         <TabelaCartao>
           <div className="py-8 text-center text-sm text-muted-foreground">Carregando...</div>
         </TabelaCartao>
@@ -108,9 +147,10 @@ export default function EventosPage() {
         <>
           <div>
             <h2 className="text-sm font-medium text-foreground mb-1">Distribuição nos últimos 12 meses</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
               <Cartao rotulo="Pagamento de juros" valor={fmtBrl(doze.juros)} />
               <Cartao rotulo="Vencimentos" valor={fmtBrl(doze.vencidos)} />
+              <Cartao rotulo="Proventos" valor={fmtBrl(doze.proventos)} />
               <Cartao rotulo="Média mensal" valor={fmtBrl(doze.media)} />
               <Cartao rotulo="Total" valor={fmtBrl(doze.total)} />
             </div>
@@ -191,7 +231,11 @@ export default function EventosPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {/* "Data" e a data-ex no provento e o dia do pagamento na renda fixa. A
+                        coluna "Pagamento" existe para desfazer essa ambiguidade, e so o provento
+                        a preenche. */}
                     <TableHead className="text-xs">Data</TableHead>
+                    <TableHead className="text-xs">Pagamento</TableHead>
                     <TableHead className="text-xs">Evento</TableHead>
                     <TableHead className="text-xs">Ativo</TableHead>
                     <TableHead className="text-xs text-right">Valor</TableHead>
@@ -202,11 +246,14 @@ export default function EventosPage() {
                 </TableHeader>
                 <TableBody>
                   {visiveis.length === 0 ? (
-                    <LinhaMensagem colSpan={7}>Nenhum evento no período.</LinhaMensagem>
+                    <LinhaMensagem colSpan={8}>Nenhum evento no período.</LinhaMensagem>
                   ) : (
                     visiveis.map((e, i) => (
                       <TableRow key={`${e.data}-${e.ativo}-${e.tipo}-${i}`}>
                         <TableCell className="text-sm whitespace-nowrap">{fmtData(e.data)}</TableCell>
+                        <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                          {e.dataPagamento ? fmtData(e.dataPagamento) : "—"}
+                        </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">{e.tipo}</TableCell>
                         <TableCell className="text-sm">{e.ativo}</TableCell>
                         <TableCell className="text-sm text-right whitespace-nowrap">{fmtBrl(e.valor)}</TableCell>

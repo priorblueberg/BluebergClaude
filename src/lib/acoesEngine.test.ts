@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcularAcoesDiario, IR_JCP, type EventoCorporativo, type Provento } from "./acoesEngine";
+import { calcularAcoesDiario, proventosRecebidos, IR_JCP, type EventoCorporativo, type Provento } from "./acoesEngine";
 
 /** Calendario com todos os dias; `dia_util` marca segunda a sexta. */
 function calendarioEntre(de: string, ate: string) {
@@ -452,5 +452,51 @@ describe("calendario da bolsa x calendario do banco", () => {
     const dia29 = rows.find((r) => r.data === "2023-12-29")!;
     expect(dia29.preco).toBeCloseTo(10, 8);
     expect(dia29.rentDiariaPct).toBeCloseTo(0, 10);
+  });
+});
+
+describe("proventosRecebidos", () => {
+  const linhas = [
+    { data: "2025-04-16", quantidade: 0 },
+    { data: "2025-04-17", quantidade: 2000 },
+    { data: "2026-06-02", quantidade: 2000 },
+  ] as never[];
+
+  const proventos: Provento[] = [
+    { tipo: "DIVIDENDO", valor: 0.3547726, data_ex: "2025-04-17", data_pagamento: "2025-05-20" },
+    { tipo: "DIVIDENDO", valor: 0.3547726, data_ex: "2025-04-17", data_pagamento: "2025-06-20" },
+    { tipo: "JCP", valor: 0.35048637, data_ex: "2026-06-02", data_pagamento: "2026-08-20" },
+    // Data-ex em que a posição ainda era zero: não recebe.
+    { tipo: "JCP", valor: 9.99, data_ex: "2025-04-16", data_pagamento: "2025-05-20" },
+    // Data-ex que nem existe nas linhas do motor (fora da janela).
+    { tipo: "DIVIDENDO", valor: 1.11, data_ex: "2030-01-02", data_pagamento: null },
+  ];
+
+  it("uma linha por parcela declarada, com quantidade da data-ex", () => {
+    const r = proventosRecebidos(linhas, proventos, []);
+    expect(r).toHaveLength(3);
+    expect(r.map((x) => x.data_ex)).toEqual(["2026-06-02", "2025-04-17", "2025-04-17"]);
+  });
+
+  it("parcelas iguais na mesma data-ex contam as duas", () => {
+    const r = proventosRecebidos(linhas, proventos, []).filter((x) => x.data_ex === "2025-04-17");
+    expect(r).toHaveLength(2);
+    expect(r[0].valor + r[1].valor).toBeCloseTo(0.3547726 * 2 * 2000, 6);
+  });
+
+  it("não paga quem não tinha o papel na data-ex", () => {
+    const r = proventosRecebidos(linhas, proventos, []);
+    expect(r.some((x) => x.data_ex === "2025-04-16")).toBe(false);
+    expect(r.some((x) => x.data_ex === "2030-01-02")).toBe(false);
+  });
+
+  it("desdobramento posterior divide o valor por ação", () => {
+    const eventos: EventoCorporativo[] = [
+      { tipo: "DESDOBRAMENTO", fator: 2, data_ex: "2026-07-01" },
+    ] as never[];
+    const r = proventosRecebidos(linhas, proventos, eventos).find((x) => x.data_ex === "2026-06-02")!;
+    expect(r.valorUnitario).toBeCloseTo(0.35048637 / 2, 8);
+    // A quantidade ja vem em unidades de hoje, entao o total recebido nao muda com o split.
+    expect(r.valor).toBeCloseTo((0.35048637 / 2) * 2000, 6);
   });
 });

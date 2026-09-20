@@ -21,13 +21,28 @@ import { fatoresIpcaDoTitulo, carregarSeriesIpca, algumIndexadoAoIpca, type Seri
  *    evento - e por isso fica fora dos cartões de total.
  *
  * Fundos não entram: os eventos deles são come-cotas e resgate, e come-cotas é antecipação de
- * imposto, não provento. A tela é de renda fixa.
+ * imposto, não provento.
+ *
+ * Renda variável entra, desde 20/09/2026, mas NÃO por aqui: dividendo, JCP e rendimento saem do
+ * `useCarteiraAcoes`, porque a quantidade na data-ex depende do motor (ela já vem ajustada por
+ * desdobramento e grupamento) e refazer essa conta numa consulta própria criaria uma segunda
+ * verdade. A página junta as duas fontes.
  *
  * Conferido contra a API dele na janela de 12 meses até 02/09/2026: 125 rendimentos somando
  * R$ 434.295,37 contra R$ 434.295,44, e 7 amortizações somando R$ 103.193,61 dos dois lados,
  * cada papel batendo no centavo.
  */
-export type TipoEvento = "Pagamento de juros" | "Vencimento" | "Resgate";
+/**
+ * Renda fixa: "Pagamento de juros", "Vencimento" e "Resgate". Renda variável: os três tipos de
+ * provento, com o nome que o mercado usa - o Gorila chama de Dividendos, Rendimentos e JSCP.
+ */
+export type TipoEvento =
+  | "Pagamento de juros"
+  | "Vencimento"
+  | "Resgate"
+  | "Dividendo"
+  | "JCP"
+  | "Rendimento";
 
 export interface EventoRow {
   data: string;
@@ -37,6 +52,8 @@ export interface EventoRow {
   valorUnitario: number | null;
   quantidade: number | null;
   custodiante: string;
+  /** Quando o dinheiro cai. Só provento tem: em renda fixa `data` já é o dia do pagamento. */
+  dataPagamento?: string | null;
 }
 
 export interface VencimentoRow {

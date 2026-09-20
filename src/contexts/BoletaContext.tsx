@@ -36,13 +36,17 @@ export type PreenchimentoDaBoleta =
   | {
       /**
        * "Nova operação" no detalhe da posição (Daniel, 18/09/2026): a boleta abre já apontada
-       * para o ativo em custódia, porque a negociação é dele. Só o código da posição vai daqui;
-       * categoria, ativo e instituição a boleta lê da própria `custodia`, para não depender de
-       * campos propagados por telas diferentes e não divergir do que está gravado.
-       * O tipo (Compra ou Venda) fica em branco: quem abre é que escolhe.
+       * para o ativo em custódia, porque a negociação é dele. Daqui vai o código da posição e a
+       * direção; categoria, ativo e instituição a boleta lê da própria `custodia`, para não
+       * depender de campos propagados por telas diferentes e não divergir do que está gravado.
+       *
+       * A direção passou a vir escolhida em 20/09/2026. Em 18/09 ela ficava em branco de
+       * propósito, para uma venda não ser lançada como compra por descuido; agora o botão
+       * pergunta ANTES de abrir, o que resolve o mesmo risco sem o clique extra na boleta.
        */
       tipo: "negociar_posicao";
       codigoCustodia: string;
+      direcao: "Compra" | "Venda";
     };
 
 interface BoletaContextType {

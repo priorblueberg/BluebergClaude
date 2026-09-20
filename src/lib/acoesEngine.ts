@@ -156,6 +156,56 @@ function fatorDesde(data: string, eventos: EventoCorporativo[]): number {
   return eventos.reduce((f, e) => (e.data_ex > data ? f * e.fator : f), 1);
 }
 
+/** Um provento efetivamente recebido pela posição: o que a tela de Eventos lista. */
+export interface ProventoRecebido {
+  data_ex: string;
+  data_pagamento: string | null;
+  tipo: Provento["tipo"];
+  /** Por ação, em unidades de HOJE (já dividido pelos eventos posteriores). */
+  valorUnitario: number;
+  /** Quantidade na data-ex, em unidades de hoje. */
+  quantidade: number;
+  /** quantidade x valorUnitario, bruto. */
+  valor: number;
+}
+
+/**
+ * Os proventos que a POSIÇÃO recebeu, um por linha declarada.
+ *
+ * O motor já soma o provento no resultado, mas soma por DIA, juntando dividendo, JCP e rendimento
+ * da mesma data-ex num número só. A tela de Eventos precisa da linha: tipo, valor por ação, data
+ * de pagamento. Esta função reabre isso sem refazer conta nenhuma - a quantidade vem das linhas
+ * diárias do próprio motor e o ajuste por evento corporativo é o mesmo `fatorDesde`.
+ *
+ * Quem não tinha o papel na data-ex não recebe, e por isso a linha só sai com quantidade > 0: é a
+ * mesma regra que zerou o KLBN11 comprado depois da data-ex de dezembro.
+ */
+export function proventosRecebidos(
+  linhas: AcaoDailyRow[],
+  proventos: Provento[],
+  eventos: EventoCorporativo[],
+): ProventoRecebido[] {
+  const qtdPorData = new Map<string, number>();
+  for (const l of linhas) qtdPorData.set(l.data, l.quantidade);
+
+  const recebidos: ProventoRecebido[] = [];
+  for (const p of proventos) {
+    if (!p.data_ex) continue;
+    const qtd = qtdPorData.get(p.data_ex);
+    if (qtd == null || qtd <= 1e-8) continue;
+    const unitario = p.valor / fatorDesde(p.data_ex, eventos);
+    recebidos.push({
+      data_ex: p.data_ex,
+      data_pagamento: p.data_pagamento ?? null,
+      tipo: p.tipo,
+      valorUnitario: unitario,
+      quantidade: qtd,
+      valor: qtd * unitario,
+    });
+  }
+  return recebidos.sort((a, b) => b.data_ex.localeCompare(a.data_ex));
+}
+
 /**
  * Fator para converter PREÇO em unidades de hoje.
  *
@@ -344,4 +394,4 @@ export function acoesRowsToDailyRows(rows: AcaoDailyRow[]): DailyRow[] {
   );
 }
 
-export default { calcularAcoesDiario, acoesRowsToDailyRows };
+export default { calcularAcoesDiario, acoesRowsToDailyRows, proventosRecebidos };
