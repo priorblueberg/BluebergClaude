@@ -334,6 +334,61 @@ type LinhaCotacao = {
   provisorio: boolean;
 };
 
+/**
+ * Quando a FONTE inventa um evento, e ajusta a propria serie por ele.
+ *
+ * Caso medido em 20/09/2026: a BRAPI publica para o BBDC4 uma BONIFICACAO de fator 1,2 com
+ * data-ex em 07/02/2024 que nao existe - a queda daquele dia (16,60 para 13,96, -15,9%) foi o
+ * resultado do 4T23, e -15,9% passa perto de 1/1,2 = -16,7%. Nao para no evento: a BRAPI
+ * DIVIDIU por 1,2 todo fechamento anterior a 08/02/2024.
+ *
+ * Por isso as duas coisas andam juntas. `eventos_vetados` impede o evento de entrar;
+ * `correcoes_de_cotacao` desfaz o que a fonte ja fez no preco. So vetar deixaria um degrau de
+ * +20% em 08/02/2024, que viraria lucro do nada para quem atravessasse a data.
+ *
+ * A correcao e aplicada ao dado que CHEGA da fonte, nunca ao que esta guardado. E o que a torna
+ * idempotente: recarga, janela diaria e intradiario aplicam de novo sobre o valor cru, sem
+ * acumular.
+ */
+type Correcao = { ticker: string; ate: string; fator: number };
+type Veto = { ticker: string; classe: string; tipo: string; data_ex: string };
+
+async function correcoesDeCotacao(db: Db): Promise<Map<string, Correcao[]>> {
+  const { data, error } = await db.from("correcoes_de_cotacao").select("ticker, ate, fator");
+  if (error) throw new Error(`leitura de correcoes_de_cotacao: ${error.message}`);
+  const mapa = new Map<string, Correcao[]>();
+  for (const c of (data ?? []) as Correcao[]) {
+    mapa.set(c.ticker, [...(mapa.get(c.ticker) ?? []), c]);
+  }
+  return mapa;
+}
+
+/** Multiplica de volta o que a fonte dividiu. Devolve quantas linhas foram tocadas. */
+function corrigirCotacoes(linhas: LinhaCotacao[], correcoes: Map<string, Correcao[]>): number {
+  if (!correcoes.size) return 0;
+  let tocadas = 0;
+  for (const l of linhas) {
+    let f = 1;
+    for (const c of correcoes.get(l.ticker) ?? []) if (l.data < c.ate) f *= Number(c.fator);
+    if (f === 1) continue;
+    // Volume fica como veio: nao se usa em lugar nenhum do motor, e inventar o ajuste dele
+    // seria supor o que a fonte fez sem ter medido.
+    l.fechamento *= f;
+    if (l.abertura != null) l.abertura *= f;
+    if (l.maxima != null) l.maxima *= f;
+    if (l.minima != null) l.minima *= f;
+    tocadas++;
+  }
+  return tocadas;
+}
+
+async function vetosDeEvento(db: Db, ticker: string): Promise<Set<string>> {
+  const { data, error } = await db.from("eventos_vetados")
+    .select("ticker, classe, tipo, data_ex").eq("ticker", ticker);
+  if (error) throw new Error(`leitura de eventos_vetados (${ticker}): ${error.message}`);
+  return new Set(((data ?? []) as Veto[]).map((v) => `${v.classe}|${v.tipo}|${v.data_ex}`));
+}
+
 /** Converte um item de `historicalDataPrice` numa linha da nossa tabela. */
 function linhaDoHistorico(ticker: string, d: Record<string, unknown>): LinhaCotacao {
   return {
@@ -376,11 +431,12 @@ async function fecharODiaEmLote(
   tickers: string[],
 ): Promise<Record<string, unknown>> {
   const hoje = hojeNaB3();
-  let chamadas = 0, gravadas = 0, apagadas = 0;
+  let chamadas = 0, gravadas = 0, apagadas = 0, corrigidas = 0;
   const semRetorno: string[] = [];
   const renomeados: Record<string, unknown>[] = [];
   const mantidos: Record<string, number> = {};
   let inicioDaJanela = hoje;
+  const correcoes = await correcoesDeCotacao(db);
 
   for (const lote of emLotes(tickers, LOTE_TICKERS)) {
     const j = await pedir(
@@ -427,6 +483,7 @@ async function fecharODiaEmLote(
         .filter((d) => d.close != null)
         .map((d) => linhaDoHistorico(ticker, d));
 
+      corrigidas += corrigirCotacoes(linhas, correcoes);
       marcarBarrasProvisorias(linhas);
       const janela = linhas.filter((c) => c.data >= PISO_SERIE);
       if (!janela.length) continue;
@@ -469,6 +526,9 @@ async function fecharODiaEmLote(
     chamadas_brapi: chamadas,
     linhas_gravadas: gravadas,
     provisorios_apagados: apagadas,
+    // Linhas em que uma `correcoes_de_cotacao` desfez o ajuste da fonte. Zero aqui e o normal:
+    // a janela e de um mes e as correcoes conhecidas sao antigas.
+    cotacoes_corrigidas: corrigidas,
     // Provisorio que o historico nao confirmou, mas que ficou porque a fonte ainda nao tem
     // pregao oficial depois dele. Data -> quantos papeis. A mesma data aparecendo em todos os
     // papeis por mais de uma rodada e feriado da B3 ou fonte parada, e vale olhar.
@@ -590,7 +650,7 @@ async function intradiarioEmLote(
   };
 }
 
-async function precos(ticker: string) {
+async function precos(ticker: string, correcoes: Map<string, Correcao[]>) {
   const j = await pedir(`${BRAPI_HIST}?symbols=${ticker}&range=max&interval=1d&sortOrder=asc`);
   const res = j?.results?.[0];
   const itens = res?.data?.historicalDataPrice ?? res?.historicalDataPrice ?? [];
@@ -611,6 +671,7 @@ async function precos(ticker: string) {
       provisorio: false,
     }));
 
+  const corrigidas = corrigirCotacoes(cotacoes as LinhaCotacao[], correcoes);
   marcarBarrasProvisorias(cotacoes);
 
   // O corte vem DEPOIS da marcacao: `marcarBarrasProvisorias` compara cada barra com a
@@ -622,6 +683,7 @@ async function precos(ticker: string) {
     // Quantos pregoes a fonte tinha antes do corte. Sem isto o relatorio daria a impressao de
     // que a fonte veio curta, quando na verdade fomos nos que cortamos.
     descartadas_antes_do_piso: cotacoes.length - daJanela.length,
+    cotacoes_corrigidas: corrigidas,
     nome: res?.longName || res?.shortName || await nomeDoPapel(ticker),
     moeda: res?.currency ?? "BRL",
   };
@@ -805,6 +867,7 @@ Deno.serve(async (req) => {
     }
 
     const relatorio: Record<string, unknown>[] = [];
+    const correcoes = await correcoesDeCotacao(db);
 
     for (const pedidoTicker of tickers) {
       try {
@@ -823,7 +886,7 @@ Deno.serve(async (req) => {
             .upsert(renomes, { onConflict: "ticker_antigo,ticker_atual", ignoreDuplicates: true })).error);
         }
 
-        const p = await precos(ticker);
+        const p = await precos(ticker, correcoes);
         const pe = await proventosEEventos(ticker);
 
         if (pedido) {
@@ -1060,16 +1123,24 @@ Deno.serve(async (req) => {
         // O que sobrou no banco depois do `limpar` e justamente o que nao pode ser tocado:
         // linha manual e linha ja marcada. Reenviar o evento por cima delas nao acrescenta nada
         // e so poderia apagar a marca.
-        let eventosJaNaBase = 0;
+        let eventosJaNaBase = 0, eventosVetados = 0;
         if (pe.eventos.length) {
           const { data: jaGravados, error: eLerEventos } = await db.from("eventos_de_ativos")
             .select("tipo, data_ex").eq("ticker", ticker).eq("classe", "QUANTIDADE");
           exigir("leitura de eventos QUANTIDADE", eLerEventos);
           const conhecido = new Set(((jaGravados ?? []) as Record<string, unknown>[])
             .map((e) => `${e.tipo}|${e.data_ex}`));
-          const novos = (pe.eventos as Record<string, unknown>[])
+
+          // Evento que a fonte inventou. Ver `eventos_vetados`: o filtro vem ANTES do dedup
+          // porque a linha vetada nao existe na base - se dependesse do dedup, voltaria.
+          const vetados = await vetosDeEvento(db, ticker);
+          const semVeto = (pe.eventos as Record<string, unknown>[])
+            .filter((e) => !vetados.has(`QUANTIDADE|${e.tipo}|${e.data_ex}`));
+          eventosVetados = pe.eventos.length - semVeto.length;
+
+          const novos = semVeto
             .filter((e) => !conhecido.has(`${e.tipo}|${e.data_ex}`));
-          eventosJaNaBase = pe.eventos.length - novos.length;
+          eventosJaNaBase = semVeto.length - novos.length;
 
           if (novos.length) {
             const eventosMarcados = [];
@@ -1152,6 +1223,10 @@ Deno.serve(async (req) => {
           // Quantos dos que a BRAPI mandou ja estavam na base por (tipo, data-ex) e nao foram
           // reenviados. Numero alto e o normal: evento corporativo nao muda depois de acontecer.
           eventos_ja_na_base: eventosJaNaBase,
+          // Evento que a fonte manda e que esta em `eventos_vetados` por nao existir.
+          eventos_vetados: eventosVetados,
+          // Linhas em que uma `correcoes_de_cotacao` desfez o ajuste que a fonte tinha feito.
+          cotacoes_corrigidas: p.cotacoes_corrigidas,
           // O que a B3 declarou e a BRAPI nao trouxe. Lista, e nao contagem: cada linha aqui e
           // dinheiro que estava faltando na base, e quem le precisa poder conferir na fonte.
           proventos_da_b3: daB3.length,
