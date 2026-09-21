@@ -82,6 +82,7 @@
 // `eventos_corporativos_acoes` continuam existindo como VIEWS sobre ela, para o app nao mudar.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { casarPorEliminacao } from "../_shared/renomeacaoDeTicker.ts";
+import { provisoriosFantasmas } from "../_shared/limpezaDeProvisorios.ts";
 import { reconciliarProventos } from "../_shared/reconciliacaoProventos.ts";
 import { dataBR, proventosDaB3, TIPO_PROVENTO } from "../_shared/proventosDaB3.ts";
 
@@ -366,7 +367,9 @@ function linhaDoHistorico(ticker: string, d: Record<string, unknown>): LinhaCota
  * serve de trava: medido em 08/09/2026 as 22h55 BRT, ele marcava o horario de atualizacao do
  * feed - horas depois do fechamento das 17h - e nao o da ultima negociacao. Como a rodada
  * horaria pode gravar uma barra num dia sem pregao, e o `historical` sabe exatamente quais
- * pregoes existiram, qualquer provisorio da janela que ele nao confirmar e apagado aqui.
+ * pregoes existiram, o provisorio da janela que ele nao confirmar e apagado aqui - desde que o
+ * historico ja tenha pregao oficial DEPOIS dele. O historico chega com atraso: em 10/09/2026
+ * veio sem 09/09, e a versao sem essa trava apagou um pregao real nos 7 papeis.
  */
 async function fecharODiaEmLote(
   db: Db,
@@ -376,6 +379,7 @@ async function fecharODiaEmLote(
   let chamadas = 0, gravadas = 0, apagadas = 0;
   const semRetorno: string[] = [];
   const renomeados: Record<string, unknown>[] = [];
+  const mantidos: Record<string, number> = {};
   let inicioDaJanela = hoje;
 
   for (const lote of emLotes(tickers, LOTE_TICKERS)) {
@@ -436,15 +440,18 @@ async function fecharODiaEmLote(
       gravadas += janela.length;
 
       // Provisorio na janela que o historico NAO confirmou: dia sem pregao inventado pela
-      // rodada horaria. Some.
-      const confirmados = new Set(janela.map((c) => c.data));
+      // rodada horaria - mas so quando a fonte ja tem pregao oficial depois dele. Em 10/09/2026
+      // o historico veio sem 09/09 e essa limpeza apagou um pregao real (ver
+      // `_shared/limpezaDeProvisorios.ts`).
       const { data: provisorios, error: eLer } = await db.from("cotacoes_acoes")
         .select("data").eq("ticker", ticker).eq("provisorio", true).gte("data", de);
       if (eLer) throw new Error(`leitura de provisorios (${ticker}): ${eLer.message}`);
 
-      const fantasmas = (provisorios ?? [])
-        .map((r: { data: string }) => r.data)
-        .filter((d) => !confirmados.has(d));
+      const { apagar: fantasmas, mantidos: semCobertura } = provisoriosFantasmas(
+        (provisorios ?? []).map((r: { data: string }) => r.data),
+        janela,
+      );
+      for (const d of semCobertura) mantidos[d] = (mantidos[d] ?? 0) + 1;
       if (fantasmas.length) {
         const { error: eDel } = await db.from("cotacoes_acoes")
           .delete().eq("ticker", ticker).eq("provisorio", true).in("data", fantasmas);
@@ -462,6 +469,10 @@ async function fecharODiaEmLote(
     chamadas_brapi: chamadas,
     linhas_gravadas: gravadas,
     provisorios_apagados: apagadas,
+    // Provisorio que o historico nao confirmou, mas que ficou porque a fonte ainda nao tem
+    // pregao oficial depois dele. Data -> quantos papeis. A mesma data aparecendo em todos os
+    // papeis por mais de uma rodada e feriado da B3 ou fonte parada, e vale olhar.
+    provisorios_mantidos_sem_cobertura: mantidos,
     janela_desde: inicioDaJanela,
     // A fonte simplesmente nao devolveu esses. Aparece no relatorio em vez de sumir: papel que
     // para de responder e o comeco de uma serie que congela sem ninguem notar.
@@ -785,6 +796,10 @@ Deno.serve(async (req) => {
       const saida = modo === "intradiario"
         ? await intradiarioEmLote(db, tickers)
         : await fecharODiaEmLote(db, tickers);
+      // O cron dispara pelo pg_net, que descarta a resposta em ~6 horas. Sem esta linha o
+      // relatorio da rodada so existe ate a manha seguinte - foi o que impediu de ler o
+      // `provisorios_apagados` de 10/09/2026.
+      console.log(JSON.stringify({ ok: true, ...saida }));
       return new Response(JSON.stringify({ ok: true, ...saida }, null, 2),
         { headers: { ...CORS, "Content-Type": "application/json" } });
     }
@@ -996,6 +1011,23 @@ Deno.serve(async (req) => {
           ]);
           const pAntes = Number((antes.data as Record<string, unknown> | null)?.fechamento);
           const pDepois = Number((depois.data as Record<string, unknown> | null)?.fechamento);
+
+          // Evento anterior ao primeiro pregao que temos. Nao ha degrau para medir, e nao
+          // precisa medir: a serie comeca DEPOIS do evento, entao ja o reflete por construcao -
+          // o preco de PETR4 em 2023 ja e pos-grupamento de 2000 e pos-desdobramento de 2008.
+          // Antes daqui isso caia no `semMarca`, e a linha nascia dizendo que o preco ainda
+          // precisava ser dividido por 100. Nao dividia nada porque nao ha cotacao em 2000,
+          // mas era a marca ERRADA no banco - e foi ela que fez as copias de 08 e 10/09/2026
+          // discordarem entre si, o que mandou procurar o problema no lugar errado.
+          if (!Number.isFinite(pAntes) && Number.isFinite(pDepois)) {
+            return {
+              ...evento,
+              ja_refletido_no_preco: true,
+              evidencia: `Data-ex ${dataEx} anterior ao primeiro pregao da nossa serie: ela `
+                       + "comeca depois do evento e ja o reflete. Nada a dividir no preco; a "
+                       + "QUANTIDADE continua sendo afetada.",
+            };
+          }
           if (!Number.isFinite(pAntes) || !Number.isFinite(pDepois) || pDepois <= 0) return semMarca;
 
           const degrau = pAntes / pDepois;
@@ -1013,15 +1045,41 @@ Deno.serve(async (req) => {
           };
         };
 
+        // Evento de QUANTIDADE se identifica por (tipo, data-ex), e nao pela CHAVE inteira.
+        //
+        // A `data_aprovacao` entrou na CHAVE por causa das parcelas gemeas de JCP da Itausa, que
+        // sao CAIXA. Em QUANTIDADE ela nao desempata nada - desdobramento nao e declarado em
+        // duas vias - e so cria chave nova. Foi exatamente o que aconteceu: a BRAPI passou a
+        // mandar `approvedOn` em 10/09/2026, os eventos gravados em 08/09 com a coluna nula
+        // deixaram de colidir, e PETR4 e KLBN11 ficaram com DUAS linhas do mesmo evento. O
+        // `fatorDesde` do motor multiplica todas as linhas com data-ex posterior, nao escolhe
+        // uma: a copia dobra o fator de quem comprou antes da data-ex. Corrigido no banco pela
+        // migracao `evento_de_quantidade_sem_copia`, que tambem poe um indice unico parcial
+        // para a proxima copia estourar em vez de entrar calada.
+        //
+        // O que sobrou no banco depois do `limpar` e justamente o que nao pode ser tocado:
+        // linha manual e linha ja marcada. Reenviar o evento por cima delas nao acrescenta nada
+        // e so poderia apagar a marca.
+        let eventosJaNaBase = 0;
         if (pe.eventos.length) {
-          const eventosMarcados = [];
-          for (const e of pe.eventos as Record<string, unknown>[]) {
-            eventosMarcados.push(await marcarSeJaAjustado(e));
+          const { data: jaGravados, error: eLerEventos } = await db.from("eventos_de_ativos")
+            .select("tipo, data_ex").eq("ticker", ticker).eq("classe", "QUANTIDADE");
+          exigir("leitura de eventos QUANTIDADE", eLerEventos);
+          const conhecido = new Set(((jaGravados ?? []) as Record<string, unknown>[])
+            .map((e) => `${e.tipo}|${e.data_ex}`));
+          const novos = (pe.eventos as Record<string, unknown>[])
+            .filter((e) => !conhecido.has(`${e.tipo}|${e.data_ex}`));
+          eventosJaNaBase = pe.eventos.length - novos.length;
+
+          if (novos.length) {
+            const eventosMarcados = [];
+            for (const e of novos) {
+              eventosMarcados.push(await marcarSeJaAjustado(e));
+            }
+            exigir("eventos QUANTIDADE", (await db.from("eventos_de_ativos")
+              .upsert(eventosMarcados.map((e: Record<string, unknown>) => ({ ...e, isin: pe.isin })),
+                { onConflict: CHAVE, ignoreDuplicates: true })).error);
           }
-          pe.eventos = eventosMarcados;
-          exigir("eventos QUANTIDADE", (await db.from("eventos_de_ativos")
-            .upsert(pe.eventos.map((e: Record<string, unknown>) => ({ ...e, isin: pe.isin })),
-              { onConflict: CHAVE, ignoreDuplicates: true })).error);
         }
         if (subs.length) {
           exigir("eventos DIREITO", (await db.from("eventos_de_ativos")
@@ -1091,6 +1149,9 @@ Deno.serve(async (req) => {
           proventos_manuais: provManuais ?? [],
           parcelados_a_mao: parceladosAMao,
           eventos_da_brapi: pe.eventos.length,
+          // Quantos dos que a BRAPI mandou ja estavam na base por (tipo, data-ex) e nao foram
+          // reenviados. Numero alto e o normal: evento corporativo nao muda depois de acontecer.
+          eventos_ja_na_base: eventosJaNaBase,
           // O que a B3 declarou e a BRAPI nao trouxe. Lista, e nao contagem: cada linha aqui e
           // dinheiro que estava faltando na base, e quem le precisa poder conferir na fonte.
           proventos_da_b3: daB3.length,
