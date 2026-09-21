@@ -14,6 +14,9 @@
  *  2. Rotinas - os crons, com a última execução e o status.
  *  3. Séries de mercado - a última data de cada uma. Série parada é a falha mais silenciosa que
  *     existe aqui: a tela continua calculando, só que com dado velho.
+ *  4. Correções da fonte - onde a nossa base discorda de propósito do que a BRAPI manda. Existe
+ *     porque correção invisível vira número mágico: seis meses depois ninguém lembra por que a
+ *     série do papel é multiplicada por 1,2 antes de uma data.
  */
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -48,10 +51,29 @@ interface Auditoria {
   erro: string | null;
 }
 
+interface EventoVetado {
+  ticker: string;
+  classe: string;
+  tipo: string;
+  data_ex: string;
+  motivo: string;
+}
+
+interface CorrecaoDeCotacao {
+  ticker: string;
+  ate: string;
+  fator: number;
+  motivo: string;
+}
+
 interface Status {
   crons: Cron[];
   series: Serie[];
   auditorias: Auditoria[];
+  correcoes_da_fonte: {
+    eventos_vetados: EventoVetado[];
+    cotacoes: CorrecaoDeCotacao[];
+  } | null;
 }
 
 const fmtQuando = (iso: string | null) =>
@@ -104,13 +126,15 @@ export default function AdminPage() {
   const auditorias = status?.auditorias ?? [];
   const crons = status?.crons ?? [];
   const series = status?.series ?? [];
+  const vetados = status?.correcoes_da_fonte?.eventos_vetados ?? [];
+  const correcoes = status?.correcoes_da_fonte?.cotacoes ?? [];
   const cronsComFalha = crons.filter((c) => c.ultimo_status && c.ultimo_status !== "succeeded");
 
   return (
     <div className="space-y-6">
       <PaginaCabecalho
         titulo="Admin"
-        subtitulo="Estado das rotinas, das auditorias e das séries de mercado"
+        subtitulo="Estado das rotinas, das auditorias, das séries de mercado e das correções de fonte"
         acao={
           <Button variant="outline" size="sm" className="h-8 gap-1 text-xs" onClick={() => void carregar()}>
             <RefreshCw className="h-3.5 w-3.5" />
@@ -253,6 +277,47 @@ export default function AdminPage() {
                 </TableBody>
               </Table>
             </TabelaCartao>
+          </section>
+
+          <section className="space-y-2">
+            <h2 className="text-sm font-bold text-foreground">Correções da fonte</h2>
+            {vetados.length === 0 && correcoes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nada corrigido: a base segue a fonte inteira.
+              </p>
+            ) : (
+              <TabelaCartao>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Ativo</TableHead>
+                      <TableHead className="text-xs">O que</TableHead>
+                      <TableHead className="text-xs">Por quê</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {vetados.map((v) => (
+                      <TableRow key={`veto-${v.ticker}-${v.tipo}-${v.data_ex}`}>
+                        <TableCell className="text-sm font-medium">{v.ticker}</TableCell>
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {v.tipo.toLowerCase()} de {fmtData(v.data_ex)} vetada
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{v.motivo}</TableCell>
+                      </TableRow>
+                    ))}
+                    {correcoes.map((c) => (
+                      <TableRow key={`cot-${c.ticker}-${c.ate}`}>
+                        <TableCell className="text-sm font-medium">{c.ticker}</TableCell>
+                        <TableCell className="whitespace-nowrap text-sm tabular-nums">
+                          preço x {Number(c.fator).toLocaleString("pt-BR")} antes de {fmtData(c.ate)}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{c.motivo}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TabelaCartao>
+            )}
           </section>
         </>
       )}
