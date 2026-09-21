@@ -890,11 +890,18 @@ Deno.serve(async (req) => {
         const pe = await proventosEEventos(ticker);
 
         if (pedido) {
+          // `sincronizar_cotacoes: true` e o que coloca o papel na rotina diaria. Sem isto
+          // a carga sob demanda funcionaria uma vez e a serie nunca mais atualizaria.
+          const cadastro: Record<string, unknown> = {
+            ticker, nome: p.nome, moeda: p.moeda, ativo: true, sincronizar_cotacoes: true,
+          };
+          // O ISIN so entra quando a fonte mandou. Mandar `null` APAGARIA o que ja estava la, e
+          // o upsert so escreve as colunas presentes no payload. Medido em 20/09/2026: recarregar
+          // o MELI34 zerou o `BRMELIBDR006`, porque BDR nao tem ISIN nessa leitura - e sem ISIN
+          // a auditoria perde a referencia do papel na B3 e passa a reportar "sem cobertura".
+          if (pe.isin) cadastro.isin = pe.isin;
           exigir("cadastro_de_acoes", (await db.from("cadastro_de_acoes").upsert(
-            // `sincronizar_cotacoes: true` e o que coloca o papel na rotina diaria. Sem isto
-            // a carga sob demanda funcionaria uma vez e a serie nunca mais atualizaria.
-            { ticker, nome: p.nome, moeda: p.moeda, ativo: true, isin: pe.isin, sincronizar_cotacoes: true },
-            { onConflict: "ticker" },
+            cadastro, { onConflict: "ticker" },
           )).error);
         } else if (pe.isin) {
           // Papel ja cadastrado que ainda nao tem ISIN: preenche sem tocar no resto.
