@@ -24,6 +24,7 @@ import CarteiraRendaFixa from "@/pages/CarteiraRendaFixaPage";
 import CalculadoraPage from "@/pages/CalculadoraPage";
 import PosicaoConsolidadaPage from "@/pages/PosicaoConsolidadaPage";
 import PortfoliosPage from "@/pages/PortfoliosPage";
+import PatrimonioGlobalPage from "@/pages/PatrimonioGlobalPage";
 import NotFound from "./pages/NotFound";
 import AuthPage from "./pages/AuthPage";
 import CadastroPage from "./pages/CadastroPage";
@@ -125,6 +126,9 @@ const App = () => (
 
                 {/* Somente admin */}
                 <Route element={<AdminRoute />}>
+                  {/* Finanças pessoais do Daniel, de outro projeto Supabase. Admin aqui E na edge
+                      function que lê o dado: a rota barra a tela, a função barra o dado. */}
+                  <Route path="/patrimonio-global" element={<PatrimonioGlobalPage />} />
                   <Route path="/custodia" element={<Custodia />} />
                   <Route path="/controle-carteiras" element={<ControleCarteiras />} />
                   <Route path="/admin" element={<Admin />} />

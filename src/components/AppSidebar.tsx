@@ -14,6 +14,7 @@ import {
   ChevronsRight,
   CalendarClock,
   Plus,
+  Wallet,
 } from "lucide-react";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useBoleta } from "@/contexts/BoletaContext";
@@ -26,6 +27,9 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
+  // Primeira opção do menu, a pedido do Daniel (21/09/2026). Só admin: é patrimônio pessoal, de
+  // outro banco, e a edge function que o lê também só responde a admin.
+  { title: "Patrimônio Global", url: "/patrimonio-global", icon: Wallet, adminOnly: true },
   { title: "Portfólios", url: "/portfolios", icon: Layers },
   { title: "Carteira de Investimentos", url: "/carteira", icon: LayoutGrid },
   { title: "Posição Consolidada", url: "/posicao-consolidada", icon: ClipboardList },
