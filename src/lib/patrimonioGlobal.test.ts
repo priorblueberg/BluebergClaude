@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fimDeMesDaCarteira, montarPatrimonioPorConta, type SaldoMensal } from "./patrimonioGlobal";
+import { fimDeMesDaCarteira, montarPatrimonioPorConta, resumoDoPatrimonio, serieDoPatrimonio, type SaldoMensal } from "./patrimonioGlobal";
 
 const s = (ano_mes: string, instituicao: string, tipo_conta: string, saldo_final: number): SaldoMensal =>
   ({ ano_mes, instituicao, tipo_conta, saldo_final });
@@ -105,5 +105,65 @@ describe("fimDeMesDaCarteira", () => {
       { data: "2026-06-02", liquido: 9 },
     ]);
     expect(m.get("2026-06")).toBe(11);
+  });
+});
+
+describe("serieDoPatrimonio", () => {
+  it("usa o Total de cada mês, em ordem cronológica, e pula mês sem saldo", () => {
+    const p = montarPatrimonioPorConta([
+      s("2026-02-01", "Bradesco", "Conta Corrente", 200),
+      s("2025-12-01", "Bradesco", "Conta Corrente", 100),
+      s("2026-01-01", "Conta Luciana", "Conta Corrente", -50),
+    ]);
+    expect(serieDoPatrimonio(p)).toEqual([
+      { data: "2025-12", label: "dez/25", patrimonio: 100 },
+      { data: "2026-01", label: "jan/26", patrimonio: -50 },
+      { data: "2026-02", label: "fev/26", patrimonio: 200 },
+    ]);
+  });
+});
+
+describe("resumoDoPatrimonio", () => {
+  it("último Total e a variação sobre o mês anterior", () => {
+    const r = resumoDoPatrimonio(montarPatrimonioPorConta([
+      s("2026-07-01", "Bradesco", "Conta Corrente", 200),
+      s("2026-08-01", "Bradesco", "Conta Corrente", 150),
+    ]));
+    expect(r.atual).toEqual({ data: "2026-08", label: "ago/26", valor: 150 });
+    expect(r.anterior).toEqual({ data: "2026-07", label: "jul/26", valor: 200 });
+    expect(r.variacaoPct).toBeCloseTo(-25, 10);
+  });
+
+  it("sem mês anterior não há variação", () => {
+    const r = resumoDoPatrimonio(montarPatrimonioPorConta([s("2026-08-01", "Bradesco", "Conta Corrente", 150)]));
+    expect(r.atual?.valor).toBe(150);
+    expect(r.variacaoPct).toBeNull();
+  });
+});
+
+describe("módulos Caixa e Investimentos", () => {
+  it("subtotais por módulo somam o total, e a previdência entra em Investimentos", () => {
+    const r = montarPatrimonioPorConta(
+      [
+        s("2026-07-01", "Bradesco", "Conta Corrente", 9085.33),
+        s("2026-07-01", "Conta Luciana", "Conta Corrente", -100),
+        s("2026-07-01", "Conta Previdência", "Investimentos", 8855.72),
+      ],
+      new Map([["2026-07", 125135]]),
+    );
+    const ano = r.anos[0];
+    expect(ano.subtotais.caixa[6]).toBe(8985.33);
+    expect(ano.subtotais.investimentos[6]).toBe(133990.72);
+    expect(ano.total[6]).toBe(142976.05);
+    expect(ano.linhas.find((l) => l.chave === "previdencia")!.modulo).toBe("investimentos");
+  });
+
+  it("os cards usam o mesmo mês para os dois módulos, mesmo com um deles vazio", () => {
+    const r = resumoDoPatrimonio(montarPatrimonioPorConta(
+      [s("2026-08-01", "Bradesco", "Conta Corrente", 100)],
+      new Map([["2026-08", 50], ["2026-09", 70]]),
+    ));
+    expect(r.atual?.data).toBe("2026-09");
+    expect(r.modulos).toEqual({ caixa: null, investimentos: 70 });
   });
 });

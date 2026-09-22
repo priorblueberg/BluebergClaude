@@ -24,9 +24,17 @@ export interface SaldoMensal {
   saldo_final: number | string;
 }
 
+/**
+ * Os dois módulos do Blueberg (Daniel, 21/09/2026). Caixa é o dinheiro das contas, que vem do banco
+ * de finanças pessoais; Investimentos é o que o Blueberg calcula. O Patrimônio Global é onde os
+ * dois se encontram.
+ */
+export type Modulo = "caixa" | "investimentos";
+
 export interface LinhaDaConta {
   chave: string;
   rotulo: string;
+  modulo: Modulo;
   /** Doze posições, janeiro a dezembro. `null` é mês sem saldo registrado. */
   valores: (number | null)[];
 }
@@ -34,6 +42,8 @@ export interface LinhaDaConta {
 export interface AnoDoPatrimonio {
   ano: number;
   linhas: LinhaDaConta[];
+  /** Soma das linhas de cada módulo no mês; `null` quando nenhuma linha do módulo tem valor. */
+  subtotais: Record<Modulo, (number | null)[]>;
   /** Soma das contas com saldo no mês; `null` quando nenhuma tem. */
   total: (number | null)[];
 }
@@ -46,17 +56,23 @@ export interface PatrimonioPorConta {
 }
 
 /** A ordem e os rótulos são os do dashboard de referência, linha a linha. */
-export const CONTAS_DO_PATRIMONIO: { chave: string; rotulo: string; instituicao: string; tipoConta: string }[] = [
-  { chave: "cc", rotulo: "Conta Corrente", instituicao: "Bradesco", tipoConta: "Conta Corrente" },
-  { chave: "cc_xp", rotulo: "Conta Digital", instituicao: "XP Investimentos", tipoConta: "Conta Corrente" },
+export const CONTAS_DO_PATRIMONIO: {
+  chave: string; rotulo: string; instituicao: string; tipoConta: string; modulo: Modulo;
+}[] = [
+  // ── Caixa ──
+  { chave: "cc", rotulo: "Conta Corrente", instituicao: "Bradesco", tipoConta: "Conta Corrente", modulo: "caixa" },
+  { chave: "cc_xp", rotulo: "Conta Digital", instituicao: "XP Investimentos", tipoConta: "Conta Corrente", modulo: "caixa" },
+  { chave: "adriana", rotulo: "Conta Adriana", instituicao: "Conta Adriana", tipoConta: "Conta Corrente", modulo: "caixa" },
+  { chave: "mauricio", rotulo: "Conta Maurício", instituicao: "Conta Maurício", tipoConta: "Conta Corrente", modulo: "caixa" },
+  { chave: "luciana", rotulo: "Conta Luciana", instituicao: "Conta Luciana", tipoConta: "Conta Corrente", modulo: "caixa" },
+  { chave: "osvaldo", rotulo: "Conta Osvaldo Cruz", instituicao: "Conta Osvaldo Cruz", tipoConta: "Conta Corrente", modulo: "caixa" },
+  { chave: "samambaia", rotulo: "Conta Samambaia", instituicao: "Conta Samambaia", tipoConta: "Conta Corrente", modulo: "caixa" },
+  // ── Investimentos ──
   // Não vem de `saldos_mensais`: é o portfólio Pessoal, passado de fora (ver `investimentos`).
-  { chave: "portfolio", rotulo: "Investimentos (portfólio Pessoal)", instituicao: "", tipoConta: "" },
-  { chave: "adriana", rotulo: "Conta Adriana", instituicao: "Conta Adriana", tipoConta: "Conta Corrente" },
-  { chave: "mauricio", rotulo: "Conta Maurício", instituicao: "Conta Maurício", tipoConta: "Conta Corrente" },
-  { chave: "luciana", rotulo: "Conta Luciana", instituicao: "Conta Luciana", tipoConta: "Conta Corrente" },
-  { chave: "osvaldo", rotulo: "Conta Osvaldo Cruz", instituicao: "Conta Osvaldo Cruz", tipoConta: "Conta Corrente" },
-  { chave: "samambaia", rotulo: "Conta Samambaia", instituicao: "Conta Samambaia", tipoConta: "Conta Corrente" },
-  { chave: "previdencia", rotulo: "Conta Previdência", instituicao: "Conta Previdência", tipoConta: "Investimentos" },
+  { chave: "portfolio", rotulo: "Portfólio Pessoal", instituicao: "", tipoConta: "", modulo: "investimentos" },
+  // Previdência é investimento, mas o Blueberg ainda não tem o produto: continua vindo do saldo
+  // digitado, já sob Investimentos (decisão do Daniel, 21/09/2026).
+  { chave: "previdencia", rotulo: "Previdência", instituicao: "Conta Previdência", tipoConta: "Investimentos", modulo: "investimentos" },
 ];
 
 /**
@@ -147,14 +163,23 @@ export function montarPatrimonioPorConta(
       const linhas: LinhaDaConta[] = CONTAS_DO_PATRIMONIO.map((c) => ({
         chave: c.chave,
         rotulo: c.rotulo,
+        modulo: c.modulo,
         valores: Array.from({ length: 12 }, (_, i) =>
           valores.get(c.chave)!.get(`${ano}-${String(i + 1).padStart(2, "0")}`) ?? null),
       }));
-      const total = Array.from({ length: 12 }, (_, i) => {
-        const doMes = linhas.map((l) => l.valores[i]).filter((v): v is number => v != null);
+      const somar = (das: LinhaDaConta[]) => Array.from({ length: 12 }, (_, i) => {
+        const doMes = das.map((l) => l.valores[i]).filter((v): v is number => v != null);
         return doMes.length ? centavos(doMes.reduce((a, b) => a + b, 0)) : null;
       });
-      return { ano, linhas, total };
+      return {
+        ano,
+        linhas,
+        subtotais: {
+          caixa: somar(linhas.filter((l) => l.modulo === "caixa")),
+          investimentos: somar(linhas.filter((l) => l.modulo === "investimentos")),
+        },
+        total: somar(linhas),
+      };
     });
 
   return {
@@ -176,4 +201,63 @@ export function fimDeMesDaCarteira(linhas: { data: string; liquido: number }[]):
     if (!atual || l.data > atual.data) porMes.set(ym, { data: l.data, valor: l.liquido });
   }
   return new Map([...porMes].map(([ym, v]) => [ym, v.valor]));
+}
+
+const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+/**
+ * A série do gráfico: o Total de cada mês, em ordem cronológica, pulando os meses sem nenhum
+ * saldo. É o mesmo número da linha Total das tabelas - o gráfico não recalcula nada.
+ */
+export function serieDoPatrimonio(p: PatrimonioPorConta): { data: string; label: string; patrimonio: number }[] {
+  return [...p.anos]
+    .sort((a, b) => a.ano - b.ano)
+    .flatMap((ano) => ano.total.map((v, i) => ({ ano: ano.ano, mes: i, v })))
+    .filter((x): x is { ano: number; mes: number; v: number } => x.v != null)
+    .map((x) => ({
+      data: `${x.ano}-${String(x.mes + 1).padStart(2, "0")}`,
+      label: `${MESES_CURTOS[x.mes]}/${String(x.ano).slice(2)}`,
+      patrimonio: x.v,
+    }));
+}
+
+export interface ResumoDoPatrimonio {
+  /** O Total do mês mais recente que tem saldo, e o do mês anterior a ele na série. */
+  atual: { data: string; label: string; valor: number } | null;
+  /** O subtotal de cada módulo NO MESMO mês do `atual`, para os cards somarem. `null` sem saldo. */
+  modulos: Record<Modulo, number | null>;
+  anterior: { data: string; label: string; valor: number } | null;
+  /** Variação do atual sobre o anterior, em %. `null` sem anterior ou com anterior zero. */
+  variacaoPct: number | null;
+}
+
+/**
+ * Os cards: o último Total e a variação sobre o mês anterior.
+ *
+ * O último Total é o da tabela, sem carregar saldo de conta para a frente. É a regra 4.0 do
+ * instrucoes-projeto ("patrimônio geral só no fim"): no meio do ciclo de importação o número fica
+ * incompleto, e isso é esperado - a tela mostra o mês de referência para não enganar.
+ */
+export function resumoDoPatrimonio(p: PatrimonioPorConta): ResumoDoPatrimonio {
+  const serie = serieDoPatrimonio(p);
+  const ponto = (x: { data: string; label: string; patrimonio: number } | undefined) =>
+    x ? { data: x.data, label: x.label, valor: x.patrimonio } : null;
+  const atual = ponto(serie.at(-1));
+  const anterior = ponto(serie.at(-2));
+  const variacaoPct = atual && anterior && anterior.valor !== 0
+    ? (atual.valor / anterior.valor - 1) * 100
+    : null;
+  // O mês de referência é o MESMO para os três cards. Cada módulo no seu próprio último mês daria
+  // números mais "cheios", mas que não somam - e o card de Patrimônio Global deixaria de ser a
+  // soma dos outros dois na mesma tela.
+  const modulos: Record<Modulo, number | null> = { caixa: null, investimentos: null };
+  if (atual) {
+    const [ano, mes] = atual.data.split("-").map(Number);
+    const doAno = p.anos.find((a) => a.ano === ano);
+    if (doAno) {
+      modulos.caixa = doAno.subtotais.caixa[mes - 1];
+      modulos.investimentos = doAno.subtotais.investimentos[mes - 1];
+    }
+  }
+  return { atual, anterior, modulos, variacaoPct };
 }

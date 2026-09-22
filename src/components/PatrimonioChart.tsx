@@ -32,15 +32,27 @@ const PatrimonioTooltip = ({ active, payload, label }: any) => {
 export default function PatrimonioChart({
   dados,
   comEspacador = true,
+  curva = "monotone",
+  titulo = "Patrimônio",
+  subtitulo = "Evolução do patrimônio no período",
 }: {
   dados: PontoPatrimonio[];
   comEspacador?: boolean;
+  /**
+   * `monotone` é o das lâminas: com um ponto por dia útil a curva fica praticamente reta. Com um
+   * ponto por MÊS (Patrimônio Global) a mesma interpolação desenha barrigas entre os pontos, e o
+   * gráfico passa a parecer outro - para ficar igual ao das lâminas, lá vai `linear`.
+   */
+  curva?: "monotone" | "linear";
+  /** O dash Caixa usa o mesmo gráfico para o saldo em caixa. */
+  titulo?: string;
+  subtitulo?: string;
 }) {
   return (
     <div className="rounded-md border border-border bg-card p-6">
       <div>
-        <h2 className="text-sm font-semibold text-foreground">Patrimônio</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Evolução do patrimônio no período</p>
+        <h2 className="text-sm font-semibold text-foreground">{titulo}</h2>
+        {subtitulo && <p className="mt-1 text-xs text-muted-foreground">{subtitulo}</p>}
       </div>
       {comEspacador && <div className="mt-3 h-[26px]" aria-hidden="true" />}
       <div className="mt-4 h-72">
@@ -71,7 +83,7 @@ export default function PatrimonioChart({
             />
             <Tooltip content={<PatrimonioTooltip />} />
             <Area
-              type="monotone"
+              type={curva}
               dataKey="patrimonio"
               name="Patrimônio"
               stroke="hsl(210, 100%, 45%)"

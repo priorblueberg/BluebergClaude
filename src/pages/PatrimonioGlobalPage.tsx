@@ -19,17 +19,20 @@
  * uso, a linha fica em branco e a página oferece a troca - somar o portfólio errado seria pior:
  * com o Maurício em uso, o dinheiro dele entraria como patrimônio do Daniel.
  */
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { PaginaCabecalho, TabelaCartao } from "@/components/PaginaPadrao";
+import { PaginaCabecalho } from "@/components/PaginaPadrao";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronRight, RefreshCw } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
-  fimDeMesDaCarteira, montarPatrimonioPorConta, type PatrimonioPorConta, type SaldoMensal,
+  fimDeMesDaCarteira, montarPatrimonioPorConta, resumoDoPatrimonio, serieDoPatrimonio,
+  type AnoDoPatrimonio, type Modulo, type PatrimonioPorConta, type SaldoMensal,
 } from "@/lib/patrimonioGlobal";
+import PatrimonioChart from "@/components/PatrimonioChart";
 import { useCarteiraInvestimentos } from "@/hooks/useCarteiraInvestimentos";
 import { usePortfolios } from "@/hooks/usePortfolios";
 
@@ -51,46 +54,146 @@ function Valor({ v, forte = false }: { v: number | null; forte?: boolean }) {
   );
 }
 
-function TabelaDoPatrimonio({ patrimonio }: { patrimonio: PatrimonioPorConta }) {
+/**
+ * Classes da `RentabilidadeDetailTable`, a tabela por ano das lâminas de carteira: o mesmo cartão,
+ * o mesmo cabeçalho com o ano na primeira coluna e os meses centralizados. Duas diferenças, e as
+ * duas por causa do conteúdo:
+ *  - colunas mais largas (rótulo de 200px, mês de 100px): aqui cabem "Investimentos (portfólio
+ *    Pessoal)" e valores de sete dígitos, que nos 130/80px de lá passariam por cima do vizinho;
+ *  - sem a coluna "No Ano": saldo não se soma no ano, e lá mesmo a linha de Patrimônio mostra "—"
+ *    nela. Onze linhas de travessão não informariam nada.
+ */
+const K = {
+  cartao: "rounded-md border border-border bg-card p-6",
+  rotuloCab: "text-xs font-semibold whitespace-nowrap w-[200px] min-w-[200px]",
+  rotulo: "text-xs font-medium whitespace-nowrap w-[200px] min-w-[200px]",
+  mesCab: "text-xs font-semibold text-center whitespace-nowrap w-[100px] min-w-[100px]",
+  mes: "text-xs text-center whitespace-nowrap w-[100px] min-w-[100px] tabular-nums",
+  total: "bg-muted/50 font-semibold",
+};
+
+const MODULOS: { chave: Modulo; rotulo: string }[] = [
+  { chave: "caixa", rotulo: "Caixa" },
+  { chave: "investimentos", rotulo: "Investimentos" },
+];
+
+function AnoDoPatrimonioTable({ ano }: { ano: AnoDoPatrimonio }) {
   return (
-    <>
-      {patrimonio.anos.map((ano) => (
-        <TabelaCartao key={ano.ano}>
-          <div className="px-4 pt-3 text-xs font-bold text-foreground">{ano.ano}</div>
-          {/* `table-fixed` com a primeira coluna de largura fixa: as colunas de um ano ficam
-              embaixo das do outro, o que deixa comparar o mesmo mês entre anos de olho. */}
-          <Table className="table-fixed">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="h-8 w-52 text-xs" />
-                {MESES.map((m) => (
-                  <TableHead key={m} className="h-8 text-right text-xs">{m}</TableHead>
+    <div className={K.cartao}>
+      <h2 className="text-sm font-semibold text-foreground">Patrimônio por Conta — {ano.ano}</h2>
+      <p className="mt-1 text-xs text-muted-foreground">Saldo de fim de mês de cada conta</p>
+      <div className="mt-4 overflow-x-auto">
+        <Table className="table-fixed">
+          <TableHeader>
+            <TableRow>
+              <TableHead className={K.rotuloCab}>{ano.ano}</TableHead>
+              {MESES.map((m) => (
+                <TableHead key={m} className={K.mesCab}>{m}</TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {/* Os dois módulos, cada um com o seu subtotal, e o Patrimônio Global fechando. */}
+            {MODULOS.map((mod) => (
+              <Fragment key={mod.chave}>
+                {ano.linhas.filter((l) => l.modulo === mod.chave).map((l) => (
+                  <TableRow key={l.chave}>
+                    <TableCell className={`${K.rotulo} pl-6`}>{l.rotulo}</TableCell>
+                    {l.valores.map((v, i) => (
+                      <TableCell key={i} className={K.mes}><Valor v={v} /></TableCell>
+                    ))}
+                  </TableRow>
                 ))}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {ano.linhas.map((l) => (
-                <TableRow key={l.chave}>
-                  <TableCell className="whitespace-nowrap py-1.5 text-xs">{l.rotulo}</TableCell>
-                  {l.valores.map((v, i) => (
-                    <TableCell key={i} className="whitespace-nowrap py-1.5 text-right text-xs tabular-nums">
-                      <Valor v={v} />
-                    </TableCell>
+                <TableRow className="border-b-2">
+                  <TableCell className={`${K.rotulo} font-semibold`}>{mod.rotulo}</TableCell>
+                  {ano.subtotais[mod.chave].map((v, i) => (
+                    <TableCell key={i} className={`${K.mes} font-semibold`}><Valor v={v} /></TableCell>
                   ))}
                 </TableRow>
+              </Fragment>
+            ))}
+            <TableRow className={K.total}>
+              <TableCell className={K.rotulo}>Patrimônio Global</TableCell>
+              {ano.total.map((v, i) => (
+                <TableCell key={i} className={K.mes}><Valor v={v} forte /></TableCell>
               ))}
-              <TableRow className="bg-muted/40">
-                <TableCell className="py-1.5 text-xs font-bold">Total</TableCell>
-                {ano.total.map((v, i) => (
-                  <TableCell key={i} className="whitespace-nowrap py-1.5 text-right text-xs tabular-nums">
-                    <Valor v={v} forte />
-                  </TableCell>
-                ))}
-              </TableRow>
-            </TableBody>
-          </Table>
-        </TabelaCartao>
-      ))}
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+const fmtPctComSinal = (v: number | null) =>
+  v == null ? "—" : `${v > 0 ? "+" : ""}${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+
+function TabelaDoPatrimonio({ patrimonio }: { patrimonio: PatrimonioPorConta }) {
+  const serie = useMemo(() => serieDoPatrimonio(patrimonio), [patrimonio]);
+  const resumo = useMemo(() => resumoDoPatrimonio(patrimonio), [patrimonio]);
+  const [anterioresAbertos, setAnterioresAbertos] = useState(false);
+  const [maisRecente, ...anteriores] = patrimonio.anos;
+
+  // Mesmo card das lâminas de carteira. A linha de baixo, o mês de referência, é a única coisa a
+  // mais: o último Total pode ser de um mês ainda incompleto (regra 4.0 do instrucoes-projeto, o
+  // patrimônio geral só fecha no fim do ciclo de importação), e sem o mês o número engana.
+  // Os três no MESMO mês, para Caixa + Investimentos = Patrimônio Global na própria tela.
+  const refMes = resumo.atual ? `fim de ${resumo.atual.label}` : null;
+  const semSaldo = resumo.atual ? `sem saldo em ${resumo.atual.label}` : null;
+  const cards = [
+    {
+      label: "Caixa",
+      value: resumo.modulos.caixa != null ? fmtBrl(resumo.modulos.caixa) : "—",
+      ref: resumo.modulos.caixa != null ? refMes : semSaldo,
+    },
+    {
+      label: "Investimentos",
+      value: resumo.modulos.investimentos != null ? fmtBrl(resumo.modulos.investimentos) : "—",
+      ref: resumo.modulos.investimentos != null ? refMes : semSaldo,
+    },
+    {
+      label: "Patrimônio Global",
+      value: resumo.atual ? fmtBrl(resumo.atual.valor) : "—",
+      ref: refMes,
+    },
+    {
+      label: "% em relação ao mês anterior",
+      value: fmtPctComSinal(resumo.variacaoPct),
+      ref: resumo.atual && resumo.anterior ? `${resumo.atual.label} sobre ${resumo.anterior.label}` : null,
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {cards.map((c) => (
+          <div key={c.label} className="rounded-lg border border-border bg-card p-4 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{c.label}</p>
+            <p className="mt-2 text-lg font-bold text-foreground">{c.value}</p>
+            {c.ref && <p className="mt-0.5 text-[11px] text-muted-foreground">{c.ref}</p>}
+          </div>
+        ))}
+      </div>
+
+      {/* O mesmo gráfico das lâminas de carteira, com um ponto por mês: o Total da tabela. */}
+      {serie.length > 1 && <PatrimonioChart dados={serie} comEspacador={false} curva="linear" />}
+
+      {maisRecente && <AnoDoPatrimonioTable ano={maisRecente} />}
+
+      {/* Igual às lâminas: o ano mais recente aberto, os demais atrás de "Anos anteriores". */}
+      {anteriores.length > 0 && (
+        <Collapsible open={anterioresAbertos} onOpenChange={setAnterioresAbertos}>
+          <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+            <ChevronRight
+              className={`h-4 w-4 transition-transform duration-200 ${anterioresAbertos ? "rotate-90" : ""}`}
+            />
+            Anos anteriores ({anteriores.length})
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-4 space-y-6">
+            {anteriores.map((ano) => <AnoDoPatrimonioTable key={ano.ano} ano={ano} />)}
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {/* O dashboard de origem descarta em silêncio a conta que não tem linha. Aqui ela
           aparece: uma conta nova cadastrada na base não pode sumir do patrimônio sem aviso. */}
@@ -103,7 +206,7 @@ function TabelaDoPatrimonio({ patrimonio }: { patrimonio: PatrimonioPorConta }) 
           .
         </p>
       )}
-    </>
+    </div>
   );
 }
 
@@ -201,7 +304,6 @@ export default function PatrimonioGlobalPage() {
 
       {saldos && (
         <section className="space-y-2">
-          <h2 className="text-sm font-bold text-foreground">Patrimônio por Conta</h2>
           {pessoalEmUso
             ? <ComInvestimentos saldos={saldos} />
             : semInvestimentos && <TabelaDoPatrimonio patrimonio={semInvestimentos} />}

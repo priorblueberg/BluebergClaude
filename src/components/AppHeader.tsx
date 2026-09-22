@@ -6,7 +6,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useAuth } from "@/hooks/useAuth";
 import { usePortfolios } from "@/hooks/usePortfolios";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useDataReferencia } from "@/contexts/DataReferenciaContext";
 import { recalculateAllForDataReferencia } from "@/lib/syncEngine";
 import { haVersaoNovaPublicada } from "@/lib/versaoDoApp";
@@ -30,7 +30,16 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
   const inputRef = useRef<HTMLInputElement>(null);
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { portfolios, ativo: portfolioAtivo, ativar: ativarPortfolio } = usePortfolios();
+
+  // Só o módulo de Investimentos escolhe a data (Daniel, 21/09/2026). O Patrimônio Global e o
+  // módulo Caixa seguem o mesmo calendário: sempre D0, a foto de hoje. Nas rotas deles a data volta
+  // para hoje e os controles ficam travados. Tela nova de Caixa entra aqui pelo prefixo.
+  const ROTAS_EM_D0 = ["/patrimonio-global", "/caixa"];
+  const dataTravadaEmD0 = ROTAS_EM_D0.some(
+    (r) => location.pathname === r || location.pathname.startsWith(`${r}/`),
+  );
 
   const isStagedSameAsApplied = format(stagedDate, "yyyy-MM-dd") === format(dataReferencia, "yyyy-MM-dd");
 
@@ -57,8 +66,18 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
 
   const handleApply = async () => {
     if (!user || isStagedSameAsApplied) return;
+    await aplicarData(stagedDate);
+  };
+
+  /**
+   * O caminho do botão Aplicar, para qualquer data. Existe separado porque o Patrimônio Global e
+   * o Caixa precisam voltar para D0 sozinhos, e a volta tem de ser pelo MESMO caminho: a data de
+   * referência não é só o que o campo mostra, ela recalcula todas as carteiras.
+   */
+  const aplicarData = async (alvo: Date) => {
+    if (!user) return;
     if (await bloqueadoPorVersaoAntiga()) return;
-    const clamped = clampDate(stagedDate);
+    const clamped = clampDate(alvo);
     setDataReferencia(clamped);
     setStagedDate(clamped);
     setInputValue(format(clamped, "dd/MM/yyyy"));
@@ -74,6 +93,21 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
       setIsRecalculating(false);
     }
   };
+
+  // Entrou no Patrimônio Global ou no Caixa com outra data aplicada: volta para D0. Se já está em D0, só
+  // descarta o que estivesse digitado e não aplicado, para o campo não mostrar outra data.
+  useEffect(() => {
+    if (!dataTravadaEmD0 || !user) return;
+    const hoje = format(maxDate, "yyyy-MM-dd");
+    if (format(dataReferencia, "yyyy-MM-dd") === hoje) {
+      setStagedDate(maxDate);
+      setInputValue(format(maxDate, "dd/MM/yyyy"));
+      return;
+    }
+    toast.info("Fora do módulo de Investimentos a posição é sempre a de hoje: a data de referência voltou para D0.");
+    void aplicarData(maxDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataTravadaEmD0, user, dataReferencia, maxDate]);
 
   const stageDate = (date: Date) => {
     const clamped = clampDate(date);
@@ -180,7 +214,10 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
         </div>
 
         <div className={`flex items-center gap-4${disableControls ? " pointer-events-none opacity-40" : ""}`}>
-          <div className="flex items-center gap-2 text-xs">
+          <div
+            className="flex items-center gap-2 text-xs"
+            title={dataTravadaEmD0 ? "Só o módulo de Investimentos muda a data: aqui a posição é sempre a de hoje" : undefined}
+          >
             <span className="text-muted-foreground">Posição em:</span>
             <div className="flex items-center gap-1 rounded-md border border-border px-2 py-1 bg-background">
               <input
@@ -190,15 +227,17 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
                 onChange={handleInputChange}
                 onBlur={commitInput}
                 onKeyDown={handleKeyDown}
-                className="w-[80px] bg-transparent text-foreground text-xs outline-none"
+                disabled={dataTravadaEmD0}
+                className="w-[80px] bg-transparent text-foreground text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 placeholder="dd/mm/aaaa"
               />
               <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
                 <PopoverTrigger asChild>
                   <button
-                    className="text-muted-foreground hover:text-primary"
+                    className="text-muted-foreground hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted-foreground"
                     style={{ transition: "color 120ms linear" }}
                     aria-label="Abrir calendário"
+                    disabled={dataTravadaEmD0}
                   >
                     <CalendarIcon size={14} strokeWidth={1.5} />
                   </button>
@@ -219,7 +258,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
             </div>
             <button
               onClick={handleApply}
-              disabled={isStagedSameAsApplied}
+              disabled={isStagedSameAsApplied || dataTravadaEmD0}
               className="rounded-md border border-primary px-3 py-1 text-xs font-medium text-primary hover:bg-primary hover:text-primary-foreground bg-background disabled:opacity-40 disabled:cursor-not-allowed"
               style={{ transition: "all 120ms linear" }}
               title="Aplicar data de referência"
