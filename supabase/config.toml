@@ -17,6 +17,11 @@ verify_jwt = false
 [functions.auditoria-eventos]
 verify_jwt = false
 
+# Carga mensal dos emissores da CVM (companhias abertas e securitizadoras), chamada pelo pg_cron
+# via pg_net, sem cabecalho de autorizacao.
+[functions.sync-emissores-cvm]
+verify_jwt = false
+
 # A ponte para o banco de financas pessoais NAO pode ser publica: ela le dado pessoal com uma
 # chave que o navegador nao tem. `verify_jwt = true` e o padrao, e esta escrito aqui para que um
 # deploy futuro nao o desligue sem querer - foi o que aconteceu com as auditorias em 20/09/2026,
