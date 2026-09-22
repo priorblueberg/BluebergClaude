@@ -25,7 +25,7 @@ interface EntidadeSelectProps {
 
 const LIMITE = 30;
 
-/** Espelha as colunas geradas nome_busca do banco (lower + sem acento). */
+/** Espelha a coluna gerada termos_busca do banco (lower + sem acento). */
 function normalizar(texto: string): string {
   return texto
     .toLowerCase()
@@ -145,8 +145,11 @@ export default function EntidadeSelect({
       const tokens = sanitizar(normalizar(search)).split(/\s+/).filter(Boolean);
 
       let query = baseQuery(tipo);
+      // `termos_busca` = nome sem acento + sigla + apelidos, tudo num texto so. E o que faz
+      // "BNDES" achar "BANCO NACIONAL DE DESENVOLVIMENTO ECONOMICO E SOCIAL" e "nubank" achar
+      // "NU PAGAMENTOS" (migracao 20260922120000).
       for (const token of tokens) {
-        query = query.ilike("nome_busca", `%${token}%`);
+        query = query.ilike("termos_busca", `%${token}%`);
       }
 
       const { data, error } = await query.order("nome").limit(LIMITE);
