@@ -218,6 +218,7 @@ export function useEventos() {
             calendario,
             movimentacoes: movPorCodigo.get(String(p.codigo_custodia)) || [],
             dataResgateTotal: p.resgate_total,
+            produtoNome: (p as any).produtos?.nome ?? null,
             pagamento: p.pagamento,
             vencimento: p.vencimento,
             indexador: p.indexador,

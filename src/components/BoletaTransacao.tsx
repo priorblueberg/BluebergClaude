@@ -692,6 +692,7 @@ export default function BoletaTransacao({
           taxa: selectedCustodia.taxa!,
           modalidade: selectedCustodia.modalidade!,
           puInicial: selectedCustodia.preco_unitario!,
+          produtoNome: produtos.find((p) => p.id === selectedCustodia.produto_id)?.nome ?? null,
           calendario,
           movimentacoes,
           // Ao ignorar a propria movimentacao, tem que ignorar tambem o encerramento que ELA

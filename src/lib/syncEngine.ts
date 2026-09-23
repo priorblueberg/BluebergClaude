@@ -212,6 +212,7 @@ async function syncManualResgatesTotais(
             taxa: custodiaRecord.taxa || 0,
             modalidade: custodiaRecord.modalidade || "Prefixado",
             puInicial: custodiaRecord.preco_unitario || 1000,
+            produtoNome: await nomeDoProduto(custodiaRecord.produto_id),
             calendario,
             movimentacoes: movsAteData,
             dataResgateTotal: null,
@@ -343,6 +344,7 @@ async function syncResgateNoVencimento(
       taxa: custodiaRecord.taxa || 0,
       modalidade: custodiaRecord.modalidade || "Prefixado",
       puInicial: custodiaRecord.preco_unitario || 1000,
+      produtoNome: await nomeDoProduto(custodiaRecord.produto_id),
       calendario,
       movimentacoes: movs,
       dataResgateTotal: custodiaRecord.resgate_total,
@@ -576,6 +578,21 @@ export async function produtoPoupancaId(): Promise<string | null> {
   const { data } = await supabase.from("produtos").select("id").eq("nome", "Poupança").maybeSingle();
   _idProdutoPoupanca = (data as any)?.id ?? null;
   return _idProdutoPoupanca;
+}
+
+/**
+ * Nome do produto pelo id, em cache na sessao. O motor precisa dele para saber para que lado anda
+ * o cupom que cai em dia nao util (CRA, CRI e debenture pagam no dia util seguinte).
+ */
+const _nomeDoProduto = new Map<string, string>();
+export async function nomeDoProduto(produtoId: string | null | undefined): Promise<string | null> {
+  if (!produtoId) return null;
+  const emCache = _nomeDoProduto.get(produtoId);
+  if (emCache !== undefined) return emCache;
+  const { data } = await supabase.from("produtos").select("nome").eq("id", produtoId).maybeSingle();
+  const nome = (data as { nome?: string } | null)?.nome ?? null;
+  if (nome) _nomeDoProduto.set(produtoId, nome);
+  return nome;
 }
 
 export async function syncCustodiaFromMovimentacao(
@@ -1107,6 +1124,8 @@ export async function reprocessMovimentacoesForCodigo(
     produtoId: (aplicacaoInicial as { produto_id?: string | null }).produto_id ?? null,
   };
 
+  const nomeProdutoReproc = await nomeDoProduto(baseInfo.produtoId);
+
   // 4. Get the full calendar range needed
   const lastDate = manualMovs[manualMovs.length - 1].data;
   const calEnd = baseInfo.vencimento && baseInfo.vencimento > lastDate ? baseInfo.vencimento : lastDate;
@@ -1139,6 +1158,7 @@ export async function reprocessMovimentacoesForCodigo(
       taxa: baseInfo.taxa,
       modalidade: baseInfo.modalidade,
       puInicial: baseInfo.puInicial,
+      produtoNome: nomeProdutoReproc,
       calendario,
       movimentacoes: precedingMovs,
       dataResgateTotal: null,

@@ -104,6 +104,11 @@ export interface EngineInput {
    */
   ipcaFatores?: Map<string, number>;
   dataLimite?: string | null;
+  /**
+   * Nome do produto (CDB, LCI, CRA...). So serve para o lado do ajuste do cupom que cai em dia
+   * nao util: CRA, CRI e debenture pagam no dia util SEGUINTE. Sem ele, vale a regra antiga.
+   */
+  produtoNome?: string | null;
   /** Pre-computed CDI map (data -> taxa_anual) to avoid rebuilding per product */
   precomputedCdiMap?: Map<string, number>;
   /** If true, skip sorting calendario (already sorted) */
@@ -172,12 +177,29 @@ export function permiteVendaNoSecundario(produtoNome: string | null | undefined)
   return PRODUTOS_NEGOCIAVEIS_SECUNDARIO.includes(nome);
 }
 
+/**
+ * Para que lado anda o cupom que cai em dia nao util.
+ *
+ * `anterior` e o padrao, herdado do acerto com o Gorila num CDB com cupom. `seguinte` e o que o
+ * mercado faz em CRA, CRI e debenture, e foi medido em 22/09/2026 contra o que a XP pagou no CRA
+ * da Minerva: 15/03/2025 caiu num sabado e o cupom veio em 17/03; 15/03/2026 caiu num domingo e
+ * veio em 16/03. Nao muda so a data - o cupom e `(1 + taxa)^(dias uteis/252)`, entao cada dia
+ * util a mais ou a menos muda o valor.
+ */
+export type AjusteDeCupom = "anterior" | "seguinte";
+
+/** O cupom deste produto anda para a frente quando cai em dia nao util? */
+export function ajusteDeCupomDoProduto(produtoNome: string | null | undefined): AjusteDeCupom {
+  return permiteVendaNoSecundario(produtoNome) ? "seguinte" : "anterior";
+}
+
 export function gerarDatasPagamentoJuros(
   dataInicio: string,
   vencimento: string,
   pagamento: string,
   calendario: { data: string; dia_util: boolean }[],
-  dataCalculo?: string
+  dataCalculo?: string,
+  ajuste: AjusteDeCupom = "anterior"
 ): Set<string> {
   const meses = PERIODICIDADE_MESES[pagamento];
   if (!meses) return new Set();
@@ -195,6 +217,19 @@ export function gerarDatasPagamentoJuros(
 
   function ajustarParaDiaUtil(targetDate: string): string | null {
     let lo = 0, hi = allDates.length - 1, pos = -1;
+    if (ajuste === "seguinte") {
+      // Primeira data do calendario >= alvo, e dali para a frente ate achar dia util.
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (allDates[mid] >= targetDate) { pos = mid; hi = mid - 1; }
+        else { lo = mid + 1; }
+      }
+      if (pos < 0) return null;
+      for (let i = pos; i < allDates.length; i++) {
+        if (diasUteisSet.has(allDates[i])) return allDates[i];
+      }
+      return null;
+    }
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
       if (allDates[mid] <= targetDate) { pos = mid; lo = mid + 1; }
@@ -222,6 +257,11 @@ export function gerarDatasPagamentoJuros(
     const targetStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
 
     if (targetStr < dataInicio) break;
+
+    // Cupom que cai depois do fim do calendario nao existe ainda. Sem esta linha, o ajuste para
+    // tras devolvia o ultimo dia util conhecido e a data virava cupom - um cupom fantasma no fim
+    // da serie, que zerava o juro acumulado e derrubava o patrimonio do dia.
+    if (targetStr > allDates[allDates.length - 1]) continue;
 
     // O corte por dataCalculo olha a data EFETIVA de pagamento, nao a nominal: um cupom de 28/03
     // que cai no sabado e pago em 27/03, e comparar o 28 com uma data de calculo de 27 fazia o
@@ -276,7 +316,7 @@ function findDayBefore(dataInicio: string, calendario: EngineInput["calendario"]
 // ── Main engine ──
 
 export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
-  const { dataInicio, dataCalculo, taxa, modalidade, puInicial, calendario, movimentacoes, dataResgateTotal, pagamento, vencimento, indexador, cdiRecords, dataLimite, precomputedCdiMap, calendarioSorted, ipcaFatores } = input;
+  const { dataInicio, dataCalculo, taxa, modalidade, puInicial, calendario, movimentacoes, dataResgateTotal, pagamento, vencimento, indexador, cdiRecords, dataLimite, precomputedCdiMap, calendarioSorted, ipcaFatores, produtoNome } = input;
 
   const cotaInicial = puInicial > 0 ? puInicial : 1000;
   const rawMultiplicador = getMultiplicador(modalidade, taxa);
@@ -310,7 +350,8 @@ export function calcularRendaFixaDiario(input: EngineInput): DailyRow[] {
 
   // Generate payment dates
   const datasPagamento = pagamento && pagamento !== "No Vencimento" && vencimento
-    ? gerarDatasPagamentoJuros(dataInicio, vencimento, pagamento, calendario, effectiveEnd)
+    ? gerarDatasPagamentoJuros(dataInicio, vencimento, pagamento, calendario, effectiveEnd,
+        ajusteDeCupomDoProduto(produtoNome))
     : new Set<string>();
 
   const dayBefore = findDayBefore(dataInicio, calendario);

@@ -347,6 +347,7 @@ export function useCarteiraRF() {
           calendario,
           movimentacoes: movByCodigo.get(product.codigo_custodia) || [],
           dataResgateTotal: product.resgate_total,
+          produtoNome: product.produto_nome,
           pagamento: product.pagamento,
           vencimento: product.vencimento,
           indexador: product.indexador,
