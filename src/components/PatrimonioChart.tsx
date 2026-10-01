@@ -11,6 +11,21 @@ export interface PontoPatrimonio {
 const fmtBrl = (v: number) =>
   v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+/**
+ * De quantos em quantos pontos o eixo X mostra um rótulo.
+ *
+ * `interval="preserveStartEnd"`, que é o padrão daqui, deixa o Recharts derrubar o rótulo que não
+ * couber - e ele derruba de forma irregular. Com um ponto por DIA isso não se nota; com um ponto
+ * por MÊS, sim: a grade acompanha os rótulos que sobraram e as linhas verticais ficam a
+ * distâncias diferentes umas das outras (o Daniel viu no dash Caixa em 23/09/2026).
+ *
+ * Um passo fixo resolve: os rótulos saem de N em N e a grade fica uniforme.
+ */
+export function passoDoEixo(quantidadeDePontos: number, maximoDeRotulos = 14): number {
+  if (quantidadeDePontos <= maximoDeRotulos) return 0;
+  return Math.ceil(quantidadeDePontos / maximoDeRotulos) - 1;
+}
+
 const PatrimonioTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload || payload.length === 0) return null;
   return (
@@ -35,6 +50,7 @@ export default function PatrimonioChart({
   curva = "monotone",
   titulo = "Patrimônio",
   subtitulo = "Evolução do patrimônio no período",
+  passoDoEixoX,
 }: {
   dados: PontoPatrimonio[];
   comEspacador?: boolean;
@@ -47,7 +63,13 @@ export default function PatrimonioChart({
   /** O dash Caixa usa o mesmo gráfico para o saldo em caixa. */
   titulo?: string;
   subtitulo?: string;
+  /**
+   * Passo fixo dos rótulos do eixo X. Serve para a série MENSAL, em que o descarte automático do
+   * Recharts deixa a grade irregular. Nas lâminas, com um ponto por dia, o padrão continua valendo.
+   */
+  passoDoEixoX?: number | "preserveStartEnd";
 }) {
+  const intervalo = passoDoEixoX ?? "preserveStartEnd";
   return (
     <div className="rounded-md border border-border bg-card p-6">
       <div>
@@ -70,7 +92,7 @@ export default function PatrimonioChart({
               tick={{ fontSize: 10, fill: "hsl(215, 15%, 50%)" }}
               axisLine={{ stroke: "hsl(215, 20%, 88%)" }}
               tickLine={false}
-              interval="preserveStartEnd"
+              interval={intervalo}
             />
             <YAxis
               tick={{ fontSize: 11, fill: "hsl(215, 15%, 50%)" }}

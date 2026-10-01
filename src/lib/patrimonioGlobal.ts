@@ -62,11 +62,15 @@ export const CONTAS_DO_PATRIMONIO: {
   // ── Caixa ──
   { chave: "cc", rotulo: "Conta Corrente", instituicao: "Bradesco", tipoConta: "Conta Corrente", modulo: "caixa" },
   { chave: "cc_xp", rotulo: "Conta Digital", instituicao: "XP Investimentos", tipoConta: "Conta Corrente", modulo: "caixa" },
+  // Cartão de benefícios da empresa (Daniel, 24/09/2026). O crédito mensal é salário e o gasto é
+  // despesa de verdade, então a conta entra no resultado como qualquer outra do caixa.
+  { chave: "caju", rotulo: "Conta Caju", instituicao: "Conta Caju", tipoConta: "Conta Corrente", modulo: "caixa" },
   { chave: "adriana", rotulo: "Conta Adriana", instituicao: "Conta Adriana", tipoConta: "Conta Corrente", modulo: "caixa" },
   { chave: "mauricio", rotulo: "Conta Maurício", instituicao: "Conta Maurício", tipoConta: "Conta Corrente", modulo: "caixa" },
+  // Conta Luciana engoliu a Conta Samambaia e a Conta Osvaldo Cruz em 29/09/2026 (Daniel: "essas
+  // duas foram com a Luciana tambem"): os tres imoveis e os reembolsos viraram uma conta so, no
+  // modelo da Conta Mauricio. Saldo negativo aqui e o Daniel devendo a ela.
   { chave: "luciana", rotulo: "Conta Luciana", instituicao: "Conta Luciana", tipoConta: "Conta Corrente", modulo: "caixa" },
-  { chave: "osvaldo", rotulo: "Conta Osvaldo Cruz", instituicao: "Conta Osvaldo Cruz", tipoConta: "Conta Corrente", modulo: "caixa" },
-  { chave: "samambaia", rotulo: "Conta Samambaia", instituicao: "Conta Samambaia", tipoConta: "Conta Corrente", modulo: "caixa" },
   // ── Investimentos ──
   // Não vem de `saldos_mensais`: é o portfólio Pessoal, passado de fora (ver `investimentos`).
   { chave: "portfolio", rotulo: "Portfólio Pessoal", instituicao: "", tipoConta: "", modulo: "investimentos" },

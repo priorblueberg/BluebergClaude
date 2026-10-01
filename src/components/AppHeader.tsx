@@ -36,7 +36,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
   // Só o módulo de Investimentos escolhe a data (Daniel, 21/09/2026). O Patrimônio Global e o
   // módulo Caixa seguem o mesmo calendário: sempre D0, a foto de hoje. Nas rotas deles a data volta
   // para hoje e os controles ficam travados. Tela nova de Caixa entra aqui pelo prefixo.
-  const ROTAS_EM_D0 = ["/patrimonio-global", "/caixa"];
+  const ROTAS_EM_D0 = ["/patrimonio-global", "/caixa", "/receitas-e-despesas"];
   const dataTravadaEmD0 = ROTAS_EM_D0.some(
     (r) => location.pathname === r || location.pathname.startsWith(`${r}/`),
   );

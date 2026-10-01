@@ -30,18 +30,31 @@ const CORS = {
  * financas. LISTA FECHADA de proposito: o navegador manda so a chave, e a funcao decide o filtro.
  * Aceitar filtro livre do navegador seria abrir a tabela inteira a quem montasse o pedido.
  *
- * Mauricio, Luciana, Osvaldo Cruz e Samambaia nao tem lancamento proprio: o dinheiro delas passa
- * pela conta corrente, pela conta digital e pelo cartao, identificado pela CATEGORIA. E o mesmo
- * mapeamento do dashboard local (`PATR_KEYS`, `extratoSrc: 'categoria'`).
+ * A Conta Luciana engoliu a Conta Samambaia e a Conta Osvaldo Cruz em 29/09/2026 (Daniel: "essas
+ * duas foram com a Luciana tambem"). Os tres assuntos - os dois imoveis e os reembolsos - viraram
+ * uma conta so, com lancamento espelho proprio, no modelo da Conta Mauricio. A subcategoria na
+ * conta de origem (`Apto Samambaia`, `Apto Osvaldo Cruz`, `Reembolsos`) diz de onde vem cada linha.
+ *
+ * A Conta Mauricio terminou a travessia em 24/09/2026: todo lancamento dela tem ESPELHO proprio
+ * (`instituicao = 'Conta Maurício'`), e nenhum usa mais a categoria antiga. O `ou` fica como rede:
+ * se algo for recadastrado do jeito velho, aparece na conta em vez de sumir.
+ *
+ * `recebivel` marca a conta que nao e dinheiro em caixa e sim divida de alguem com o Daniel. Nela
+ * o `contabilizar` nao serve para dividir a ponte, porque emprestimo nunca e receita nem despesa
+ * do Daniel: cairia tudo em transferencia entre contas e a tabela nao mostraria movimento nenhum
+ * (Daniel, 24/09/2026: "como mudamos o conceito, deve estar dividido entre entradas e saidas").
+ * Ali quem divide e o TIPO do lancamento, e so a categoria `Transferência entre contas` fica na
+ * terceira linha.
  */
-const CONTAS: Record<string, { instituicao?: string; tipo_conta?: string; categoria?: string }> = {
+const CONTAS: Record<string, {
+  instituicao?: string; tipo_conta?: string; categoria?: string; ou?: string; recebivel?: true;
+}> = {
   cc: { instituicao: "Bradesco", tipo_conta: "Conta Corrente" },
   cc_xp: { instituicao: "XP Investimentos", tipo_conta: "Conta Corrente" },
-  adriana: { instituicao: "Conta Adriana", tipo_conta: "Conta Corrente" },
-  mauricio: { categoria: "Conta Maurício" },
-  luciana: { categoria: "Luciana" },
-  osvaldo: { categoria: "Conta Osvaldo Cruz" },
-  samambaia: { categoria: "Conta Samambaia" },
+  caju: { instituicao: "Conta Caju", tipo_conta: "Conta Corrente" },
+  adriana: { instituicao: "Conta Adriana", tipo_conta: "Conta Corrente", recebivel: true },
+  mauricio: { ou: "instituicao.eq.Conta Maurício,categoria.eq.Conta Maurício", recebivel: true },
+  luciana: { instituicao: "Conta Luciana", tipo_conta: "Conta Corrente", recebivel: true },
   cartao_bradesco: { instituicao: "Bradesco", tipo_conta: "Cartão de Crédito" },
   cartao_xp: { instituicao: "XP Investimentos", tipo_conta: "Cartão de Crédito" },
 };
@@ -159,6 +172,47 @@ Deno.serve(async (req) => {
         .sort((a, b) => b.ate.localeCompare(a.ate));
     }
 
+    // O extrato de TODAS as contas, para o dash consolidado (Daniel, 23/09/2026). Mesmas colunas
+    // do extrato de uma conta, mais a conta de cada linha - que sai do proprio lancamento
+    // (instituicao + tipo de conta), e nao da lista fechada: aqui nao ha filtro vindo do
+    // navegador, entao nao ha o que restringir.
+    if (incluir.includes("extrato")) {
+      const linhas: {
+        data: string; descricao: string; valor: number | string; tipo: string;
+        categoria: string | null; subcategoria: string | null; contabilizar: boolean;
+        instituicao: string | null; tipo_conta: string | null;
+      }[] = [];
+      const PAGINA = 1000;
+      for (let de = 0; ; de += PAGINA) {
+        const { data: lote, error: e } = await financas
+          .from("transacoes_financeiras")
+          .select("data, descricao, valor, tipo, categoria, subcategoria, contabilizar, instituicao, tipo_conta")
+          // O pingue-pongue da conta corrente do Bradesco nao muda saldo e a reconciliacao ja o
+          // ignora (instrucoes-projeto, 9.1).
+          .not("descricao", "ilike", "%Apl.invest Fac%")
+          .not("descricao", "ilike", "%Resgate Inv Fac%")
+          .order("data")
+          .range(de, de + PAGINA - 1);
+        if (e) return json({ ok: false, erro: `leitura do extrato geral: ${e.message}` }, 502);
+        linhas.push(...(lote ?? []));
+        if (!lote || lote.length < PAGINA) break;
+      }
+
+      const r2 = (x: number) => Math.round(x * 100) / 100;
+      resposta.extrato = linhas
+        .map((l) => ({
+          data: l.data,
+          descricao: l.descricao,
+          conta: [l.instituicao, l.tipo_conta].filter(Boolean).join(" · "),
+          valor: r2(Number(l.valor)),
+          tipo: l.tipo,
+          categoria: l.categoria,
+          subcategoria: l.subcategoria,
+          contabilizar: l.contabilizar,
+        }))
+        .reverse();
+    }
+
     // A pagina de UMA conta: o movimento dela por mes, e o extrato de um ano.
     //
     // Aqui o extrato atravessa para o navegador, linha a linha - e so aqui, e so de uma conta por
@@ -184,6 +238,7 @@ Deno.serve(async (req) => {
         if (filtro.instituicao) q = q.eq("instituicao", filtro.instituicao);
         if (filtro.tipo_conta) q = q.eq("tipo_conta", filtro.tipo_conta);
         if (filtro.categoria) q = q.eq("categoria", filtro.categoria);
+        if (filtro.ou) q = q.or(filtro.ou);
         const { data: lote, error: e } = await q.order("data").range(de, de + PAGINA - 1);
         if (e) return json({ ok: false, erro: `leitura do extrato: ${e.message}` }, 502);
         linhas.push(...(lote ?? []));
@@ -193,6 +248,11 @@ Deno.serve(async (req) => {
       // Cada mes em duas partes, para a ponte de saldo da pagina (Daniel, 21/09/2026): o que e
       // receita ou despesa (`contabilizar = true`) e o que e transferencia entre contas - o
       // resto: pagamento de fatura, aplicacao e resgate, promissoria, dinheiro que vai e volta.
+      //
+      // Na conta de recebivel (`recebivel`) a regra e outra, desde 24/09/2026: a ponte e da
+      // DIVIDA, nao do caixa. O que o Daniel paga por alguem aumenta a divida (entrada) e o que
+      // volta diminui (saida), e nada disso e receita ou despesa dele. So a categoria
+      // `Transferência entre contas` continua na linha de transferencia.
       type Mes = {
         entradas: number; saidas: number; lancamentos: number;
         receitas: number; despesas: number; transfEntradas: number; transfSaidas: number;
@@ -208,8 +268,10 @@ Deno.serve(async (req) => {
         m.lancamentos++;
         const entra = l.tipo === "Entrada";
         if (entra) m.entradas += v; else m.saidas += v;
-        if (l.contabilizar) { if (entra) m.receitas += v; else m.despesas += v; }
-        else if (entra) m.transfEntradas += v; else m.transfSaidas += v;
+        const transferencia = l.categoria === "Transferência entre contas";
+        if (filtro.recebivel ? !transferencia : l.contabilizar) {
+          if (entra) m.receitas += v; else m.despesas += v;
+        } else if (entra) m.transfEntradas += v; else m.transfSaidas += v;
       }
       const r2 = (x: number) => Math.round(x * 100) / 100;
       const anos = [...new Set(linhas.map((l) => Number(String(l.data).slice(0, 4))))].sort((a, b) => b - a);

@@ -16,6 +16,7 @@ import {
   Plus,
   Wallet,
   Banknote,
+  ArrowDownUp,
 } from "lucide-react";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { useBoleta } from "@/contexts/BoletaContext";
@@ -34,6 +35,9 @@ const menuItems: MenuItem[] = [
   // Os dois módulos do Blueberg convergem no Patrimônio Global (Daniel, 21/09/2026): Caixa logo
   // abaixo dele, Investimentos no resto do menu.
   { title: "Caixa", url: "/caixa", icon: Banknote, adminOnly: true },
+  // O resultado do mes aberto por categoria (Daniel, 24/09/2026): mesma origem do Caixa, logo
+  // abaixo dele.
+  { title: "Receitas e Despesas", url: "/receitas-e-despesas", icon: ArrowDownUp, adminOnly: true },
   { title: "Portfólios", url: "/portfolios", icon: Layers },
   { title: "Carteira de Investimentos", url: "/carteira", icon: LayoutGrid },
   { title: "Posição Consolidada", url: "/posicao-consolidada", icon: ClipboardList },

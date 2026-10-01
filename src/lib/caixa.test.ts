@@ -5,6 +5,16 @@ import { CONTAS_DO_PATRIMONIO, type SaldoMensal } from "./patrimonioGlobal";
 const s = (ano_mes: string, instituicao: string, tipo_conta: string, saldo_final: number): SaldoMensal =>
   ({ ano_mes, instituicao, tipo_conta, saldo_final });
 
+/** Uma linha de extrato, que é a única fonte do consolidado desde 23/09/2026. */
+const l = (
+  data: string, valor: number, tipo: "Entrada" | "Saída",
+  extra: Partial<{ conta: string; categoria: string; subcategoria: string; contabilizar: boolean }> = {},
+) => ({
+  data, descricao: "lançamento", conta: extra.conta ?? "Bradesco · Conta Corrente", valor, tipo,
+  categoria: extra.categoria ?? "Alimentação", subcategoria: extra.subcategoria ?? "Supermercado",
+  contabilizar: extra.contabilizar ?? true,
+});
+
 describe("montarCaixa", () => {
   it("o saldo é o subtotal Caixa do Patrimônio Global: sem previdência e sem investimentos", () => {
     const c = montarCaixa(
@@ -15,54 +25,96 @@ describe("montarCaixa", () => {
         s("2026-08-01", "XP Investimentos", "Investimentos", 1000000),
       ],
       [],
-      [],
     );
-    expect(c.anos[0].saldo[7]).toBe(10759.81);
+    expect(c.anos[0].saldoFinal[7]).toBe(10759.81);
     expect(c.resumo.saldo).toEqual({ valor: 10759.81, label: "ago/26" });
   });
 
-  it("resultado por mês e somas do ano; mês sem movimento fica null", () => {
-    const c = montarCaixa([], [
-      { mes: "2026-01", receitas: 21223.66, despesas: 14407.4, lancamentos: 146 },
-      { mes: "2026-03", receitas: 19554.74, despesas: 449299.26, lancamentos: 149 },
-    ], []);
-    const a = c.anos[0];
-    expect(a.resultado[0]).toBe(6816.26);
-    expect(a.resultado[1]).toBeNull();
-    expect(a.resultado[2]).toBe(-429744.52);
-    expect(a.receitasNoAno).toBe(40778.4);
-    expect(a.despesasNoAno).toBe(463706.66);
-    expect(a.resultadoNoAno).toBe(-422928.26);
-    expect(c.resumo).toMatchObject({ ano: 2026, ateLabel: "mar/26", resultado: -422928.26 });
+  it("a tabela de saldo por conta traz só as contas de caixa com saldo no ano, e o total", () => {
+    const c = montarCaixa(
+      [
+        s("2026-08-01", "Bradesco", "Conta Corrente", 6538.68),
+        s("2026-08-01", "XP Investimentos", "Conta Corrente", 4221.13),
+        s("2026-08-01", "Conta Maurício", "Conta Corrente", 9231.51),
+        // Fora do caixa: não pode aparecer na tabela.
+        s("2026-08-01", "Conta Previdência", "Investimentos", 8855.72),
+      ],
+      [],
+    );
+    const contas = c.anos[0].contas;
+    expect(contas.map((x) => x.rotulo)).toEqual([
+      "Conta Corrente", "Conta Digital", "Conta Maurício", "Total",
+    ]);
+    expect(contas.at(-1)).toMatchObject({ total: true });
+    expect(contas.at(-1)!.valores[7]).toBe(19991.32);
+    expect(contas[0].valores[7]).toBe(6538.68);
+    // Mês sem saldo fica em branco, não zerado.
+    expect(contas[0].valores[0]).toBeNull();
   });
 
-  it("categorias do ano mais recente, com participação e média pelos meses com movimento", () => {
+  it("entrada e saída são o que conta no resultado; o resto é transferência entre contas", () => {
+    const c = montarCaixa([], [
+      l("2026-01-10", 21223.66, "Entrada", { categoria: "Receita Empresa" }),
+      l("2026-01-20", 14407.40, "Saída"),
+      l("2026-01-25", 5000, "Saída", { categoria: "Transferência entre contas", contabilizar: false }),
+      l("2026-01-25", 5000, "Entrada", { conta: "XP Investimentos · Conta Corrente",
+        categoria: "Transferência entre contas", contabilizar: false }),
+      l("2026-01-28", 900, "Saída", { categoria: "Conta Investimento", subcategoria: "Aporte", contabilizar: false }),
+      l("2026-03-05", 19554.74, "Entrada"),
+      l("2026-03-15", 449299.26, "Saída"),
+    ]);
+    const a = c.anos[0];
+    expect(a.receitas[0]).toBe(21223.66);
+    expect(a.despesas[0]).toBe(14407.40);
+    // A transferência entre contas nem entra na conta do total: o que sobra é o aporte, que
+    // cruza a fronteira do caixa.
+    expect(a.outrosMovimentos[0]).toBe(-900);
+    expect(a.receitas[1]).toBeNull();
+    expect(a.receitasNoAno).toBe(40778.4);
+    expect(a.despesasNoAno).toBe(463706.66);
+    expect(c.resumo).toMatchObject({ ano: 2026, ateLabel: "mar/26" });
+  });
+
+  it("a ponte do mês usa o saldo do mês anterior", () => {
     const c = montarCaixa(
-      [],
       [
-        { mes: "2025-12", receitas: 0, despesas: 999, lancamentos: 1 },
-        { mes: "2026-01", receitas: 0, despesas: 300, lancamentos: 2 },
-        { mes: "2026-02", receitas: 0, despesas: 100, lancamentos: 1 },
+        s("2026-01-01", "Bradesco", "Conta Corrente", 1000),
+        s("2026-02-01", "Bradesco", "Conta Corrente", 1500),
       ],
-      [
-        { mes: "2025-12", categoria: "Lazer", valor: 999 },
-        { mes: "2026-01", categoria: "Alimentação", valor: 200 },
-        { mes: "2026-01", categoria: "Lazer", valor: 100 },
-        { mes: "2026-02", categoria: "Alimentação", valor: 100 },
-      ],
+      [l("2026-02-10", 500, "Entrada")],
     );
-    expect(c.categoriasDoAno?.ano).toBe(2026);
-    expect(c.categoriasDoAno?.itens).toEqual([
-      { categoria: "Alimentação", valor: 300, pct: 75, mediaMensal: 150 },
-      { categoria: "Lazer", valor: 100, pct: 25, mediaMensal: 50 },
+    const a = c.anos[0];
+    expect(a.saldoAnterior[1]).toBe(1000);
+    expect(a.saldoFinal[1]).toBe(1500);
+    expect(a.saldoAnterior[5]).toBeNull(); // mês sem saldo e sem movimento
+  });
+
+  it("custódia do Maurício não é movimento do Daniel", () => {
+    const c = montarCaixa([], [
+      l("2026-04-01", 288000, "Entrada", { categoria: "Conta Maurício", subcategoria: "Custódia", contabilizar: false }),
+      l("2026-04-02", 100, "Saída"),
+    ]);
+    // O mês existe por causa da saída, e a custódia não somou nada nele.
+    expect(c.anos[0].outrosMovimentos[3]).toBe(0);
+    expect(c.anos[0].despesas[3]).toBe(100);
+  });
+
+  it("guarda até quando cada conta tem lançamento", () => {
+    const c = montarCaixa([], [
+      l("2026-04-02", 100, "Saída"),
+      l("2026-09-10", 50, "Saída", { conta: "XP Investimentos · Cartão de Crédito" }),
+    ]);
+    expect(c.atualizacao).toEqual([
+      { conta: "XP Investimentos · Cartão de Crédito", ate: "2026-09-10" },
+      { conta: "Bradesco · Conta Corrente", ate: "2026-04-02" },
     ]);
   });
 
   it("sem dado nenhum devolve vazio sem quebrar", () => {
-    const c = montarCaixa([], [], []);
+    const c = montarCaixa([], []);
     expect(c.anos).toEqual([]);
     expect(c.resumo.saldo).toBeNull();
-    expect(c.categoriasDoAno).toBeNull();
+    expect(c.atualizacao).toEqual([]);
   });
 });
 

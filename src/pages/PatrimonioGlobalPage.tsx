@@ -32,7 +32,7 @@ import {
   fimDeMesDaCarteira, montarPatrimonioPorConta, resumoDoPatrimonio, serieDoPatrimonio,
   type AnoDoPatrimonio, type Modulo, type PatrimonioPorConta, type SaldoMensal,
 } from "@/lib/patrimonioGlobal";
-import PatrimonioChart from "@/components/PatrimonioChart";
+import PatrimonioChart, { passoDoEixo } from "@/components/PatrimonioChart";
 import { useCarteiraInvestimentos } from "@/hooks/useCarteiraInvestimentos";
 import { usePortfolios } from "@/hooks/usePortfolios";
 
@@ -176,7 +176,10 @@ function TabelaDoPatrimonio({ patrimonio }: { patrimonio: PatrimonioPorConta }) 
       </div>
 
       {/* O mesmo gráfico das lâminas de carteira, com um ponto por mês: o Total da tabela. */}
-      {serie.length > 1 && <PatrimonioChart dados={serie} comEspacador={false} curva="linear" />}
+      {serie.length > 1 && (
+        <PatrimonioChart dados={serie} comEspacador={false} curva="linear"
+          passoDoEixoX={passoDoEixo(serie.length)} />
+      )}
 
       {maisRecente && <AnoDoPatrimonioTable ano={maisRecente} />}
 

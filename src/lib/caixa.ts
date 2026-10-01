@@ -6,52 +6,85 @@
  *
  *   Carteira de Investimentos        Caixa
  *   Patrimônio                       Saldo em Caixa
- *   Ganho Financeiro                 Resultado (receitas - despesas)
- *   Rentabilidade / % do CDI         Receitas e Despesas
- *   Histórico de Rentabilidade       Receitas e Despesas por mês
- *   Tabela de Rentabilidade por ano  Tabela do Caixa por ano, com "No Ano"
- *   Lista de posições                Despesas por categoria no ano
+ *   Rentabilidade / % do CDI         Entradas e Saídas
+ *   Histórico de Rentabilidade       Entradas e Saídas por mês
+ *   Tabela de Rentabilidade por ano  Ponte de saldo do caixa por ano, com "No Ano"
+ *   Lista de posições                Extrato de movimentações
  *
  * Duas fontes, e as duas vêm do banco de finanças pessoais pela edge function `patrimonio-pessoal`:
  *  - o SALDO é o subtotal "Caixa" do Patrimônio Global - a mesma conta, para os dois dashboards
  *    não poderem divergir;
- *  - RECEITA e DESPESA são os lançamentos com `contabilizar = true`, de qualquer conta, cartão
- *    incluído, agregados por mês na própria função.
+ *  - o MOVIMENTO sai do extrato, linha a linha: entrada e saída são o que tem
+ *    `contabilizar = true` (em qualquer conta, cartão incluído) e o resto é transferência entre
+ *    contas. Desde 23/09/2026 é o mesmo recorte que alimenta o extrato da tela, para a tabela e a
+ *    lista não poderem contar histórias diferentes.
  */
 import { montarPatrimonioPorConta, type SaldoMensal } from "./patrimonioGlobal";
 
-export interface MovimentoDoMes {
-  /** `AAAA-MM` */
-  mes: string;
-  receitas: number;
-  despesas: number;
-  lancamentos: number;
-}
-
-export interface DespesaDaCategoria {
-  mes: string;
-  categoria: string;
+/** Uma linha do extrato, como a edge function devolve no recorte `extrato`. */
+export interface Lancamento {
+  data: string;
+  descricao: string;
+  conta: string;
   valor: number;
+  tipo: string;
+  categoria: string | null;
+  subcategoria: string | null;
+  /** `true` entra no resultado; `false` é transferência entre contas. */
+  contabilizar: boolean;
 }
 
+/**
+ * Um ano do caixa como PONTE de saldo, igual à da página de cada conta:
+ *
+ *   Saldo Anterior + Entradas - Saídas + Transferência entre contas = Saldo Final
+ *
+ * No consolidado a transferência entre contas do mesmo titular se anula (sai de uma, entra em
+ * outra); o que sobra nessa linha é o dinheiro que cruza a fronteira do caixa - aporte e resgate
+ * de investimento, principalmente.
+ */
 export interface AnoDoCaixa {
   ano: number;
-  saldo: (number | null)[];
+  saldoAnterior: (number | null)[];
   receitas: (number | null)[];
   despesas: (number | null)[];
-  resultado: (number | null)[];
+  /**
+   * O que não é resultado e TAMBÉM não é transferência entre contas: aporte e resgate de
+   * investimento, pagamento de fatura, promissória. É dinheiro que cruza a fronteira do caixa, e
+   * por isso mexe no saldo.
+   *
+   * A transferência entre contas fica de fora da tabela do total (Daniel, 23/09/2026): "se saiu de
+   * uma conta e foi pra outra, nada muda". Na página de UMA conta ela continua, porque ali ela não
+   * se anula.
+   */
+  outrosMovimentos: (number | null)[];
+  saldoFinal: (number | null)[];
   receitasNoAno: number | null;
   despesasNoAno: number | null;
-  resultadoNoAno: number | null;
+  outrosNoAno: number | null;
+  /**
+   * Saldo Final - (Saldo Anterior + Entradas - Saídas + Transferências). Zero é a ponte fechando.
+   * No consolidado ela não fecha hoje, por dois motivos conhecidos: o cartão entra como despesa na
+   * data da compra e só sai do saldo quando a fatura é paga, e as contas personalizadas (Adriana,
+   * Maurício, Luciana) têm saldo de recebível, com sinal próprio e
+   * ajuste manual. A linha existe para a tabela não afirmar uma igualdade que não vale.
+   */
+  diferenca: (number | null)[];
+  naoFecha: boolean;
+  /**
+   * O saldo de cada conta do caixa no fim de cada mês, na ordem do Patrimônio Global, com o total
+   * por último. Conta sem nenhum saldo no ano fica de fora: linha em branco não diz nada
+   * (Daniel, 24/09/2026).
+   */
+  contas: LinhaDeSaldo[];
 }
 
-export interface CategoriaDoAno {
-  categoria: string;
-  valor: number;
-  /** Participação no total de despesas do ano, em %. */
-  pct: number;
-  /** Valor dividido pelos meses do ano que têm movimento. */
-  mediaMensal: number;
+/** Uma linha da tabela de saldo por conta: doze meses, janeiro a dezembro. */
+export interface LinhaDeSaldo {
+  rotulo: string;
+  valores: (number | null)[];
+  /** A linha do total, para a tabela destacar. */
+  total?: boolean;
 }
 
 export interface Caixa {
@@ -65,12 +98,21 @@ export interface Caixa {
     ateLabel: string | null;
     receitas: number | null;
     despesas: number | null;
-    resultado: number | null;
   };
   serieSaldo: { data: string; label: string; patrimonio: number }[];
   serieMovimento: { data: string; label: string; receitas: number; despesas: number }[];
-  categoriasDoAno: { ano: number; itens: CategoriaDoAno[] } | null;
+  /** Até quando cada conta tem lançamento. */
+  atualizacao: { conta: string; ate: string }[];
 }
+
+/**
+ * Dinheiro do Maurício guardado com o Daniel: não é movimento dele. Mesma regra do dashboard
+ * local e do recorte agregado da edge function.
+ */
+const ehCustodia = (l: Lancamento) => l.subcategoria === "Custódia";
+
+/** A categoria que, no total, se anula: saiu de uma conta e entrou em outra (Daniel, 23/09/2026). */
+const TRANSFERENCIA = "Transferência entre contas";
 
 const MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 const rotulo = (ym: string) => `${MESES_CURTOS[Number(ym.slice(5, 7)) - 1]}/${ym.slice(2, 4)}`;
@@ -80,44 +122,86 @@ const soma = (xs: (number | null)[]) => {
   return v.length ? centavos(v.reduce((a, b) => a + b, 0)) : null;
 };
 
-export function montarCaixa(
-  saldos: SaldoMensal[],
-  movimento: MovimentoDoMes[],
-  despesaPorCategoria: DespesaDaCategoria[],
-): Caixa {
+export function montarCaixa(saldos: SaldoMensal[], lancamentos: Lancamento[]): Caixa {
+  type Mes = { receitas: number; despesas: number; transferencias: number; outros: number; lancamentos: number };
+  const movPorMes = new Map<string, Mes>();
+  const ultimaDoConta = new Map<string, string>();
+  for (const l of lancamentos) {
+    const conta = l.conta || "—";
+    if (!ultimaDoConta.has(conta) || l.data > ultimaDoConta.get(conta)!) ultimaDoConta.set(conta, l.data);
+    if (ehCustodia(l)) continue;
+    const mes = l.data.slice(0, 7);
+    const m = movPorMes.get(mes) ?? { receitas: 0, despesas: 0, transferencias: 0, outros: 0, lancamentos: 0 };
+    m.lancamentos++;
+    const entra = l.tipo === "Entrada";
+    if (l.contabilizar) {
+      if (entra) m.receitas += l.valor; else m.despesas += l.valor;
+    } else if (l.categoria === TRANSFERENCIA) {
+      m.transferencias += entra ? l.valor : -l.valor;
+    } else {
+      m.outros += entra ? l.valor : -l.valor;
+    }
+    movPorMes.set(mes, m);
+  }
+  for (const [mes, m] of movPorMes) {
+    movPorMes.set(mes, {
+      receitas: centavos(m.receitas), despesas: centavos(m.despesas),
+      transferencias: centavos(m.transferencias), outros: centavos(m.outros), lancamentos: m.lancamentos,
+    });
+  }
+  const atualizacao = [...ultimaDoConta.entries()]
+    .map(([conta, ate]) => ({ conta, ate }))
+    .sort((a, b) => b.ate.localeCompare(a.ate));
+
   // O saldo é o subtotal Caixa do Patrimônio Global, sem o portfólio.
   const patrimonio = montarPatrimonioPorConta(saldos, null);
+  const contasPorAno = new Map<number, LinhaDeSaldo[]>();
+  for (const a of patrimonio.anos) {
+    const linhas: LinhaDeSaldo[] = a.linhas
+      .filter((l) => l.modulo === "caixa" && l.valores.some((v) => v != null))
+      .map((l) => ({ rotulo: l.rotulo, valores: l.valores }));
+    if (linhas.length) linhas.push({ rotulo: "Total", valores: a.subtotais.caixa, total: true });
+    contasPorAno.set(a.ano, linhas);
+  }
   const saldoPorMes = new Map<string, number>();
   for (const a of patrimonio.anos) {
     a.subtotais.caixa.forEach((v, i) => {
       if (v != null) saldoPorMes.set(`${a.ano}-${String(i + 1).padStart(2, "0")}`, v);
     });
   }
-  const movPorMes = new Map(movimento.map((m) => [m.mes, m]));
-
   const meses = [...new Set([...saldoPorMes.keys(), ...movPorMes.keys()])].sort();
   if (!meses.length) {
     return {
       anos: [], periodo: null,
-      resumo: { saldo: null, ano: null, ateLabel: null, receitas: null, despesas: null, resultado: null },
-      serieSaldo: [], serieMovimento: [], categoriasDoAno: null,
+      resumo: { saldo: null, ano: null, ateLabel: null, receitas: null, despesas: null },
+      serieSaldo: [], serieMovimento: [], atualizacao,
     };
   }
 
   const anoIni = Number(meses[0].slice(0, 4));
   const anoFim = Number(meses[meses.length - 1].slice(0, 4));
   const anos: AnoDoCaixa[] = Array.from({ length: anoFim - anoIni + 1 }, (_, i) => anoFim - i).map((ano) => {
-    const ym = (i: number) => `${ano}-${String(i + 1).padStart(2, "0")}`;
-    const saldo = Array.from({ length: 12 }, (_, i) => saldoPorMes.get(ym(i)) ?? null);
-    const receitas = Array.from({ length: 12 }, (_, i) => movPorMes.get(ym(i))?.receitas ?? null);
-    const despesas = Array.from({ length: 12 }, (_, i) => movPorMes.get(ym(i))?.despesas ?? null);
-    const resultado = receitas.map((r, i) =>
-      r == null && despesas[i] == null ? null : centavos((r ?? 0) - (despesas[i] ?? 0)));
+    const ym = (a: number, i: number) => `${a}-${String(i + 1).padStart(2, "0")}`;
+    const mesAnterior = (i: number) => (i === 0 ? ym(ano - 1, 11) : ym(ano, i - 1));
+    const saldoFinal = Array.from({ length: 12 }, (_, i) => saldoPorMes.get(ym(ano, i)) ?? null);
+    const receitas = Array.from({ length: 12 }, (_, i) => movPorMes.get(ym(ano, i))?.receitas ?? null);
+    const despesas = Array.from({ length: 12 }, (_, i) => movPorMes.get(ym(ano, i))?.despesas ?? null);
+    const outrosMovimentos = Array.from({ length: 12 }, (_, i) => movPorMes.get(ym(ano, i))?.outros ?? null);
+    // Mês ainda por vir (sem saldo e sem movimento) não tem Saldo Anterior, como na página da conta.
+    const saldoAnterior = Array.from({ length: 12 }, (_, i) =>
+      saldoFinal[i] == null && !movPorMes.has(ym(ano, i)) ? null : saldoPorMes.get(mesAnterior(i)) ?? null);
+    const diferenca = saldoFinal.map((f, i) =>
+      f == null || saldoAnterior[i] == null
+        ? null
+        : centavos(f - (saldoAnterior[i]! + (receitas[i] ?? 0) - (despesas[i] ?? 0) + (outrosMovimentos[i] ?? 0))));
     return {
-      ano, saldo, receitas, despesas, resultado,
+      ano, saldoAnterior, receitas, despesas, outrosMovimentos, saldoFinal,
       receitasNoAno: soma(receitas),
       despesasNoAno: soma(despesas),
-      resultadoNoAno: soma(resultado),
+      outrosNoAno: soma(outrosMovimentos),
+      diferenca,
+      naoFecha: diferenca.some((d) => d != null && Math.abs(d) >= 0.01),
+      contas: contasPorAno.get(ano) ?? [],
     };
   });
 
@@ -126,28 +210,6 @@ export function montarCaixa(
   const ultimoMov = mesesComMov.at(-1);
   const anoDoResumo = ultimoMov ? Number(ultimoMov.slice(0, 4)) : null;
   const doAno = anos.find((a) => a.ano === anoDoResumo);
-
-  let categoriasDoAno: Caixa["categoriasDoAno"] = null;
-  if (anoDoResumo != null) {
-    const porCategoria = new Map<string, number>();
-    for (const d of despesaPorCategoria) {
-      if (Number(d.mes.slice(0, 4)) !== anoDoResumo) continue;
-      porCategoria.set(d.categoria, (porCategoria.get(d.categoria) ?? 0) + d.valor);
-    }
-    const total = [...porCategoria.values()].reduce((a, b) => a + b, 0);
-    const mesesNoAno = mesesComMov.filter((m) => Number(m.slice(0, 4)) === anoDoResumo).length || 1;
-    categoriasDoAno = {
-      ano: anoDoResumo,
-      itens: [...porCategoria.entries()]
-        .map(([categoria, valor]) => ({
-          categoria,
-          valor: centavos(valor),
-          pct: total > 0 ? (valor / total) * 100 : 0,
-          mediaMensal: centavos(valor / mesesNoAno),
-        }))
-        .sort((a, b) => b.valor - a.valor),
-    };
-  }
 
   return {
     anos,
@@ -158,7 +220,6 @@ export function montarCaixa(
       ateLabel: ultimoMov ? rotulo(ultimoMov) : null,
       receitas: doAno?.receitasNoAno ?? null,
       despesas: doAno?.despesasNoAno ?? null,
-      resultado: doAno?.resultadoNoAno ?? null,
     },
     serieSaldo: [...saldoPorMes.entries()].sort(([a], [b]) => a.localeCompare(b))
       .map(([data, patrimonio]) => ({ data, label: rotulo(data), patrimonio })),
@@ -166,7 +227,7 @@ export function montarCaixa(
       data: m, label: rotulo(m),
       receitas: movPorMes.get(m)!.receitas, despesas: movPorMes.get(m)!.despesas,
     })),
-    categoriasDoAno,
+    atualizacao,
   };
 }
 
@@ -182,11 +243,10 @@ export const CONTAS_DO_CAIXA: {
 }[] = [
   { chave: "cc", rotulo: "Conta Corrente (Bradesco)", grupo: "Contas", temSaldo: true },
   { chave: "cc_xp", rotulo: "Conta Digital (XP)", grupo: "Contas", temSaldo: true },
+  { chave: "caju", rotulo: "Conta Caju", grupo: "Contas", temSaldo: true },
   { chave: "adriana", rotulo: "Conta Adriana", grupo: "Contas", temSaldo: true },
   { chave: "mauricio", rotulo: "Conta Maurício", grupo: "Contas", temSaldo: true },
   { chave: "luciana", rotulo: "Conta Luciana", grupo: "Contas", temSaldo: true },
-  { chave: "osvaldo", rotulo: "Conta Osvaldo Cruz", grupo: "Contas", temSaldo: true },
-  { chave: "samambaia", rotulo: "Conta Samambaia", grupo: "Contas", temSaldo: true },
   { chave: "cartao_bradesco", rotulo: "Cartão Bradesco", grupo: "Cartões", temSaldo: false },
   { chave: "cartao_xp", rotulo: "Cartão XP", grupo: "Cartões", temSaldo: false },
 ];
@@ -233,7 +293,7 @@ export interface AnoDaConta {
   /**
    * Saldo Final - (Saldo Anterior + Receitas - Despesas + Transferências), onde há os dois saldos.
    * Zero é a ponte fechando. Existe para a tabela não afirmar uma igualdade que não vale: nas
-   * contas personalizadas (Maurício, Luciana, Osvaldo Cruz, Samambaia, Adriana) o saldo é um
+   * contas personalizadas (Maurício, Luciana, Adriana) o saldo é um
    * recebível com regras próprias - sinal invertido, custódia fora, ajuste manual - e o
    * movimento da categoria não o reproduz.
    */

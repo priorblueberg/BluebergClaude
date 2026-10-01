@@ -26,6 +26,7 @@ import PosicaoConsolidadaPage from "@/pages/PosicaoConsolidadaPage";
 import PortfoliosPage from "@/pages/PortfoliosPage";
 import PatrimonioGlobalPage from "@/pages/PatrimonioGlobalPage";
 import CaixaPage from "@/pages/CaixaPage";
+import ReceitasDespesasPage from "@/pages/ReceitasDespesasPage";
 import NotFound from "./pages/NotFound";
 import AuthPage from "./pages/AuthPage";
 import CadastroPage from "./pages/CadastroPage";
@@ -132,6 +133,8 @@ const App = () => (
                   <Route path="/patrimonio-global" element={<PatrimonioGlobalPage />} />
                   {/* Módulo Caixa: mesma origem e mesma trava do Patrimônio Global. */}
                   <Route path="/caixa" element={<CaixaPage />} />
+                  {/* Mesma origem e mesma trava: o resultado por categoria. */}
+                  <Route path="/receitas-e-despesas" element={<ReceitasDespesasPage />} />
                   <Route path="/custodia" element={<Custodia />} />
                   <Route path="/controle-carteiras" element={<ControleCarteiras />} />
                   <Route path="/admin" element={<Admin />} />
