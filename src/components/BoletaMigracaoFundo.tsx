@@ -101,6 +101,21 @@ export default function BoletaMigracaoFundo({ origem, onFechar }: { origem: Aler
       if (eBase) throw eBase;
       if (!base) throw new Error("Posição de origem não encontrada.");
 
+      // Posicao que JA migrou nao migra de novo (Daniel, 02/10/2026: "se eu clicar agora na
+      // migração vai duplicar o registro?"). Duplicaria: o saldo que a boleta oferece e o da data
+      // da ultima cota, ANTERIOR a migracao, entao a posicao ainda parece cheia e sairia um segundo
+      // par saida + entrada.
+      const { data: jaMigrou } = await supabase.from("movimentacoes")
+        .select("data")
+        .eq("user_id", user.id).eq("codigo_custodia", origem.codigoCustodia)
+        .eq("tipo_movimentacao", TIPO_MIGRACAO_SAIDA).limit(1);
+      if (jaMigrou && jaMigrou.length > 0) {
+        throw new Error(
+          `Esta posição já foi migrada em ${fmtData(jaMigrou[0].data)}. Migrar de novo duplicaria o ` +
+          "registro. Para refazer, apague a migração nas Movimentações e migre outra vez.",
+        );
+      }
+
       // Mesmo fundo novo na mesma instituicao e a mesma posicao: a entrada soma nela.
       const { data: existente } = await supabase.from("movimentacoes")
         .select("codigo_custodia")

@@ -69,3 +69,17 @@ export function quantidadeSugeridaNaMigracao(
 export const TEXTO_FUNDO_SEM_COTA =
   "O fundo pode ter sido encerrado, incorporado a outro fundo, migrado para outro CNPJ ou dividido em " +
   "subclasses. Confirme com a corretora ou o gestor antes de registrar a mudança.";
+
+/**
+ * O que cada saida faz, ao lado do botao (Daniel, 02/10/2026: "nao esta claro o que acontece para
+ * cada situacao sugerida no alerta"). O alerta dizia por que apareceu, mas nao o que o clique
+ * provoca - e a diferenca entre os dois e grande: um fecha a historia, o outro a continua em outro
+ * fundo e passa a mostrar DOIS registros da mesma posicao.
+ */
+export const TEXTO_ENCERRAR_POSICAO =
+  "O dinheiro saiu. Zera a posição com um resgate total na data da última cota, e o histórico " +
+  "termina aqui.";
+export const TEXTO_MIGRAR_POSICAO =
+  "O dinheiro continua investido, em outro fundo. Grava duas linhas ligadas - uma saída aqui e uma " +
+  "entrada no fundo novo, na data da primeira cota dele -, então a posição passa a aparecer em DOIS " +
+  "registros. O rendimento entre as duas datas entra como ganho do fundo novo, não como aporte.";
