@@ -28,8 +28,8 @@ import PatrimonioGlobalPage from "@/pages/PatrimonioGlobalPage";
 import CaixaPage from "@/pages/CaixaPage";
 import ReceitasDespesasPage from "@/pages/ReceitasDespesasPage";
 import NotFound from "./pages/NotFound";
+import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
-import CadastroPage from "./pages/CadastroPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import PlanosPage from "./pages/PlanosPage";
 import CheckoutPage from "./pages/CheckoutPage";
@@ -46,7 +46,7 @@ const ProtectedRoute = () => {
         Carregando...
       </div>
     );
-  if (!user) return <Navigate to="/" replace />;
+  if (!user) return <Navigate to="/auth" replace />;
   if (hasProfile === null)
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground">
@@ -83,7 +83,7 @@ const OnboardingRoute = () => {
         Carregando...
       </div>
     );
-  if (!user) return <Navigate to="/" replace />;
+  if (!user) return <Navigate to="/auth" replace />;
   if (hasProfile) return <Navigate to="/carteira" replace />;
   return <OnboardingPage />;
 };
@@ -96,11 +96,11 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <Routes>
-            {/* Public routes. A raiz e a tela de login: a pagina comercial foi
-                removida e /auth continua valendo so para links antigos. */}
-            <Route path="/" element={<AuthPage />} />
-            <Route path="/auth" element={<Navigate to="/" replace />} />
-            <Route path="/cadastro" element={<CadastroPage />} />
+            {/* Public routes. A raiz e a pagina comercial e o login fica em /auth.
+                Abertura de conta fechada (25/11/2026): /cadastro so redireciona. */}
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/auth" element={<AuthPage />} />
+            <Route path="/cadastro" element={<Navigate to="/auth" replace />} />
             <Route path="/onboarding" element={<OnboardingRoute />} />
             
             <Route path="/planos" element={<PlanosPage />} />

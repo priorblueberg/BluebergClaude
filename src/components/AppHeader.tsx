@@ -159,7 +159,7 @@ export function AppHeader({ disableControls = false }: { disableControls?: boole
 
   const handleLogout = async () => {
     await signOut();
-    navigate("/");
+    navigate("/auth");
   };
 
 

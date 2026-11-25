@@ -8,8 +8,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 /**
- * Tela inicial da plataforma (rota "/"). A pagina comercial foi removida, entao
- * quem abre o site cai direto no login: fundo branco e so o box de credenciais.
+ * Tela de login (rota "/auth"). A raiz e a pagina comercial, que so leva ate aqui:
+ * a abertura de conta esta fechada. Fundo branco e so o box de credenciais.
  */
 const AuthPage = () => {
   const navigate = useNavigate();
