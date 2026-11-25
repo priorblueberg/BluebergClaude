@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import heroDashboard from "@/assets/hero-dashboard.png";
 import LandingPricingSection from "@/components/landing/LandingPricingSection";
 import InstitucionalLayout from "@/components/landing/InstitucionalLayout";
+import ResumoRecursos from "@/components/landing/ResumoRecursos";
 
 /**
  * Pagina comercial (rota "/"). Restaurada em 25/11/2026 sem abertura de conta: o unico
@@ -42,6 +43,15 @@ const LandingPage = () => {
                     Acessar a plataforma
                   </Button>
                 </Link>
+                <a href="#recursos">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="rounded-full border-[#d1dbe6] text-[#0a2540] hover:bg-[#f7f9fc] h-14 px-8 text-base font-semibold"
+                  >
+                    Conheça a plataforma
+                  </Button>
+                </a>
               </div>
             </div>
             <div className="relative">
@@ -104,6 +114,9 @@ const LandingPage = () => {
           </div>
         </div>
       </section>
+
+      {/* Resumo das paginas de recursos, um box horizontal por pagina */}
+      <ResumoRecursos />
 
       {/* Feature Comparison Grid */}
       <section className="py-20 lg:py-28">
