@@ -15,8 +15,8 @@ import InstitucionalLayout from "@/components/landing/InstitucionalLayout";
 import ResumoRecursos from "@/components/landing/ResumoRecursos";
 
 /**
- * Pagina comercial (rota "/"). Restaurada em 25/11/2026 sem abertura de conta: o unico
- * caminho para dentro e o Login (/auth). Nenhum botao leva a /cadastro.
+ * Pagina comercial (rota "/"). Restaurada em 25/11/2026; a abertura de conta (/cadastro)
+ * foi reaberta no mesmo dia.
  */
 const LandingPage = () => {
   return (
@@ -35,12 +35,12 @@ const LandingPage = () => {
                 gestão estratégica de seus investimentos em um só rastro histórico.
               </p>
               <div className="flex flex-wrap gap-4">
-                <Link to="/auth">
+                <Link to="/cadastro">
                   <Button
                     size="lg"
                     className="rounded-full bg-[#0a5eb8] hover:bg-[#084a92] text-white h-14 px-8 text-base font-semibold shadow-lg shadow-[#0a5eb8]/20"
                   >
-                    Acessar a plataforma
+                    Comece agora, é grátis
                   </Button>
                 </Link>
                 <a href="#recursos">
@@ -208,14 +208,14 @@ const LandingPage = () => {
             Pronto para dominar seu patrimônio?
           </h2>
           <p className="text-[#8da4bf] text-lg mb-8">
-            Tenha a visão completa das suas finanças em um só lugar.
+            Comece agora e tenha a visão completa das suas finanças em um só lugar.
           </p>
-          <Link to="/auth">
+          <Link to="/cadastro">
             <Button
               size="lg"
               className="rounded-full bg-[#0a5eb8] hover:bg-[#084a92] text-white h-14 px-10 text-base font-semibold"
             >
-              Entrar na plataforma
+              Criar conta gratuitamente
             </Button>
           </Link>
         </div>

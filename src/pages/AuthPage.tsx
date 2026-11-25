@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,8 +7,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 /**
- * Tela de login (rota "/auth"). A raiz e a pagina comercial, que so leva ate aqui:
- * a abertura de conta esta fechada. Fundo branco e so o box de credenciais.
+ * Tela de login (rota "/auth"). A raiz e a pagina comercial; quem nao tem conta segue para
+ * /cadastro. Fundo branco e so o box de credenciais.
  */
 const AuthPage = () => {
   const navigate = useNavigate();
@@ -20,19 +20,12 @@ const AuthPage = () => {
     e.preventDefault();
     setLoading(true);
 
-    // Check if email exists in profiles
-    const { data: exists } = await supabase.rpc("check_email_exists", { p_email: email });
-
-    if (!exists) {
-      toast.error("Este e-mail não está cadastrado. Entre em contato com o administrador.");
-      setLoading(false);
-      return;
-    }
-
+    // Sem a checagem previa em `profiles`: ela barrava a conta nova que confirmou o e-mail mas
+    // ainda nao fez o onboarding. Quem entra sem perfil e levado ao onboarding pela ProtectedRoute.
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       if (error.message?.toLowerCase().includes("invalid login credentials")) {
-        toast.error("Senha incorreta. Verifique seus dados e tente novamente.");
+        toast.error("E-mail ou senha incorretos. Verifique seus dados e tente novamente.");
       } else if (error.message?.toLowerCase().includes("email not confirmed")) {
         toast.error("E-mail ainda não confirmado. Verifique sua caixa de entrada.");
       } else {
@@ -91,6 +84,12 @@ const AuthPage = () => {
             {loading ? "Carregando..." : "Entrar"}
           </Button>
         </form>
+
+        <div className="mt-6 text-center">
+          <Link to="/cadastro" className="text-sm text-[#4a6580] hover:text-[#0a5eb8] transition-colors">
+            Não tem conta? <span className="font-semibold text-[#0a5eb8]">Cadastre-se</span>
+          </Link>
+        </div>
       </div>
     </div>
   );

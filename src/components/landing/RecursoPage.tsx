@@ -27,7 +27,7 @@ interface RecursoPageProps {
 
 /**
  * Molde das paginas de recursos do institucional: abertura, faixa de destaques, secoes alternando
- * texto e ilustracao, e no fim os atalhos para as outras paginas. Nada de abertura de conta.
+ * texto e ilustracao, e no fim os atalhos para as outras paginas, o cadastro e o login.
  */
 const RecursoPage = ({ rotulo, titulo, subtitulo, destaques, secoes }: RecursoPageProps) => {
   const { pathname } = useLocation();
@@ -104,11 +104,20 @@ const RecursoPage = ({ rotulo, titulo, subtitulo, destaques, secoes }: RecursoPa
               </Link>
             ))}
           </div>
-          <div className="mt-12 text-center">
-            <Link to="/auth">
+          <div className="mt-12 flex flex-wrap justify-center gap-4">
+            <Link to="/cadastro">
               <Button
                 size="lg"
                 className="h-14 rounded-full bg-[#0a5eb8] px-10 text-base font-semibold text-white hover:bg-[#084a92]"
+              >
+                Criar conta gratuitamente
+              </Button>
+            </Link>
+            <Link to="/auth">
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-14 rounded-full border-white/30 bg-transparent px-10 text-base font-semibold text-white hover:bg-white/10 hover:text-white"
               >
                 Entrar na plataforma
               </Button>

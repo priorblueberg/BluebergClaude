@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
  * Moldura do site institucional: cabecalho com o menu das paginas de produto e rodape.
  * Usada pela pagina comercial (/) e pelas paginas de recursos (/recursos/*).
  *
- * Sem abertura de conta (Daniel, 25/11/2026): o unico botao de entrada e o Login.
+ * Entradas: Login e Cadastre-se (a abertura de conta foi fechada e reaberta em 25/11/2026).
  */
 export const PAGINAS_DE_RECURSOS = [
   { to: "/recursos/renda-fixa", label: "Renda Fixa" },
@@ -48,14 +48,19 @@ const InstitucionalLayout = ({ children }: { children: ReactNode }) => {
               </NavLink>
             ))}
           </nav>
-          <Link to="/auth">
-            <Button
-              variant="outline"
-              className="rounded-full border-[#0a2540] bg-[#0a2540] text-white hover:bg-[#0a2540]/90"
-            >
-              Login
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link to="/auth">
+              <Button
+                variant="outline"
+                className="rounded-full border-[#0a2540] bg-[#0a2540] text-white hover:bg-[#0a2540]/90"
+              >
+                Login
+              </Button>
+            </Link>
+            <Link to="/cadastro">
+              <Button className="rounded-full bg-[#0a5eb8] hover:bg-[#084a92] text-white">Cadastre-se</Button>
+            </Link>
+          </div>
         </div>
         {/* No celular o menu vira uma faixa rolavel logo abaixo do cabecalho. */}
         <nav className="md:hidden flex gap-1 overflow-x-auto px-4 pb-3">

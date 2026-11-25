@@ -1,4 +1,6 @@
+import { Link } from "react-router-dom";
 import { Check, Crown, BarChart3, PiggyBank } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 const plans = [
   {
@@ -88,11 +90,22 @@ const LandingPricingSection = () => {
                 <h3 className="text-base font-bold text-[#0a2540]">{plan.name}</h3>
               </div>
               <p className="text-sm text-[#4a6580] mb-4">{plan.subtitle}</p>
-              <div className="flex items-baseline gap-1 mb-6">
+              <div className="flex items-baseline gap-1 mb-5">
                 <span className="text-xs text-[#4a6580]">R$</span>
                 <span className="text-3xl font-bold text-[#0a2540]">{plan.price}</span>
                 <span className="text-xs text-[#4a6580]">/mês</span>
               </div>
+              <Link to="/cadastro" className="block mb-6">
+                <Button
+                  className={`w-full rounded-xl h-11 text-sm font-semibold ${
+                    plan.highlighted
+                      ? "bg-[#0a5eb8] hover:bg-[#084a92] text-white"
+                      : "bg-[#0a2540] hover:bg-[#0a2540]/90 text-white"
+                  }`}
+                >
+                  Assinar este plano
+                </Button>
+              </Link>
               <ul className="space-y-2.5 flex-1">
                 {plan.features.map((f, i) => (
                   <li key={i} className="flex items-start gap-2.5 text-sm text-[#4a6580]">

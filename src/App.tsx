@@ -28,6 +28,7 @@ import NotFound from "./pages/NotFound";
 import LandingPage from "./pages/LandingPage";
 import { RecursoRendaFixa, RecursoFundos, RecursoAcoes, RecursoMoedas, RecursoAnalise, RecursoMetodologia } from "./pages/RecursosPages";
 import AuthPage from "./pages/AuthPage";
+import CadastroPage from "./pages/CadastroPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import PlanosPage from "./pages/PlanosPage";
 import CheckoutPage from "./pages/CheckoutPage";
@@ -94,8 +95,8 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <Routes>
-            {/* Public routes. A raiz e a pagina comercial e o login fica em /auth.
-                Abertura de conta fechada (25/11/2026): /cadastro so redireciona. */}
+            {/* Public routes. A raiz e a pagina comercial, o login fica em /auth e a abertura
+                de conta em /cadastro (fechada e reaberta em 25/11/2026). */}
             <Route path="/" element={<LandingPage />} />
             <Route path="/auth" element={<AuthPage />} />
             {/* Paginas de recursos do institucional (25/11/2026). */}
@@ -107,7 +108,7 @@ const App = () => (
             <Route path="/recursos/acoes-e-moedas" element={<Navigate to="/recursos/acoes" replace />} />
             <Route path="/recursos/analise" element={<RecursoAnalise />} />
             <Route path="/recursos/metodologia" element={<RecursoMetodologia />} />
-            <Route path="/cadastro" element={<Navigate to="/auth" replace />} />
+            <Route path="/cadastro" element={<CadastroPage />} />
             <Route path="/onboarding" element={<OnboardingRoute />} />
             
             <Route path="/planos" element={<PlanosPage />} />

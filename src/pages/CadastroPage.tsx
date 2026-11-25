@@ -11,12 +11,19 @@ const CadastroPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  // E-mail para onde foi o link de confirmacao. Preenchido, a tela troca o formulario pelo aviso.
+  const [aguardandoConfirmacao, setAguardandoConfirmacao] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
-    const { data, error } = await supabase.auth.signUp({ email, password });
+    // O projeto exige confirmacao de e-mail: o link volta direto para o onboarding.
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { emailRedirectTo: `${window.location.origin}/onboarding` },
+    });
 
     if (error) {
       if (error.message?.toLowerCase().includes("user already registered")) {
@@ -41,6 +48,10 @@ const CadastroPage = () => {
     } else if (data?.user?.identities?.length === 0) {
       toast.error("Este e-mail já está cadastrado. Faça login para continuar.");
       navigate("/auth");
+    } else if (!data?.session) {
+      // Conta criada, mas sem sessao ate o e-mail ser confirmado. Mandar para o onboarding agora
+      // so jogaria a pessoa no login sem explicacao.
+      setAguardandoConfirmacao(email);
     } else {
       toast.success("Conta criada com sucesso!");
       navigate("/onboarding");
@@ -67,6 +78,21 @@ const CadastroPage = () => {
       {/* Right panel - form */}
       <div className="flex w-full lg:w-1/2 flex-col items-center justify-center px-6 py-12">
         <div className="w-full max-w-sm">
+          {aguardandoConfirmacao ? (
+            <div className="space-y-4">
+              <h1 className="text-2xl font-bold text-[#0a2540]">Confirme seu e-mail</h1>
+              <p className="text-[#4a6580]">
+                Enviamos um link de confirmação para{" "}
+                <span className="font-semibold text-[#0a2540]">{aguardandoConfirmacao}</span>. Abra o e-mail e
+                clique no link para ativar sua conta.
+              </p>
+              <p className="text-sm text-[#8da4bf]">Não chegou? Confira a caixa de spam.</p>
+              <Link to="/auth" className="inline-block pt-2 text-sm font-semibold text-[#0a5eb8]">
+                Ir para o login
+              </Link>
+            </div>
+          ) : (
+          <>
           <div className="mb-8">
             <h1 className="text-2xl font-bold text-[#0a2540]">Crie sua conta</h1>
             <p className="mt-2 text-[#4a6580]">
@@ -112,6 +138,9 @@ const CadastroPage = () => {
               Já tem conta? <span className="font-semibold text-[#0a5eb8]">Entrar</span>
             </Link>
           </div>
+
+          </>
+          )}
 
           <div className="mt-4 text-center">
             <Link to="/" className="text-sm text-[#8da4bf] hover:text-[#0a5eb8] transition-colors">
