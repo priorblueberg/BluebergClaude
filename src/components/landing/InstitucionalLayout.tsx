@@ -12,8 +12,10 @@ import { Button } from "@/components/ui/button";
 export const PAGINAS_DE_RECURSOS = [
   { to: "/recursos/renda-fixa", label: "Renda Fixa" },
   { to: "/recursos/fundos", label: "Fundos" },
-  { to: "/recursos/acoes-e-moedas", label: "Ações e Moedas" },
+  { to: "/recursos/acoes", label: "Ações" },
+  { to: "/recursos/moedas", label: "Moedas" },
   { to: "/recursos/analise", label: "Análise da Carteira" },
+  { to: "/recursos/metodologia", label: "Metodologia" },
 ];
 
 const InstitucionalLayout = ({ children }: { children: ReactNode }) => {

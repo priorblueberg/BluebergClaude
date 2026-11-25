@@ -93,7 +93,7 @@ const RecursoPage = ({ rotulo, titulo, subtitulo, destaques, secoes }: RecursoPa
         <div className="max-w-5xl mx-auto px-6">
           <h2 className="text-center text-3xl font-bold text-white">Conheça os outros recursos</h2>
           <div className="mt-10 grid gap-4 md:grid-cols-3">
-            {outras.slice(0, 3).map((p) => (
+            {outras.map((p) => (
               <Link
                 key={p.to}
                 to={p.to}
@@ -125,7 +125,16 @@ export default RecursoPage;
 /* ---------- Pecas das ilustracoes ---------- */
 
 /** Janela de app estilizada. Os numeros dentro dela sao ilustrativos, e o rodape diz isso. */
-export const Painel = ({ titulo, children }: { titulo: string; children: ReactNode }) => (
+export const Painel = ({
+  titulo,
+  children,
+  ilustrativo = true,
+}: {
+  titulo: string;
+  children: ReactNode;
+  /** Falso quando o conteudo e informacao real (ex.: a tabela de fontes da Metodologia). */
+  ilustrativo?: boolean;
+}) => (
   <div className="overflow-hidden rounded-2xl border border-[#e6ecf1] bg-white shadow-2xl shadow-[#0a5eb8]/10">
     <div className="flex items-center gap-2 border-b border-[#e6ecf1] bg-[#f7f9fc] px-4 py-3">
       <span className="h-2.5 w-2.5 rounded-full bg-[#d1dbe6]" />
@@ -134,7 +143,9 @@ export const Painel = ({ titulo, children }: { titulo: string; children: ReactNo
       <span className="ml-3 text-xs font-medium text-[#4a6580]">{titulo}</span>
     </div>
     <div className="p-5">{children}</div>
-    <p className="border-t border-[#e6ecf1] px-5 py-2 text-[10px] text-[#8da4bf]">Valores ilustrativos</p>
+    {ilustrativo && (
+      <p className="border-t border-[#e6ecf1] px-5 py-2 text-[10px] text-[#8da4bf]">Valores ilustrativos</p>
+    )}
   </div>
 );
 
@@ -152,7 +163,7 @@ export const TabelaIlustrativa = ({ cabecalho, linhas }: { cabecalho: string[]; 
     </thead>
     <tbody>
       {linhas.map((l) => (
-        <tr key={l[0]} className="border-t border-[#eef2f6]">
+        <tr key={l.join("|")} className="border-t border-[#eef2f6]">
           {l.map((v, i) => (
             <td
               key={i}
@@ -204,3 +215,56 @@ export const LinhasIlustrativas = ({
     </div>
   );
 };
+
+/** Boleta estilizada: campos preenchidos e o botao de gravar. */
+export const FormularioIlustrativo = ({
+  campos,
+  botao,
+}: {
+  campos: [string, string][];
+  botao: string;
+}) => (
+  <div className="space-y-3">
+    <div className="grid grid-cols-2 gap-3">
+      {campos.map(([rotulo, valor]) => (
+        <div key={rotulo}>
+          <p className="mb-1 text-[10px] font-medium text-[#8da4bf]">{rotulo}</p>
+          <div className="rounded-lg border border-[#d1dbe6] bg-[#f7f9fc] px-3 py-2 text-xs text-[#0a2540]">{valor}</div>
+        </div>
+      ))}
+    </div>
+    <div className="flex justify-end pt-1">
+      <span className="rounded-lg bg-[#0a5eb8] px-4 py-2 text-xs font-semibold text-white">{botao}</span>
+    </div>
+  </div>
+);
+
+/** Faixa de indicadores no topo de uma tela. */
+export const KpisIlustrativos = ({ itens }: { itens: [string, string][] }) => (
+  <div className={`grid gap-3 ${itens.length >= 4 ? "grid-cols-2" : "grid-cols-3"}`}>
+    {itens.map(([k, v]) => (
+      <div key={k} className="rounded-lg bg-[#f7f9fc] p-3">
+        <p className="text-[10px] text-[#8da4bf]">{k}</p>
+        <p className="mt-1 text-sm font-semibold tabular-nums text-[#0a2540]">{v}</p>
+      </div>
+    ))}
+  </div>
+);
+
+/** Cartao escuro com a formula, linha a linha, e a legenda de cada simbolo. */
+export const FormulaCard = ({ linhas, legenda }: { linhas: string[]; legenda: [string, string][] }) => (
+  <div className="overflow-hidden rounded-2xl bg-[#0a2540] shadow-2xl shadow-[#0a5eb8]/20">
+    <div className="space-y-2 px-6 py-6 font-mono text-sm text-white md:text-base">
+      {linhas.map((l) => (
+        <p key={l} className="whitespace-pre-wrap">{l}</p>
+      ))}
+    </div>
+    <div className="space-y-1.5 border-t border-white/10 bg-white/5 px-6 py-4">
+      {legenda.map(([s, d]) => (
+        <p key={s} className="text-xs text-[#8da4bf]">
+          <span className="font-mono font-semibold text-[#53b4e8]">{s}</span> {d}
+        </p>
+      ))}
+    </div>
+  </div>
+);
