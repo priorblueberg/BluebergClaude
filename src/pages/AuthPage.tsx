@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -13,7 +12,6 @@ import { toast } from "sonner";
  */
 const AuthPage = () => {
   const navigate = useNavigate();
-  const { user, loading: authLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -47,8 +45,8 @@ const AuthPage = () => {
     setLoading(false);
   };
 
-  // Quem ja esta logado nao precisa ver o login de novo.
-  if (!authLoading && user) return <Navigate to="/carteira" replace />;
+  // Sempre mostra o formulario, mesmo com sessao guardada no navegador (Daniel, 25/11/2026):
+  // o botao Login da pagina comercial nao pode entrar direto na conta.
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-white px-6 py-12">
