@@ -1,11 +1,11 @@
 import type { ElementType, ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, Landmark, PieChart, CandlestickChart, DollarSign, Gauge, Sigma } from "lucide-react";
-import { TabelaIlustrativa, LinhasIlustrativas, KpisIlustrativos, FormulaCard } from "./RecursoPage";
+import { Painel, TabelaIlustrativa, LinhasIlustrativas, KpisIlustrativos, FormulaCard } from "./RecursoPage";
 
 /**
- * Resumo das paginas de recursos na home (Daniel, 25/11/2026): um box de ponta a ponta, na
- * horizontal, para cada pagina de /recursos, com texto de um lado, uma tela do outro e o link.
+ * Resumo das paginas de recursos na home (Daniel, 25/11/2026): uma faixa de ponta a ponta para
+ * cada pagina de /recursos, no mesmo formato das paginas internas (texto de um lado, tela do outro).
  * A ordem segue o menu do InstitucionalLayout.
  */
 
@@ -129,56 +129,50 @@ const RESUMOS: Resumo[] = [
 ];
 
 const ResumoRecursos = () => (
-  <section id="recursos" className="scroll-mt-20 py-20 lg:py-28">
-    <div className="max-w-7xl mx-auto px-6">
-      <h2 className="text-3xl md:text-4xl font-bold text-center mb-4 text-[#0a2540]">Conheça a plataforma</h2>
-      <p className="text-center text-[#4a6580] mb-14 max-w-2xl mx-auto text-lg">
-        Cada classe de ativo com a sua conta, e uma visão única da carteira.
-      </p>
+  <div id="recursos" className="scroll-mt-20">
+    <div className="max-w-3xl mx-auto px-6 pt-20 pb-4 text-center lg:pt-28">
+      <h2 className="text-3xl md:text-4xl font-bold text-[#0a2540]">Conheça a plataforma</h2>
+      <p className="mt-4 text-lg text-[#4a6580]">Cada classe de ativo com a sua conta, e uma visão única da carteira.</p>
+    </div>
 
-      <div className="space-y-6">
-        {RESUMOS.map((r, i) => (
-          <Link
-            key={r.to}
-            to={r.to}
-            className={`group grid items-center gap-8 rounded-3xl border border-[#e6ecf1] p-8 transition-shadow hover:shadow-xl hover:shadow-[#0a5eb8]/10 md:p-10 lg:grid-cols-5 ${
-              i % 2 === 0 ? "bg-white" : "bg-[#f7f9fc]"
-            }`}
-          >
-            <div className="lg:col-span-3">
+    {/* Uma faixa por pagina, alternando o fundo e o lado da tela, como nas paginas internas. */}
+    {RESUMOS.map((r, i) => (
+      <section key={r.to} className={i % 2 === 0 ? "py-20" : "bg-[#f7f9fc] py-20"}>
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="grid items-center gap-12 lg:grid-cols-2">
+            <div className={i % 2 === 1 ? "lg:order-2" : ""}>
               <div className="mb-4 flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0a5eb8]/10">
                   <r.icon className="h-5 w-5 text-[#0a5eb8]" />
                 </div>
                 <span className="text-xs font-semibold uppercase tracking-wider text-[#0a5eb8]">{r.rotulo}</span>
               </div>
-              <h3 className="text-2xl font-bold text-[#0a2540]">{r.titulo}</h3>
-              <p className="mt-3 leading-relaxed text-[#4a6580]">{r.texto}</p>
-              <ul className="mt-5 flex flex-wrap gap-2">
+              <h3 className="text-3xl font-bold text-[#0a2540]">{r.titulo}</h3>
+              <p className="mt-4 text-lg leading-relaxed text-[#4a6580]">{r.texto}</p>
+              <ul className="mt-6 space-y-3">
                 {r.itens.map((item) => (
-                  <li key={item} className="rounded-full border border-[#d1dbe6] bg-white px-3 py-1 text-xs text-[#4a6580]">
+                  <li key={item} className="flex items-start gap-3 text-[#4a6580]">
+                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[#0a5eb8]" />
                     {item}
                   </li>
                 ))}
               </ul>
-              <span className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-[#0a5eb8]">
-                Saiba mais
+              <Link
+                to={r.to}
+                className="group mt-8 inline-flex items-center gap-2 text-sm font-semibold text-[#0a5eb8] hover:text-[#084a92]"
+              >
+                Saiba mais sobre {r.rotulo}
                 <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-              </span>
+              </Link>
             </div>
-            <div className="lg:col-span-2">
-              {r.to === "/recursos/metodologia" ? (
-                r.visual
-              ) : (
-                <div className="rounded-2xl border border-[#e6ecf1] bg-white p-5 shadow-lg shadow-[#0a5eb8]/5">{r.visual}</div>
-              )}
+            <div className={i % 2 === 1 ? "lg:order-1" : ""}>
+              {r.to === "/recursos/metodologia" ? r.visual : <Painel titulo={r.rotulo}>{r.visual}</Painel>}
             </div>
-          </Link>
-        ))}
-      </div>
-      <p className="mt-4 text-right text-[10px] text-[#8da4bf]">Valores ilustrativos</p>
-    </div>
-  </section>
+          </div>
+        </div>
+      </section>
+    ))}
+  </div>
 );
 
 export default ResumoRecursos;

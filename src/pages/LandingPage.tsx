@@ -115,7 +115,7 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* Resumo das paginas de recursos, um box horizontal por pagina */}
+      {/* Resumo das paginas de recursos, uma faixa por pagina */}
       <ResumoRecursos />
 
       {/* Feature Comparison Grid */}
