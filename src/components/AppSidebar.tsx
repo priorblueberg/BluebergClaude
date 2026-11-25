@@ -26,29 +26,37 @@ interface MenuItem {
   url: string;
   icon: React.ElementType;
   adminOnly?: boolean;
+  /** Fora do menu para todos, inclusive admin. Ver STANDBY abaixo. */
+  standby?: boolean;
 }
 
+/**
+ * STANDBY (Daniel, 25/11/2026): com a abertura de contas chegando, o site mostra so o modulo de
+ * Investimentos. O modulo Caixa (Patrimonio Global, Caixa, Receitas e Despesas) saiu do ar e as
+ * telas gerenciais (Custodia, Controle de Carteiras, Admin, Calculadora) sairam do menu, inclusive
+ * para admin. Para religar, basta tirar `standby: true` do item (e, no Caixa, voltar as rotas no App).
+ */
 const menuItems: MenuItem[] = [
   // Primeira opção do menu, a pedido do Daniel (21/09/2026). Só admin: é patrimônio pessoal, de
   // outro banco, e a edge function que o lê também só responde a admin.
-  { title: "Patrimônio Global", url: "/patrimonio-global", icon: Wallet, adminOnly: true },
+  { title: "Patrimônio Global", url: "/patrimonio-global", icon: Wallet, adminOnly: true, standby: true },
   // Os dois módulos do Blueberg convergem no Patrimônio Global (Daniel, 21/09/2026): Caixa logo
   // abaixo dele, Investimentos no resto do menu.
-  { title: "Caixa", url: "/caixa", icon: Banknote, adminOnly: true },
+  { title: "Caixa", url: "/caixa", icon: Banknote, adminOnly: true, standby: true },
   // O resultado do mes aberto por categoria (Daniel, 24/09/2026): mesma origem do Caixa, logo
   // abaixo dele.
-  { title: "Receitas e Despesas", url: "/receitas-e-despesas", icon: ArrowDownUp, adminOnly: true },
+  { title: "Receitas e Despesas", url: "/receitas-e-despesas", icon: ArrowDownUp, adminOnly: true, standby: true },
   { title: "Portfólios", url: "/portfolios", icon: Layers },
   { title: "Carteira de Investimentos", url: "/carteira", icon: LayoutGrid },
   { title: "Posição Consolidada", url: "/posicao-consolidada", icon: ClipboardList },
   { title: "Movimentações", url: "/movimentacoes", icon: ArrowLeftRight },
-  { title: "Custódia", url: "/custodia", icon: Vault, adminOnly: true },
-  { title: "Controle de Carteiras", url: "/controle-carteiras", icon: Briefcase, adminOnly: true },
+  { title: "Custódia", url: "/custodia", icon: Vault, adminOnly: true, standby: true },
+  { title: "Controle de Carteiras", url: "/controle-carteiras", icon: Briefcase, adminOnly: true, standby: true },
   { title: "Eventos", url: "/eventos", icon: CalendarClock },
   
   { title: "Configurações", url: "/configuracoes", icon: Settings },
-  { title: "Admin", url: "/admin", icon: Shield, adminOnly: true },
-  { title: "Calculadora", url: "/calculadora", icon: Calculator, adminOnly: true },
+  { title: "Admin", url: "/admin", icon: Shield, adminOnly: true, standby: true },
+  { title: "Calculadora", url: "/calculadora", icon: Calculator, adminOnly: true, standby: true },
 ];
 
 export function AppSidebar({
@@ -64,7 +72,7 @@ export function AppSidebar({
   const isActive = (url: string) =>
     url === "/carteira" ? location.pathname.startsWith("/carteira") : location.pathname === url;
 
-  const visibleItems = menuItems.filter(item => !item.adminOnly || isAdmin);
+  const visibleItems = menuItems.filter(item => !item.standby && (!item.adminOnly || isAdmin));
   return (
     <aside
       className="fixed left-0 top-0 bottom-0 z-30 flex flex-col bg-[hsl(213,60%,20%)]"

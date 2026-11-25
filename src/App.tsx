@@ -24,9 +24,6 @@ import CarteiraRendaFixa from "@/pages/CarteiraRendaFixaPage";
 import CalculadoraPage from "@/pages/CalculadoraPage";
 import PosicaoConsolidadaPage from "@/pages/PosicaoConsolidadaPage";
 import PortfoliosPage from "@/pages/PortfoliosPage";
-import PatrimonioGlobalPage from "@/pages/PatrimonioGlobalPage";
-import CaixaPage from "@/pages/CaixaPage";
-import ReceitasDespesasPage from "@/pages/ReceitasDespesasPage";
 import NotFound from "./pages/NotFound";
 import LandingPage from "./pages/LandingPage";
 import AuthPage from "./pages/AuthPage";
@@ -128,13 +125,13 @@ const App = () => (
 
                 {/* Somente admin */}
                 <Route element={<AdminRoute />}>
-                  {/* Finanças pessoais do Daniel, de outro projeto Supabase. Admin aqui E na edge
-                      function que lê o dado: a rota barra a tela, a função barra o dado. */}
-                  <Route path="/patrimonio-global" element={<PatrimonioGlobalPage />} />
-                  {/* Módulo Caixa: mesma origem e mesma trava do Patrimônio Global. */}
-                  <Route path="/caixa" element={<CaixaPage />} />
-                  {/* Mesma origem e mesma trava: o resultado por categoria. */}
-                  <Route path="/receitas-e-despesas" element={<ReceitasDespesasPage />} />
+                  {/* Modulo Caixa em STANDBY (Daniel, 25/11/2026): Patrimonio Global, Caixa e Receitas e
+                      Despesas sairam do ar ate a reabertura. As telas continuam no codigo; para religar,
+                      volte o element de cada rota para a pagina e tire o standby no AppSidebar. */}
+                  <Route path="/patrimonio-global" element={<Navigate to="/carteira" replace />} />
+                  <Route path="/caixa" element={<Navigate to="/carteira" replace />} />
+                  <Route path="/receitas-e-despesas" element={<Navigate to="/carteira" replace />} />
+                  {/* Gerenciais: fora do menu (standby), mas a URL segue valendo para admin. */}
                   <Route path="/custodia" element={<Custodia />} />
                   <Route path="/controle-carteiras" element={<ControleCarteiras />} />
                   <Route path="/admin" element={<Admin />} />
