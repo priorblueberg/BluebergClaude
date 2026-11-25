@@ -7,13 +7,11 @@ import {
   BarChart3,
   PiggyBank,
   Layers,
-  Instagram,
-  Linkedin,
-  Twitter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import heroDashboard from "@/assets/hero-dashboard.png";
 import LandingPricingSection from "@/components/landing/LandingPricingSection";
+import InstitucionalLayout from "@/components/landing/InstitucionalLayout";
 
 /**
  * Pagina comercial (rota "/"). Restaurada em 25/11/2026 sem abertura de conta: o unico
@@ -21,24 +19,7 @@ import LandingPricingSection from "@/components/landing/LandingPricingSection";
  */
 const LandingPage = () => {
   return (
-    <div className="min-h-screen bg-white text-[#0a2540] font-sans">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-[#e6ecf1]">
-        <div className="max-w-7xl mx-auto flex items-center justify-between px-6 py-4">
-          <span className="text-lg font-bold text-[#0a2540] tracking-tight">Blueberg</span>
-          <div className="flex items-center gap-3">
-            <Link to="/auth">
-              <Button
-                variant="outline"
-                className="rounded-full border-[#0a2540] bg-[#0a2540] text-white hover:bg-[#0a2540]/90"
-              >
-                Login
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </header>
-
+    <InstitucionalLayout>
       {/* Hero */}
       <section className="relative overflow-hidden">
         <div className="max-w-7xl mx-auto px-6 pt-20 pb-16 lg:pt-28 lg:pb-24">
@@ -227,29 +208,7 @@ const LandingPage = () => {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-[#071b2e] py-10">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            <p className="text-[#8da4bf] text-sm text-center md:text-left italic">
-              Blueberg — A ponta do iceberg é apenas o começo da sua liberdade financeira.
-            </p>
-            <div className="flex items-center gap-6">
-              <a href="#" className="text-[#8da4bf] hover:text-white transition-colors">
-                <Instagram className="w-5 h-5" />
-              </a>
-              <a href="#" className="text-[#8da4bf] hover:text-white transition-colors">
-                <Linkedin className="w-5 h-5" />
-              </a>
-              <a href="#" className="text-[#8da4bf] hover:text-white transition-colors">
-                <Twitter className="w-5 h-5" />
-              </a>
-              <span className="text-[#8da4bf] text-sm">Termos de Uso</span>
-            </div>
-          </div>
-        </div>
-      </footer>
-    </div>
+    </InstitucionalLayout>
   );
 };
 

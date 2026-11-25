@@ -26,6 +26,7 @@ import PosicaoConsolidadaPage from "@/pages/PosicaoConsolidadaPage";
 import PortfoliosPage from "@/pages/PortfoliosPage";
 import NotFound from "./pages/NotFound";
 import LandingPage from "./pages/LandingPage";
+import { RecursoRendaFixa, RecursoFundos, RecursoAcoesMoedas, RecursoAnalise } from "./pages/RecursosPages";
 import AuthPage from "./pages/AuthPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import PlanosPage from "./pages/PlanosPage";
@@ -97,6 +98,11 @@ const App = () => (
                 Abertura de conta fechada (25/11/2026): /cadastro so redireciona. */}
             <Route path="/" element={<LandingPage />} />
             <Route path="/auth" element={<AuthPage />} />
+            {/* Paginas de recursos do institucional (25/11/2026). */}
+            <Route path="/recursos/renda-fixa" element={<RecursoRendaFixa />} />
+            <Route path="/recursos/fundos" element={<RecursoFundos />} />
+            <Route path="/recursos/acoes-e-moedas" element={<RecursoAcoesMoedas />} />
+            <Route path="/recursos/analise" element={<RecursoAnalise />} />
             <Route path="/cadastro" element={<Navigate to="/auth" replace />} />
             <Route path="/onboarding" element={<OnboardingRoute />} />
             
